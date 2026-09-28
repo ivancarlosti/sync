@@ -1,0 +1,42 @@
+# ---------------------------------------------------------------------------
+# Sync — repository ignore rules
+# ---------------------------------------------------------------------------
+
+# Local environment files (never commit real secrets)
+.env
+.env.local
+docker/.env.local
+
+# The compose file ships development defaults, so /docker/.env is kept tracked
+# on purpose (requirement: /docker contains .env, .env.example and the compose
+# file). Re-enable the ignore below if you put real secrets in there.
+!docker/.env
+
+# Go build artifacts
+/bin/
+/dist/
+/sync
+*.test
+*.out
+coverage.txt
+
+# Node / Vite
+web/node_modules/
+web/dist/*
+!web/dist/.gitkeep
+web/.vite/
+web/.eslintcache
+npm-debug.log*
+yarn-error.log*
+
+# Editors & OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Temporary / scratch
+/tmp/
+/.cache/

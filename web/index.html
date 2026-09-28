@@ -1,0 +1,60 @@
+<!doctype html>
+<!--
+  Shell of the Sync SPA.
+
+  `lang` and `dir` are placeholders: `src/i18n/index.ts` sets them from the active
+  locale (ar-SA flips the document to RTL). The tiny inline script below applies
+  the stored theme before the first paint so a dark-mode user never sees a white
+  flash; it only touches class/attribute state, never text.
+-->
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Brand assets. The mark is bidirectional: it reads the same mirrored. -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="alternate icon" href="/favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="mask-icon" href="/logo.svg" color="#2563eb" />
+
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0b1120" />
+    <meta name="color-scheme" content="light dark" />
+
+    <!-- Open Graph / social preview. Relative paths keep the build host agnostic;
+         a reverse proxy that serves the app under a sub-path rewrites them. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Sync" />
+    <meta property="og:image" content="/logo.png" />
+    <meta property="og:image:width" content="1024" />
+    <meta property="og:image:height" content="1024" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="/logo.png" />
+
+    <title>Sync</title>
+    <meta name="description" content="Sync" />
+
+    <script>
+      // Pre-paint theme: "light", "dark" or "system" (the default). Kept inline
+      // and dependency free on purpose; the rest of the theme logic lives in
+      // src/stores/theme.ts, which reads the same key.
+      (function () {
+        try {
+          var stored = localStorage.getItem('sync.theme');
+          var dark =
+            stored === 'dark' ||
+            ((!stored || stored === 'system') &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (dark) document.documentElement.classList.add('dark');
+        } catch (error) {
+          /* Private mode: fall back to the system preference through CSS. */
+        }
+      })();
+    </script>
+  </head>
+  <body class="min-h-screen bg-background font-sans text-foreground antialiased">
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

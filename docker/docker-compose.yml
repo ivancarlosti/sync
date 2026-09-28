@@ -1,0 +1,26 @@
+# =============================================================================
+#  Sync — Docker Compose (production / production-like)
+#
+#  The database is ALWAYS external (MariaDB/MySQL) — this file never starts one.
+#  `host.docker.internal` resolves to the Docker host through extra_hosts, which
+#  is mandatory on Linux (Docker Desktop provides it natively).
+#
+#  Usage:
+#    cp .env.example .env      # then edit the values
+#    docker compose up -d
+#    docker compose logs -f
+# =============================================================================
+services:
+  sync:
+    image: ghcr.io/ivancarlosti/sync:latest
+    # Local rebuild instead of pulling the published image: run
+    #   docker compose up -d --build
+    # after uncommenting the two lines below.
+    # build:
+    #   context: ..
+    env_file: .env
+    ports:
+      - "3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped

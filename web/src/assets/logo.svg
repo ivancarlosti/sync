@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Sync — logo lockup packaged for the SPA bundle (used by About/Brand cards).
+  Identical construction to /web/public/logo.svg; kept as a separate asset so a
+  future wordmark tweak can be versioned for the app independently of the
+  static/public copy that is shared with og:image and release artifacts.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 48" width="112" height="48"
+     role="img" aria-labelledby="syncLogoAssetTitle">
+  <title id="syncLogoAssetTitle">Sync</title>
+
+  <defs>
+    <linearGradient id="syncBrandGradientAsset" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4F46E5"/>
+      <stop offset="1" stop-color="#06B6D4"/>
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(3 7) scale(1.35)" fill="none"
+     stroke="url(#syncBrandGradientAsset)" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 8.5H19M15.5 5L19 8.5L15.5 12"/>
+    <path d="M20 15.5H5M8.5 12L5 15.5L8.5 19"/>
+  </g>
+
+  <g transform="translate(42 6)" fill="none"
+     stroke="url(#syncBrandGradientAsset)" stroke-width="3"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M13.5 21.5C13.5 19.2 11 18 8.5 18C6 18 4 19.5 4 21.5C4 23.5 6 24.6 8.5 25C11 25.4 13 26.5 13 28.5C13 30.5 11 32 8.5 32C6 32 3.5 30.8 3.5 28.5"/>
+    <path d="M18.5 18.5L24 29.5"/>
+    <path d="M29.5 18.5L22 36"/>
+    <path d="M35 32V18.5"/>
+    <path d="M35 23.5C35 20.5 37 18.5 39.5 18.5C42 18.5 43.5 20 43.5 23V32"/>
+    <path d="M62 22.5C60.5 19.5 57.5 18 54.5 18C51 18 49.5 21 49.5 25.2C49.5 29.4 51 32 54.5 32C57.5 32 60.5 30.5 62 27.5"/>
+  </g>
+</svg>

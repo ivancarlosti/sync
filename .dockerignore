@@ -1,0 +1,33 @@
+# ---------------------------------------------------------------------------
+# Sync — Docker build context filter (keeps buildx cache small & safe)
+# ---------------------------------------------------------------------------
+
+# VCS & CI
+.git
+.github
+.gitignore
+
+# Documentation / planning (not needed to compile the binary)
+docs
+plans
+docker
+*.md
+
+# Secrets — never ship environment files inside an image layer
+**/.env
+**/.env.*
+!**/.env.example
+
+# Frontend build noise (stage 1 rebuilds dist from source)
+web/node_modules
+web/dist
+web/.vite
+
+# Local artifacts
+bin
+tmp
+.cache
+
+# Docker files themselves
+Dockerfile
+.dockerignore

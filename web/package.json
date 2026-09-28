@@ -1,0 +1,40 @@
+{
+  "name": "sync-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sync \u2014 Vue 3 SPA embedded into the Go binary",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "node scripts/check-i18n.mjs && vue-tsc --noEmit && vue-tsc --noEmit -p tsconfig.node.json",
+    "build": "npm run typecheck && vite build",
+    "postbuild": "node scripts/restore-dist-placeholder.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@lucide/vue": "1.48.0",
+    "axios": "1.20.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "pinia": "2.3.0",
+    "reka-ui": "2.10.5",
+    "tailwind-merge": "2.6.0",
+    "vue": "3.5.43",
+    "vue-i18n": "11.3.0",
+    "vue-router": "4.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.10.2",
+    "@vitejs/plugin-vue": "5.2.1",
+    "autoprefixer": "10.4.20",
+    "postcss": "8.4.49",
+    "tailwindcss": "3.4.17",
+    "tailwindcss-animate": "1.0.7",
+    "typescript": "5.7.2",
+    "vite": "5.4.11",
+    "vue-tsc": "2.2.0"
+  }
+}

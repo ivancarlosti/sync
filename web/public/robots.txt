@@ -1,0 +1,10 @@
+# Sync is a self-hosted tool for the operator who installed it: a crawler has no
+# reason to index the login screen or the API, and the SPA is a single page.
+User-agent: *
+Disallow: /api/
+Disallow: /accounts
+Disallow: /jobs
+Disallow: /runs
+Disallow: /notifications
+Disallow: /settings
+Disallow: /admin
