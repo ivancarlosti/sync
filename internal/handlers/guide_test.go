@@ -61,7 +61,9 @@ func TestAdminConsentEndpoint(t *testing.T) {
 	})
 	requireStatus(t, recorder, http.StatusOK)
 	refused := decodeJSON[services.Authorization](t, recorder)
-	if !strings.Contains(refused.URL, "/common/v2.0/adminconsent?") ||
+	// `organizations` (not `common`): the consent endpoint does not accept the
+	// generic tenant that accepts personal accounts at sign-in.
+	if !strings.Contains(refused.URL, "/organizations/v2.0/adminconsent?") ||
 		!strings.Contains(refused.URL, "client_id=microsoft-client") {
 		t.Fatalf("consent URL = %q", refused.URL)
 	}

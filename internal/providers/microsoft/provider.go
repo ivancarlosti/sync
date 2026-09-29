@@ -49,9 +49,16 @@ const (
 	baseURL = "https://graph.microsoft.com/v1.0"
 	// loginBaseURL is the Microsoft identity platform v2.0 root.
 	loginBaseURL = "https://login.microsoftonline.com"
-	// defaultTenant accepts work/school and personal accounts. Operators that
-	// must lock the app to one directory set MICROSOFT_TENANT_ID.
+	// defaultTenant accepts work/school and personal accounts, which is what a
+	// multi-tenant registration needs: any directory can be connected and the
+	// consent is granted by each directory's own administrator. An operator that
+	// must lock the app to one directory sets MICROSOFT_TENANT_ID.
 	defaultTenant = "common"
+	// organizationsTenant is the tenant segment of the admin-consent endpoint when
+	// the credentials use one of the generic tenants above. Microsoft documents
+	// `common` as unsupported there ("Do not use common") and points at
+	// `organizations` instead, which consents for any work/school directory.
+	organizationsTenant = "organizations"
 
 	// requestTimeout bounds a single metadata call.
 	requestTimeout = 5 * time.Minute
@@ -238,6 +245,21 @@ func tenantID(creds providers.Credentials) string {
 		}
 	}
 	return raw
+}
+
+// consentTenant returns the tenant segment of the admin-consent endpoint, which
+// is not always the one of the sign-in endpoints: `common` and `consumers` accept
+// personal accounts at sign-in, but the consent that a directory administrator
+// grants only exists for a work/school directory, where Microsoft documents
+// `common` as unsupported. `organizations` is the generic value that works for
+// any of them, as is a concrete tenant id or verified domain.
+func consentTenant(creds providers.Credentials) string {
+	switch tenant := tenantID(creds); tenant {
+	case defaultTenant, "consumers":
+		return organizationsTenant
+	default:
+		return tenant
+	}
 }
 
 // tokensFromOAuth normalises an oauth2 token into the provider token set.

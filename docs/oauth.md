@@ -58,7 +58,11 @@ and shows `detail` as technical text.
 `POST /api/oauth/:provider/admin-consent {redirect_to?}` answers `{url, state}`
 where `url` is `https://login.microsoftonline.com/{tenant}/v2.0/adminconsent`
 carrying the client id, the registered redirect URI, the same scope list as the
-authorization request and the state. The `admin_consent` flow row is identical to
+authorization request and the state. `{tenant}` is the configured tenant id, or
+`organizations` when it is empty or one of the generic values (`common`,
+`consumers`) that accept personal accounts — Microsoft does not support `common`
+on this endpoint, and each directory administrator consents for their own
+directory. The `admin_consent` flow row is identical to
 an `oauth` row minus the PKCE verifier (there is no code exchange).
 
 Microsoft comes back on the same callback with `admin_consent=True&tenant=…` — or

@@ -16,7 +16,7 @@
 // outcome (`consent`, `consent_error`, `detail`) exactly like the accounts screen
 // does for a connection.
 import { Compass, ExternalLink, KeyRound, RefreshCw, ShieldCheck } from '@lucide/vue';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
@@ -112,14 +112,26 @@ const outcome = computed(() => {
 
 /** load reads the walkthrough of the provider of the URL. */
 async function load(): Promise<void> {
+  const wanted = provider.value;
   loading.value = true;
   failure.value = '';
   try {
-    guide.value = await providersApi.guide(provider.value);
+    const answer = await providersApi.guide(wanted);
+    // A quick switch between the tabs can leave an older answer in flight: only
+    // the request that still matches the tab owns the screen.
+    if (wanted !== provider.value) {
+      return;
+    }
+    guide.value = answer;
   } catch (error) {
+    if (wanted !== provider.value) {
+      return;
+    }
     failure.value = messageOf(error);
   } finally {
-    loading.value = false;
+    if (wanted === provider.value) {
+      loading.value = false;
+    }
   }
 }
 
@@ -142,17 +154,38 @@ async function grantConsent(): Promise<void> {
   }
 }
 
+/**
+ * showOutcome turns the query string a consent redirect left behind into a
+ * message and clears it, so a reload does not show the same banner again.
+ */
+async function showOutcome(): Promise<void> {
+  const shown = outcome.value;
+  if (!shown) {
+    return;
+  }
+  if (shown.tone === 'success') {
+    feedback.success(shown.text);
+  } else {
+    feedback.fail(shown.text, shown.detail);
+  }
+  await router.replace({ query: {} });
+}
+
 onMounted(async () => {
   await load();
-  if (outcome.value) {
-    const shown = outcome.value;
-    if (shown.tone === 'success') {
-      feedback.success(shown.text);
-    } else {
-      feedback.fail(shown.text, shown.detail);
-    }
-    await router.replace({ query: {} });
-  }
+  await showOutcome();
+});
+
+// The screen is one route record with a provider parameter, so Vue Router reuses
+// this component between the tabs: without this watcher `onMounted` would not run
+// again and the steps, the banner and the warnings of the previous provider would
+// stay on screen (a Google step id rendered with a Microsoft i18n key, for one).
+watch(provider, async () => {
+  // Drop the previous provider before the new answer arrives: keeping it would
+  // render its steps and its banner under the new tab.
+  guide.value = null;
+  await load();
+  await showOutcome();
 });
 </script>
 

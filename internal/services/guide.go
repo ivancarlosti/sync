@@ -181,7 +181,7 @@ func guideWarnings(provider models.ProviderName) []string {
 		}
 	case models.ProviderMicrosoft:
 		return []string{
-			"single_tenant_recommended",
+			"tenant_scope",
 			"work_accounts_only",
 			"admin_role_required",
 			"license_required",

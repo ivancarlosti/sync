@@ -86,7 +86,7 @@ connections, one hour lifetime, ten minutes idle timeout.
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | — | Empty means the provider is not offered in the UI; it can be entered later in Admin > Providers. |
 | `GOOGLE_REDIRECT_URI` | `APP_URL/api/oauth/google/callback` | Derived when empty. |
 | `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` | — | Same behaviour as Google. |
-| `MICROSOFT_TENANT_ID` | `common` | `common`, `organizations`, `consumers` or a tenant UUID. |
+| `MICROSOFT_TENANT_ID` | `common` | `common`, `organizations`, `consumers` or a tenant UUID. Empty and the generic values accept any directory: the consent step then uses `organizations`, because Microsoft does not support `common` for `adminconsent`. A UUID or verified domain locks the client and the consent to that one directory. |
 | `MICROSOFT_REDIRECT_URI` | `APP_URL/api/oauth/microsoft/callback` | Derived when empty. |
 
 ## 7. Interface defaults

@@ -124,14 +124,28 @@ func TestAdminConsentURLCarriesTheContract(t *testing.T) {
 }
 
 // TestAdminConsentURLRejectsATenantThatNavigates guards the tenant segment the
-// URL is built from: a crafted value must fall back to the multi-tenant
-// endpoint rather than escape the adminconsent path.
+// URL is built from: a crafted value must fall back to the generic work/school
+// directory rather than escape the adminconsent path.
 func TestAdminConsentURLRejectsATenantThatNavigates(t *testing.T) {
 	raw := New().AdminConsentURL(providers.Credentials{
 		ClientID: "app",
 		TenantID: "../../malicious",
 	}, "state")
-	if !strings.Contains(raw, "/"+defaultTenant+"/v2.0/adminconsent") {
+	if !strings.Contains(raw, "/"+organizationsTenant+"/v2.0/adminconsent") {
 		t.Fatalf("a crafted tenant was not rejected: %s", raw)
+	}
+}
+
+// TestAdminConsentURLAcceptsEveryDirectory pins the multi-tenant consent: an
+// operator that leaves the tenant id empty (or sets one of the generic tenants)
+// gets the URL every directory administrator can open for their own directory,
+// because Microsoft documents `common` as unsupported by adminconsent.
+func TestAdminConsentURLAcceptsEveryDirectory(t *testing.T) {
+	provider := New()
+	for _, tenant := range []string{"", "common", "organizations", "consumers"} {
+		raw := provider.AdminConsentURL(providers.Credentials{ClientID: "app", TenantID: tenant}, "state")
+		if !strings.Contains(raw, "/"+organizationsTenant+"/v2.0/adminconsent?") {
+			t.Fatalf("tenant %q: unexpected consent endpoint: %s", tenant, raw)
+		}
 	}
 }

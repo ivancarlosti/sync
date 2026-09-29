@@ -8,9 +8,8 @@ is what a product shipped in RTL needs) with 2 px strokes on a 24×24 grid.
 
 | File | Size | Used by |
 |---|---|---|
-| `web/public/logo.svg` | vector | the header (`AppHeader.vue`, `h-7 w-7`) and the login card (`LoginView.vue`, `h-12 w-12`), plus `mask-icon` |
+| `web/public/logo.svg` | vector | icon mark (light/dark aware): `<link rel="icon" type="image/svg+xml">`, `mask-icon`, the header (`AppHeader.vue`, `h-7 w-7`) and the login card (`LoginView.vue`, `h-12 w-12`) |
 | `web/public/logo.png` | 1024×1024 | `og:image`, `twitter:image` (social preview) |
-| `web/public/favicon.svg` | vector | `<link rel="icon" type="image/svg+xml">` |
 | `web/public/favicon.ico` | 16/32/48 | `<link rel="alternate icon">` for browsers without SVG icons |
 | `web/public/apple-touch-icon.png` | 180×180 | iOS home screen (opaque rounded square) |
 | `web/public/robots.txt` | — | keeps crawlers out of `/api/` and the private screens |
@@ -67,7 +66,7 @@ paint, so a dark-mode reload never flashes white.
 
 ## 5. Rebranding checklist
 
-1. Replace `web/public/logo.svg` + `favicon.svg`, then run
+1. Replace `web/public/logo.svg`, then run
    `python3 web/scripts/generate-logo-assets.py` for the PNG/ICO trio.
 2. Adjust `--primary` (and friends) in `web/src/style.css`; keep the light/dark
    pairs distinct enough for the WCAG contrast the components rely on.

@@ -385,7 +385,7 @@
     "redirectUri": "Redirect URI",
     "redirectUriHint": "Registre esta URL no console do provedor: {origin}",
     "tenantId": "Tenant id",
-    "tenantIdHint": "Deixe vazio para o tenant comum.",
+    "tenantIdHint": "Deixe vazio (ou common) para aceitar qualquer diretório corporativo ou escolar: o registro do aplicativo precisa ser multilocatário e cada administrador do diretório concede o consentimento. Defina um id de locatário ou um domínio verificado para limitá-lo a um único diretório.",
     "source": "Origem",
     "secret": "Segredo",
     "set": "Definido",
@@ -482,7 +482,7 @@
         "unverified_app": "O Google pode exigir verificação das permissões sensíveis; um aplicativo não verificado fica limitado a poucos usuários e mostra uma página de aviso.",
         "admin_role_required": "A conta que você conectar precisa ter um papel de administrador: uma permissão concedida à aplicação não torna o usuário conectado um administrador.",
         "license_required": "As permissões de licença e de funções só retornam dados em uma edição paga do Google Workspace.",
-        "single_tenant_recommended": "Um registro de locatário único mantém o cliente utilizável por um só diretório, que é o que uma ferramenta interna de sincronização deseja.",
+        "tenant_scope": "Conecte vários diretórios com um registro multilocatário: mantenha o id de locatário como common, cada administrador do diretório concede uma vez para o seu e o consentimento mostrado aqui é o do último diretório que concluiu o fluxo.",
         "work_accounts_only": "Permissões de diretório não podem ser concedidas a contas pessoais da Microsoft, então contas pessoais do OneDrive não podem mais ser conectadas."
       },
       "steps": {
@@ -523,7 +523,7 @@
         "microsoft": {
           "app": {
             "title": "Registre um aplicativo",
-            "body": "No Microsoft Entra (Aplicativos > Registros de aplicativo) crie um registro, por exemplo Sync, e mantenha a opção de locatário único, a menos que você realmente precise de multilocatário."
+            "body": "No Microsoft Entra (Aplicativos > Registros de aplicativo) crie um registro, por exemplo Sync. Escolha Contas somente neste diretório organizacional para atender um diretório, ou Contas em qualquer diretório organizacional (multilocatário) para que vários diretórios se conectem ao mesmo aplicativo: cada um concede o consentimento com o seu próprio administrador."
           },
           "redirect": {
             "title": "Adicione a URI de redirecionamento",
@@ -539,7 +539,7 @@
           },
           "consent": {
             "title": "Conceda o consentimento de administrador",
-            "body": "Um administrador do locatário concede as permissões uma vez para todo o diretório. O botão abaixo abre a tela de consentimento e a resposta volta para esta página."
+            "body": "Um administrador do locatário concede as permissões uma vez para todo o diretório. Com um registro multilocatário, abra esta página a partir de cada diretório que precisa se conectar: o consentimento é concedido por diretório e o botão abaixo pertence ao diretório do administrador conectado."
           },
           "role": {
             "title": "Verifique o papel de administrador",

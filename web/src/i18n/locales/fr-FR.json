@@ -385,7 +385,7 @@
     "redirectUri": "Redirect URI",
     "redirectUriHint": "Enregistrez cette URL dans la console du fournisseur : {origin}",
     "tenantId": "Tenant id",
-    "tenantIdHint": "Laissez vide pour le tenant commun.",
+    "tenantIdHint": "Laissez vide (ou common) pour accepter tout annuaire professionnel ou scolaire : l’inscription doit alors être multi-tenant et chaque administrateur d’annuaire accorde le consentement. Indiquez un id de tenant ou un domaine vérifié pour le limiter à un seul annuaire.",
     "source": "Source",
     "secret": "Secret",
     "set": "Défini",
@@ -482,7 +482,7 @@
         "unverified_app": "Google peut exiger une vérification des autorisations sensibles ; une application non vérifiée est limitée à quelques utilisateurs et affiche un avertissement.",
         "admin_role_required": "Le compte connecté doit avoir un rôle d’administrateur : une autorisation accordée à l’application ne fait pas de l’utilisateur connecté un administrateur.",
         "license_required": "Les autorisations de licences et de rôles ne renvoient des données que sur une édition payante de Google Workspace.",
-        "single_tenant_recommended": "Une inscription mono-tenant limite le client à un seul annuaire, ce que veut un outil de synchronisation interne.",
+        "tenant_scope": "Connectez plusieurs annuaires avec une inscription multi-tenant : laissez l’id de tenant sur common, chaque administrateur d’annuaire accorde une fois pour le sien, et le consentement affiché ici est celui du dernier annuaire qui a terminé le parcours.",
         "work_accounts_only": "Les autorisations d’annuaire ne peuvent pas être accordées à des comptes Microsoft personnels : les comptes OneDrive personnels ne sont plus connectables."
       },
       "steps": {
@@ -523,7 +523,7 @@
         "microsoft": {
           "app": {
             "title": "Inscrivez une application",
-            "body": "Dans Microsoft Entra (Applications > Inscriptions d’applications) créez une inscription, par exemple Sync, et gardez l’option mono-tenant sauf si le multi-tenant est indispensable."
+            "body": "Dans Microsoft Entra (Applications > Inscriptions d’applications) créez une inscription, par exemple Sync. Choisissez Comptes de cet annuaire organisationnel uniquement pour un seul annuaire, ou Comptes de tout annuaire organisationnel (multi-tenant) pour que plusieurs annuaires se connectent à la même application : chacun accorde le consentement avec son propre administrateur."
           },
           "redirect": {
             "title": "Ajoutez l’URI de redirection",
@@ -539,7 +539,7 @@
           },
           "consent": {
             "title": "Accordez le consentement administrateur",
-            "body": "Un administrateur du tenant accorde les autorisations une fois pour tout l’annuaire. Le bouton ci-dessous ouvre l’écran de consentement et la réponse revient sur cette page."
+            "body": "Un administrateur du tenant accorde les autorisations une fois pour tout l’annuaire. Avec une inscription multi-tenant, ouvrez cette page depuis chaque annuaire à connecter : le consentement est accordé par annuaire et le bouton ci-dessous appartient à l’annuaire de l’administrateur connecté."
           },
           "role": {
             "title": "Vérifiez le rôle d’administrateur",

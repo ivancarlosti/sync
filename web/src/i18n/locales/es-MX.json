@@ -385,7 +385,7 @@
     "redirectUri": "Redirect URI",
     "redirectUriHint": "Registre esta URL en la consola del proveedor: {origin}",
     "tenantId": "Tenant id",
-    "tenantIdHint": "Deje vacío para el tenant común.",
+    "tenantIdHint": "Deje vacío (o common) para aceptar cualquier directorio laboral o escolar: el registro de la aplicación debe ser multiinquilino y cada administrador del directorio otorga el consentimiento. Fije un id de inquilino o un dominio verificado para limitarlo a un solo directorio.",
     "source": "Origen",
     "secret": "Secreto",
     "set": "Definido",
@@ -482,7 +482,7 @@
         "unverified_app": "Google puede exigir verificación de los permisos sensibles; una aplicación no verificada queda limitada a pocos usuarios y muestra una página de advertencia.",
         "admin_role_required": "La cuenta que conectes debe tener un rol de administrador: un permiso concedido a la aplicación no convierte al usuario que inicia sesión en administrador.",
         "license_required": "Los permisos de licencias y de roles solo devuelven datos en una edición de pago de Google Workspace.",
-        "single_tenant_recommended": "Un registro de un solo inquilino mantiene el cliente utilizable por un único directorio, que es lo que busca una herramienta interna de sincronización.",
+        "tenant_scope": "Conecta varios directorios con un registro multiinquilino: deja el id de inquilino en common, cada administrador del directorio concede una vez para el suyo y el consentimiento que se ve aquí es el del último directorio que completó el proceso.",
         "work_accounts_only": "Los permisos de directorio no se pueden conceder a cuentas personales de Microsoft, así que las cuentas personales de OneDrive ya no se pueden conectar."
       },
       "steps": {
@@ -523,7 +523,7 @@
         "microsoft": {
           "app": {
             "title": "Registra una aplicación",
-            "body": "En Microsoft Entra (Aplicaciones > Registros de aplicaciones) crea un registro, por ejemplo Sync, y mantén la opción de un solo inquilino salvo que realmente necesites multiinquilino."
+            "body": "En Microsoft Entra (Aplicaciones > Registros de aplicaciones) crea un registro, por ejemplo Sync. Elige Cuentas solo en este directorio organizativo para servir a un directorio, o Cuentas en cualquier directorio organizativo (multiinquilino) para que varios directorios se conecten a la misma aplicación: cada uno concede el consentimiento con su propio administrador."
           },
           "redirect": {
             "title": "Agrega la URI de redireccionamiento",
@@ -539,7 +539,7 @@
           },
           "consent": {
             "title": "Concede el consentimiento de administrador",
-            "body": "Un administrador del inquilino concede los permisos una vez para todo el directorio. El botón de abajo abre la pantalla de consentimiento y la respuesta regresa a esta página."
+            "body": "Un administrador del inquilino concede los permisos una vez para todo el directorio. Con un registro multiinquilino abre esta página desde cada directorio que deba conectarse: el consentimiento se concede por directorio y el botón de abajo corresponde al directorio del administrador que inició sesión."
           },
           "role": {
             "title": "Verifica el rol de administrador",

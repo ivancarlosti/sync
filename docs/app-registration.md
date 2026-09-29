@@ -104,9 +104,12 @@ Two things a permission does **not** buy:
 
 1. **Registration** — [Entra admin center](https://entra.microsoft.com) →
    Applications → App registrations → *New registration*, for example `Sync`.
-   Choose *Accounts in this organizational directory only* unless you really need
-   multi-tenant: a single-tenant registration keeps the client usable by one
-   directory, which is what an internal synchronisation tool wants.
+   Choose *Accounts in this organizational directory only* for one directory, or
+   *Accounts in any organizational directory (multi-tenant)* to let several
+   directories connect to the same client — every directory administrator then
+   grants the consent for their own directory (see the tenant step below). A
+   multi-tenant registration also has to be publisher verified before other
+   organisations can consent to it.
 2. **Redirect URI** — Authentication → Add a platform → **Web** →
    `APP_URL/api/oauth/microsoft/callback`. Leave the implicit grant options
    unchecked: Sync uses the authorization-code flow with PKCE, which does not need
@@ -122,8 +125,9 @@ Two things a permission does **not** buy:
    answer) and Sync tells you to open the setup guide instead of retrying.
 6. **Tenant** — `MICROSOFT_TENANT_ID` (or Admin > Providers → tenant id) decides
    the endpoint: `common` (any work/school account), `organizations`, or the
-   tenant UUID/domain. With the single-tenant registration, set the tenant
-   explicitly so a personal account can never be offered.
+   tenant UUID/domain. Leave it on `common` (or empty) for a multi-tenant
+   registration, so any directory can be connected; set the UUID or a verified
+   domain to lock the client to a single directory.
 7. **Role** — connect an account that holds the directory role matching the
    operations you plan (User Administrator for users, Groups Administrator for
    groups and distribution lists, License Administrator for licences). A Global
@@ -145,6 +149,13 @@ The record is compared against the **currently configured client id**: replacing
 the app registration makes the guide report "not granted yet" again, which is the
 truth — consent never carries over to another application.
 
+The consent belongs to **one directory at a time**, so a multi-tenant instance
+grants it once per connected directory: each administrator opens the same button
+from the guide (or the link is sent to them) and consents for their own directory.
+The stored record keeps the last directory that completed the flow, and a
+connection to a directory that has not consented yet still fails with
+`consent_required`, which is what tells the operator to repeat this step there.
+
 ### 3.3 Notes
 
 * Personal Microsoft accounts cannot be granted directory permissions, so a
@@ -154,9 +165,15 @@ truth — consent never carries over to another application.
 * Admin consent unlocks the *application*; the signed-in user still needs the
   role. A `403 Forbidden` from Graph after a successful consent almost always
   means "wrong role", not "missing consent".
-* The consent URL is built from the configured tenant, so a tenant id that is not
-  a valid segment falls back to `common` instead of escaping the endpoint
+* The sign-in endpoints are built from the configured tenant, so a tenant id that
+  is not a valid segment falls back to `common` instead of escaping the endpoint
   (`internal/providers/microsoft/provider.go`, `tenantID`).
+* The consent endpoint uses that same value except for the generic ones: Microsoft
+  documents `common` as unsupported by `adminconsent` ("Do not use common"), so
+  `common` and `consumers` — and therefore an empty tenant id — become
+  `organizations` there (`consentTenant` in the same file). A concrete tenant id
+  or verified domain is passed through unchanged, and only that one directory can
+  consent.
 
 
 
@@ -179,7 +196,7 @@ answers everything the screen renders:
 | `admin_consent_required` | the provider has a tenant-wide consent step (Microsoft) |
 | `admin_consent` | `{tenant, client_id, at, granted}` of this instance |
 | `steps[]` | the ordered walkthrough: `id`, `url`, `copy` (`redirect_uri` / `scopes`), `action` (`admin_consent`), `optional` |
-| `warnings[]` | caveat codes the UI renders (`api_enablement`, `consent_screen_type`, `unverified_app`, `admin_role_required`, `license_required`, `single_tenant_recommended`, `work_accounts_only`) |
+| `warnings[]` | caveat codes the UI renders (`api_enablement`, `consent_screen_type`, `unverified_app`, `admin_role_required`, `license_required`, `tenant_scope`, `work_accounts_only`) |
 
 The step text is not in the answer: the SPA translates
 `admin.guide.steps.<provider>.<id>.title` / `.body`, so the walkthrough is

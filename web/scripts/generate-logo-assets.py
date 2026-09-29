@@ -2,7 +2,7 @@
 """Rasterise the Sync brand mark into the PNG/ICO assets shipped by the SPA.
 
 The mark is *defined in code* (same 24x24 grid as the SVG sources, 2px strokes,
-rounded caps) so the raster assets always match `logo.svg` / `favicon.svg`
+rounded caps) so the raster assets always match `logo.svg`
 without any external design tool. Rerun after editing the geometry:
 
     python3 web/scripts/generate-logo-assets.py

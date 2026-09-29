@@ -385,7 +385,7 @@
     "redirectUri": "Redirect URI",
     "redirectUriHint": "Register this URL in the provider console: {origin}",
     "tenantId": "Tenant id",
-    "tenantIdHint": "Leave empty for the common tenant.",
+    "tenantIdHint": "Leave empty (or set common) to accept every work or school directory: the app registration must then be multi-tenant and each directory administrator grants the consent. Set a tenant id or a verified domain to lock it to one directory.",
     "source": "Source",
     "secret": "Secret",
     "set": "Set",
@@ -482,7 +482,7 @@
         "unverified_app": "Google may require verification of the sensitive scopes; an unverified app is limited to a small number of users and shows a warning page.",
         "admin_role_required": "The account you connect must hold an administrator role: a permission granted to the application does not make the signed-in user an administrator.",
         "license_required": "The licence and role permissions only return data on a paid Google Workspace edition.",
-        "single_tenant_recommended": "A single-tenant registration keeps the client usable by one directory only, which is what an internal synchronisation tool wants.",
+        "tenant_scope": "Connect several directories with a multi-tenant app registration: keep the tenant id as common, every directory administrator consents once for their own directory, and the consent shown here is the one of the last directory that completed the flow.",
         "work_accounts_only": "Directory permissions cannot be granted to personal Microsoft accounts, so personal OneDrive accounts can no longer be connected."
       },
       "steps": {
@@ -523,7 +523,7 @@
         "microsoft": {
           "app": {
             "title": "Register an application",
-            "body": "In Microsoft Entra (Applications > App registrations) create a registration, for example Sync, and keep the single-tenant option unless you really need multi-tenant."
+            "body": "In Microsoft Entra (Applications > App registrations) create a registration, for example Sync. Choose Accounts in this organizational directory only to serve one directory, or Accounts in any organizational directory (multi-tenant) to let several directories connect to the same app: each one grants the consent with its own administrator."
           },
           "redirect": {
             "title": "Add the redirect URI",
@@ -539,7 +539,7 @@
           },
           "consent": {
             "title": "Grant the admin consent",
-            "body": "A tenant administrator grants the permissions once for the whole directory. The button below opens the consent screen and the answer comes back to this page."
+            "body": "A tenant administrator grants the permissions once for the whole directory. With a multi-tenant registration open this page from each directory that has to connect: the consent is granted per directory and the button below belongs to the directory of the signed-in administrator."
           },
           "role": {
             "title": "Check the administrator role",

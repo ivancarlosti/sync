@@ -157,6 +157,19 @@ func TestTenantIDValidation(t *testing.T) {
 	}
 }
 
+func TestConsentTenantKeepsASingleDirectory(t *testing.T) {
+	for _, generic := range []string{"", "common", "consumers"} {
+		if got := consentTenant(providers.Credentials{TenantID: generic}); got != organizationsTenant {
+			t.Fatalf("consentTenant(%q) = %q, want %q", generic, got, organizationsTenant)
+		}
+	}
+	for _, single := range []string{"contoso.onmicrosoft.com", "11111111-2222-3333-4444-555555555555"} {
+		if got := consentTenant(providers.Credentials{TenantID: single}); got != single {
+			t.Fatalf("consentTenant(%q) = %q, want it unchanged", single, got)
+		}
+	}
+}
+
 func TestGraphClientNeedsAToken(t *testing.T) {
 	provider := New()
 	if _, _, err := provider.graphSession(&providers.Tokens{}); err == nil {

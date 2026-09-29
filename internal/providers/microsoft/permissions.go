@@ -91,6 +91,11 @@ func graphScope(permission string) string {
 // redirect_uri must be the registered callback (the flow comes back to
 // `/api/oauth/microsoft/callback` with `admin_consent=True`), and state is the
 // server side CSRF token of the stored flow.
+//
+// The consent is granted to one directory at a time, so the tenant segment comes
+// from consentTenant rather than from tenantID: with the default `common`
+// credentials every directory administrator can open this URL and consent for
+// their own directory, which is what a multi-tenant registration supports.
 func (p *Provider) AdminConsentURL(creds providers.Credentials, state string) string {
 	query := url.Values{}
 	query.Set("client_id", creds.ClientID)
@@ -101,5 +106,5 @@ func (p *Provider) AdminConsentURL(creds providers.Credentials, state string) st
 	if state != "" {
 		query.Set("state", state)
 	}
-	return loginBaseURL + "/" + tenantID(creds) + "/v2.0/adminconsent?" + query.Encode()
+	return loginBaseURL + "/" + consentTenant(creds) + "/v2.0/adminconsent?" + query.Encode()
 }

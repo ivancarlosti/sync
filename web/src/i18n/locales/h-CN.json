@@ -399,7 +399,7 @@
     "redirectUri": "Redirect URI",
     "redirectUriHint": "请在提供商控制台中注册此 URL：{origin}",
     "tenantId": "Tenant id",
-    "tenantIdHint": "留空表示使用通用租户。",
+    "tenantIdHint": "留空（或填 common）可接受任何工作或学校目录：应用注册必须为多租户，且由各目录的管理员分别授予同意。填写租户 ID 或已验证域名可将其限制为单个目录。",
     "source": "来源",
     "secret": "密钥",
     "set": "已设置",
@@ -496,7 +496,7 @@
         "unverified_app": "Google 可能要求对敏感权限进行验证；未验证的应用只能供少量用户使用，并会显示警告页面。",
         "admin_role_required": "所连接的账号必须具有管理员角色：授予应用的权限不会让登录用户成为管理员。",
         "license_required": "许可证与角色权限仅在付费的 Google Workspace 版本中返回数据。",
-        "single_tenant_recommended": "单租户注册使该客户端只服务于一个目录，这正是内部同步工具所需的。",
+        "tenant_scope": "使用多租户应用注册即可连接多个目录：租户 ID 保持 common，每个目录的管理员为该目录授予一次同意，此处显示的同意来自最后完成流程的目录。",
         "work_accounts_only": "目录权限无法授予个人 Microsoft 账号，因此个人 OneDrive 账号不再支持连接。"
       },
       "steps": {
@@ -537,7 +537,7 @@
         "microsoft": {
           "app": {
             "title": "注册应用",
-            "body": "在 Microsoft Entra（应用 > 应用注册）中创建一个注册，例如 Sync，并保留单租户选项，除非确实需要多租户。"
+            "body": "在 Microsoft Entra（应用 > 应用注册）中创建一个注册，例如 Sync。若只服务一个目录，选择“仅此组织目录中的帐户”；若要让多个目录连接到同一应用，选择“任何组织目录中的帐户（多租户）”，每个目录由其管理员分别授予同意。"
           },
           "redirect": {
             "title": "添加重定向 URI",
@@ -553,7 +553,7 @@
           },
           "consent": {
             "title": "授予管理员同意",
-            "body": "由租户管理员为整个目录授予一次权限。下方按钮会打开同意页面，结果会返回到本页。"
+            "body": "由租户管理员为整个目录授予一次权限。使用多租户注册时，请在每个需要连接的目录中打开本页：同意按目录授予，下方按钮属于当前登录管理员所在的目录。"
           },
           "role": {
             "title": "确认管理员角色",
