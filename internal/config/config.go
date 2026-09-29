@@ -94,6 +94,10 @@ type Config struct {
 
 	DefaultLocale string
 	DefaultTheme  string
+	// NotifyAllowPrivateTargets lets webhook notification channels point at an
+	// address that is not publicly routable (a LAN target, another container, a
+	// Tailscale address). See docs/notifications.md.
+	NotifyAllowPrivateTargets bool
 	// Dev enables Vite's dev-server proxy target for `npm run dev` (API only).
 	Dev bool
 
@@ -155,7 +159,10 @@ func Load() (*Config, error) {
 
 		DefaultLocale: envString("DEFAULT_LOCALE", "en-US"),
 		DefaultTheme:  strings.ToLower(envString("DEFAULT_THEME", "system")),
-		Dev:           envBool("APP_DEV", false),
+		// Webhook destinations are refused when they are not publicly routable,
+		// unless the operator says otherwise.
+		NotifyAllowPrivateTargets: envBool("NOTIFY_ALLOW_PRIVATE_TARGETS", false),
+		Dev:                       envBool("APP_DEV", false),
 	}
 
 	cfg.derive()

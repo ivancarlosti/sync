@@ -21,7 +21,7 @@ func testNotifier(t *testing.T) *Notifier {
 	if err != nil {
 		t.Fatalf("generating a key: %v", err)
 	}
-	return NewNotifier(nil, notify.NewDispatcher(time.Second), NewSecretBox(key))
+	return NewNotifier(nil, notify.NewDispatcher(time.Second, notify.Options{}), NewSecretBox(key))
 }
 
 func TestSealAndOpenConfig(t *testing.T) {

@@ -10,9 +10,23 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// webhookURLPattern is the only shape a webhook destination may have: an
+// absolute http(s) URL whose host is a bracketed IPv6 literal or a host name,
+// with an optional port and an optional path, query and fragment. A non-http
+// scheme (`ftp:`, `javascript:`), a relative path, credentials in the authority
+// part (`http://trusted@127.0.0.1/`), a missing host, a malformed name and any
+// space or control character — the last one also keeps a newline from splitting
+// the request line — are refused.
+var webhookURLPattern = regexp.MustCompile(`^https?://(?:\[[0-9A-Fa-f:.]+\]|[a-zA-Z0-9_](?:[a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?(?:\.[a-zA-Z0-9_](?:[a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?)*\.?)(?::[0-9]{1,5})?(?:[/?#][^[:space:][:cntrl:]]*)?$`)
+
+// maxWebhookRedirects bounds how many hops a delivery may make: a webhook that
+// redirects in a loop must not hold a sync run open.
+const maxWebhookRedirects = 5
 
 // WebhookSender delivers notifications to an arbitrary HTTP endpoint. It exists
 // because a generic "call this URL" requirement needs a free choice of method,
@@ -30,16 +44,28 @@ import (
 //	timeout_seconds optional per-request timeout
 type WebhookSender struct {
 	client *http.Client
+	// options is the operator's policy, kept so rendering a request (which the
+	// API does before saving a channel) applies the same destination rules as
+	// delivering one.
+	options Options
 }
 
-// NewWebhookSender builds the sender around a shared HTTP client. Redirects are
-// followed by Go's default policy: a webhook endpoint is operator supplied, so
-// no extra host restriction is added here.
-func NewWebhookSender(timeout time.Duration) *WebhookSender {
+// NewWebhookSender builds the sender around a shared HTTP client. The transport
+// refuses a destination that is not publicly routable unless the operator opted
+// in with Options.AllowPrivateTargets, which is what keeps a stored channel from
+// reaching the host's own network, and redirects follow this package's own
+// policy (guardRedirect).
+func NewWebhookSender(timeout time.Duration, options Options) *WebhookSender {
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
-	return &WebhookSender{client: &http.Client{Timeout: timeout}}
+	return &WebhookSender{
+		client: &http.Client{
+			Timeout:   timeout,
+			Transport: newWebhookTransport(options.AllowPrivateTargets),
+		},
+		options: options,
+	}
 }
 
 // Kind implements Sender.
@@ -54,11 +80,15 @@ func (s *WebhookSender) Send(ctx context.Context, config map[string]any, msg Mes
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
 		defer cancel()
 	}
-	request, err := NewRequest(ctx, config, msg)
+	request, err := NewRequest(ctx, config, msg, s.options)
 	if err != nil {
 		return err
 	}
-	response, err := s.client.Do(request)
+	// The client is copied so this delivery carries the redirect policy of this
+	// channel; the copy shares the transport, so no connection is wasted.
+	client := *s.client
+	client.CheckRedirect = guardRedirect(config)
+	response, err := client.Do(request)
 	if err != nil {
 		return fmt.Errorf("notify: calling the webhook: %w", err)
 	}
@@ -72,16 +102,54 @@ func (s *WebhookSender) Send(ctx context.Context, config map[string]any, msg Mes
 	return nil
 }
 
+// guardRedirect builds the redirect policy of one delivery. It bounds the hops,
+// and a redirect to another host loses the operator's secrets: the signature and
+// every header the channel configured are dropped before the request is sent
+// again. The reasoning is the same as stripTokenOnHostChange in
+// internal/providers/microsoft, and it is what keeps a legitimate endpoint's
+// redirect from leaking an API key to a third party.
+func guardRedirect(config map[string]any) func(*http.Request, []*http.Request) error {
+	headers := ConfigMap(config, "headers")
+	configured := make([]string, 0, len(headers))
+	for name := range headers {
+		configured = append(configured, name)
+	}
+	return func(request *http.Request, via []*http.Request) error {
+		if len(via) >= maxWebhookRedirects {
+			return fmt.Errorf("notify: the webhook redirected more than %d times", maxWebhookRedirects)
+		}
+		if len(via) == 0 || request.URL.Host == via[0].URL.Host {
+			return nil
+		}
+		request.Header.Del("X-Sync-Signature")
+		for _, name := range configured {
+			request.Header.Del(name)
+		}
+		return nil
+	}
+}
+
 // NewRequest renders the webhook request described by a configuration. It is
 // exported so the API can validate a channel (and so the tests can assert the
-// rendered body and signature) without performing a call.
-func NewRequest(ctx context.Context, config map[string]any, msg Message) (*http.Request, error) {
+// rendered body and signature) without performing a call. Rendering takes the
+// operator's policy because whether a private destination is acceptable is a
+// process-wide decision, not a property of the channel.
+func NewRequest(ctx context.Context, config map[string]any, msg Message, options Options) (*http.Request, error) {
 	target := ConfigString(config, "url")
 	if target == "" {
 		return nil, fmt.Errorf("%w: the webhook URL is required", ErrInvalidConfig)
 	}
-	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
-		return nil, fmt.Errorf("%w: the webhook URL must start with http:// or https://", ErrInvalidConfig)
+	// This check is deliberately inline, applied to the very value handed to
+	// http.NewRequestWithContext below. A channel may be created by anyone who can
+	// administer the instance and its URL is stored in the database, so this is
+	// the point where an arbitrary destination is narrowed to an absolute http(s)
+	// URL — a security scanner recognises a regexp used as a guard on the request
+	// URL, but only while the guard and the use are in the same function.
+	if !webhookURLPattern.MatchString(target) {
+		return nil, fmt.Errorf("%w: the webhook URL must be an absolute http:// or https:// URL with a host, without credentials, spaces or control characters (got %q)", ErrInvalidConfig, target)
+	}
+	if err := validateWebhookURLShape(target, options.AllowPrivateTargets); err != nil {
+		return nil, err
 	}
 	method := strings.ToUpper(ConfigString(config, "method"))
 	if method == "" {

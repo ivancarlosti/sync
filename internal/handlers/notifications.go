@@ -57,7 +57,8 @@ var channelSchemas = []channelKind{
 		Kind:  notify.KindWebhook,
 		Label: "Webhook",
 		Fields: []channelField{
-			{Key: "url", Label: "URL", Type: "text", Required: true, Hint: "http:// or https://"},
+			{Key: "url", Label: "URL", Type: "text", Required: true,
+				Hint: "absolute URL with a host, e.g. https://hooks.example.com/sync"},
 			{Key: "method", Label: "Method", Type: "select", Options: []string{"POST", "PUT", "PATCH"}, Default: "POST"},
 			{Key: "content_type", Label: "Content-Type", Type: "text", Default: "application/json"},
 			{Key: "headers", Label: "Extra headers", Type: "json", Hint: "{\"X-Api-Key\":\"…\"}"},

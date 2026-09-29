@@ -138,7 +138,9 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 	creds := services.NewProviderSettings(cfg, settings, box)
 	tokens := services.NewTokenManager(store, registry, creds, box)
 	appSettings := services.NewSettingsService(cfg, settings)
-	notifier := services.NewNotifier(store, notify.NewDispatcher(time.Second), box)
+	// The fixtures below deliver to httptest servers, which live on the loopback
+	// interface, so they stand in for an operator who allowed a private target.
+	notifier := services.NewNotifier(store, notify.NewDispatcher(time.Second, notify.Options{AllowPrivateTargets: true}), box)
 	notifier.SetLink(cfg.AppURL)
 	engine := services.NewSyncService(store, tokens, appSettings, notifier)
 
@@ -1597,6 +1599,64 @@ func seedRun(t *testing.T, store *services.Store, job jobView, startedAt time.Ti
 		t.Fatalf("finishing the run: %v", err)
 	}
 	return run
+}
+
+// TestIdentifierParametersCoverTheWholeRange pins the parsing of the identifier
+// parameters: a value that does not fit the identifier type is a 400 (never a
+// silent wrap to a smaller number) and a well formed but unknown id is a 404.
+func TestIdentifierParametersCoverTheWholeRange(t *testing.T) {
+	server, _ := newTestServer(t, models.AuthModeNone)
+
+	type idCase struct {
+		name string
+		path string
+		want int
+	}
+	cases := []idCase{
+		{"not a number", "/api/runs/abc", http.StatusBadRequest},
+		{"zero", "/api/runs/0", http.StatusBadRequest},
+		{"negative", "/api/runs/-1", http.StatusBadRequest},
+		{"hex", "/api/runs/0x10", http.StatusBadRequest},
+		{"float", "/api/runs/1.5", http.StatusBadRequest},
+		// One past the largest uint64: refused on every architecture.
+		{"uint64 overflow", "/api/runs/18446744073709551616", http.StatusBadRequest},
+	}
+	// A value beyond 32 bits is a valid identifier only where uint is 64 bits
+	// wide; elsewhere it must be refused instead of truncated.
+	wide := http.StatusNotFound
+	if strconv.IntSize < 64 {
+		wide = http.StatusBadRequest
+	}
+	cases = append(cases,
+		idCase{"uint64 max", "/api/runs/18446744073709551615", wide},
+		idCase{"just past 32 bits", "/api/runs/4294967296", wide},
+	)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := call(t, server, http.MethodGet, tc.path, nil)
+			requireStatus(t, recorder, tc.want)
+			if tc.want == http.StatusBadRequest {
+				requireErrorCode(t, recorder, codeValidation)
+			}
+		})
+	}
+
+	// The same rules apply to the optional `job_id` query parameter of the list.
+	for _, query := range []string{"abc", "0x10", "-1", "18446744073709551616"} {
+		recorder := call(t, server, http.MethodGet, "/api/runs?job_id="+query, nil)
+		requireStatus(t, recorder, http.StatusBadRequest)
+		requireErrorCode(t, recorder, codeValidation)
+	}
+	// An id that fits is a filter, not an error: an unknown job simply matches no
+	// run, so the answer stays 200.
+	accepted := []string{"", "1"}
+	if strconv.IntSize == 64 {
+		accepted = append(accepted, "4294967296", "18446744073709551615")
+	}
+	for _, query := range accepted {
+		recorder := call(t, server, http.MethodGet, "/api/runs?job_id="+query, nil)
+		requireStatus(t, recorder, http.StatusOK)
+	}
 }
 
 // TestRunHistoryAndDashboard covers the read-only side of the engine: the

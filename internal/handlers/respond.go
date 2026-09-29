@@ -155,7 +155,10 @@ func codeForStatus(status int) string {
 // cannot be an identifier.
 func parseID(c *gin.Context, name string) (uint, bool) {
 	raw := strings.TrimSpace(c.Param(name))
-	value, err := strconv.ParseUint(raw, 10, 64)
+	// strconv.IntSize is exactly the width of uint on this architecture, so the
+	// value can never be truncated by the conversion below: on a 32-bit build an
+	// identifier that does not fit is rejected instead of silently wrapping.
+	value, err := strconv.ParseUint(raw, 10, strconv.IntSize)
 	if err != nil || value == 0 {
 		abort(c, http.StatusBadRequest, "invalid identifier in the request path: "+raw)
 		return 0, false
@@ -188,7 +191,9 @@ func queryID(c *gin.Context, name string) (uint, bool) {
 	if raw == "" {
 		return 0, true
 	}
-	value, err := strconv.ParseUint(raw, 10, 64)
+	// Same reasoning as parseID: the bit size of the parse matches the width of
+	// uint, so the conversion cannot truncate.
+	value, err := strconv.ParseUint(raw, 10, strconv.IntSize)
 	if err != nil {
 		abort(c, http.StatusBadRequest, "invalid query parameter "+name+": "+raw)
 		return 0, false

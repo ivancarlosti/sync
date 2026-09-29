@@ -95,17 +95,35 @@ type Sender interface {
 	Send(ctx context.Context, config map[string]any, msg Message) error
 }
 
+// Options carries the process-wide settings of the dispatcher. They come from
+// the environment (see docs/configuration.md), never from a channel: a channel
+// cannot widen its own permissions.
+type Options struct {
+	// AllowPrivateTargets lets a webhook channel point at an address that is not
+	// publicly routable: a target on the local network (Gotify, ntfy, Home
+	// Assistant), another container addressed by service name, or a Tailscale
+	// address. It is off by default because the notification worker runs inside
+	// the same host as the rest of Sync, so without the refusal a channel could
+	// be used to reach the API itself, the database, another container or the
+	// cloud metadata endpoint at 169.254.169.254. Set
+	// NOTIFY_ALLOW_PRIVATE_TARGETS=true to allow it.
+	AllowPrivateTargets bool
+}
+
 // Dispatcher routes a message to the sender registered for its channel kind.
 type Dispatcher struct {
 	senders map[string]Sender
+	// options is the operator's policy, applied by Validate as well as by every
+	// send, so a channel that could never deliver is refused before it is saved.
+	options Options
 }
 
 // NewDispatcher builds the dispatcher with the senders of this build: shoutrrr
 // (which covers SMTP and every URL-scheme service) and the native webhook sender.
-func NewDispatcher(timeout time.Duration) *Dispatcher {
-	dispatcher := &Dispatcher{senders: map[string]Sender{}}
+func NewDispatcher(timeout time.Duration, options Options) *Dispatcher {
+	dispatcher := &Dispatcher{senders: map[string]Sender{}, options: options}
 	dispatcher.Register(NewShoutrrrSender(timeout))
-	dispatcher.Register(NewWebhookSender(timeout))
+	dispatcher.Register(NewWebhookSender(timeout, options))
 	return dispatcher
 }
 
@@ -166,7 +184,7 @@ func (d *Dispatcher) Validate(kind string, config map[string]any) error {
 		_, err := ShoutrrrURL(kind, config)
 		return err
 	case KindWebhook:
-		_, err := NewRequest(context.Background(), config, Message{Event: "test", Title: "Sync", Body: "test"})
+		_, err := NewRequest(context.Background(), config, Message{Event: "test", Title: "Sync", Body: "test"}, d.options)
 		return err
 	default:
 		return fmt.Errorf("%w: %q", ErrUnknownKind, kind)

@@ -158,7 +158,9 @@ func build(cfg *config.Config, settings *database.Settings) handlers.Deps {
 	registry := providers.NewRegistry(google.New(), microsoft.New())
 	credentials := services.NewProviderSettings(cfg, settings, box)
 	tokens := services.NewTokenManager(store, registry, credentials, box)
-	notifier := services.NewNotifier(store, notify.NewDispatcher(notifyTimeout), box)
+	notifier := services.NewNotifier(store, notify.NewDispatcher(notifyTimeout, notify.Options{
+		AllowPrivateTargets: cfg.NotifyAllowPrivateTargets,
+	}), box)
 	appSettings := services.NewSettingsService(cfg, settings)
 	syncService := services.NewSyncService(store, tokens, appSettings, notifier)
 

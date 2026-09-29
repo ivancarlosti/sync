@@ -257,7 +257,7 @@ func TestShoutrrrURL(t *testing.T) {
 
 func TestWebhookRequestDefaults(t *testing.T) {
 	msg := testMessage()
-	request, err := NewRequest(context.Background(), map[string]any{"url": "https://hooks.example.com/sync"}, msg)
+	request, err := NewRequest(context.Background(), map[string]any{"url": "https://hooks.example.com/sync"}, msg, Options{})
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
@@ -294,7 +294,7 @@ func TestWebhookRequestTemplateHeadersAndSignature(t *testing.T) {
 			"X-Not-A-Value": 12,
 		},
 	}
-	request, err := NewRequest(context.Background(), config, msg)
+	request, err := NewRequest(context.Background(), config, msg, Options{})
 	if err != nil {
 		t.Fatalf("NewRequest() error = %v", err)
 	}
@@ -331,17 +331,68 @@ func TestWebhookRequestValidation(t *testing.T) {
 		{"empty url", map[string]any{"url": "  "}},
 		{"scheme not supported", map[string]any{"url": "ftp://example.com/hook"}},
 		{"relative url", map[string]any{"url": "/hook"}},
+		{"absolute path", map[string]any{"url": "hooks.example.com/sync"}},
+		{"javascript scheme", map[string]any{"url": "javascript:alert(1)"}},
+		{"scheme relative", map[string]any{"url": "//example.com/hook"}},
+		{"host missing", map[string]any{"url": "http://"}},
+		{"host missing with port", map[string]any{"url": "http://:8080/hook"}},
+		{"credentials", map[string]any{"url": "http://user:pass@example.com/hook"}},
+		{"credentials hiding the real host", map[string]any{"url": "http://trusted@127.0.0.1/hook"}},
+		{"header injection", map[string]any{"url": "https://example.com/hook\nX-Injected: 1"}},
+		{"space inside", map[string]any{"url": "https://example.com/a b"}},
+		{"malformed host", map[string]any{"url": "http://a..b/hook"}},
+		{"label starting with a dash", map[string]any{"url": "http://-bad.example.com/hook"}},
+		{"port out of range", map[string]any{"url": "https://example.com:99999/hook"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := NewRequest(context.Background(), tc.config, testMessage()); !errors.Is(err, ErrInvalidConfig) {
+			if _, err := NewRequest(context.Background(), tc.config, testMessage(), Options{}); !errors.Is(err, ErrInvalidConfig) {
 				t.Fatalf("error = %v, want ErrInvalidConfig", err)
 			}
 		})
 	}
+
+	// The same shapes are accepted once the destination is a plain URL with a
+	// host, including the IPv6 and port notation an operator may need.
+	accepted := []string{
+		"https://hooks.example.com/sync",
+		"https://hooks.example.com:8443/a/b?x=1#frag",
+		"http://hooks",
+		"http://sub.hooks.example.com./hook",
+		"https://1.1.1.1/hook",
+		"https://[2606:4700:4700::1111]:8443/hook",
+		"https://example.com",
+	}
+	for _, target := range accepted {
+		t.Run("accepted "+target, func(t *testing.T) {
+			if _, err := NewRequest(context.Background(), map[string]any{"url": target}, testMessage(), Options{}); err != nil {
+				t.Fatalf("NewRequest(%q) error = %v", target, err)
+			}
+		})
+	}
+
+	// A private destination is a policy decision, not a shape error: the operator
+	// opt-in is what makes a LAN target usable, and ErrPrivateTarget is the reason
+	// reported in the UI.
+	private := []string{
+		"http://127.0.0.1:8123/hook",
+		"http://10.0.0.5/hook",
+		"http://169.254.169.254/latest/meta-data/",
+		"http://[fd00::1]:9000/hook",
+		"http://100.64.0.7/hook",
+	}
+	for _, target := range private {
+		if _, err := NewRequest(context.Background(), map[string]any{"url": target}, testMessage(), Options{AllowPrivateTargets: true}); err != nil {
+			t.Fatalf("NewRequest(%q) with AllowPrivateTargets error = %v", target, err)
+		}
+		if _, err := NewRequest(context.Background(), map[string]any{"url": target}, testMessage(), Options{}); !errors.Is(err, ErrPrivateTarget) {
+			t.Fatalf("NewRequest(%q) error = %v, want ErrPrivateTarget", target, err)
+		}
+	}
+
 	if _, err := NewRequest(context.Background(), map[string]any{
 		"url": "https://hooks.example.com/sync", "body_template": "{json}",
-	}, testMessage()); err != nil {
+	}, testMessage(), Options{}); err != nil {
 		t.Fatalf("a {json} template must render: %v", err)
 	}
 }
@@ -369,7 +420,7 @@ func TestWebhookSenderSend(t *testing.T) {
 	}))
 	defer server.Close()
 
-	sender := NewWebhookSender(5 * time.Second)
+	sender := NewWebhookSender(5*time.Second, Options{AllowPrivateTargets: true})
 	config := map[string]any{"url": server.URL + "/ok", "secret": "s3cret"}
 	if err := sender.Send(context.Background(), config, testMessage()); err != nil {
 		t.Fatalf("Send() error = %v", err)
@@ -389,7 +440,7 @@ func TestWebhookSenderSend(t *testing.T) {
 }
 
 func TestDispatcher(t *testing.T) {
-	dispatcher := NewDispatcher(time.Second)
+	dispatcher := NewDispatcher(time.Second, Options{})
 	// `shoutrrr` is the raw URL kind of the sender that also provides the
 	// structured `smtp` form, so both must be routed to it.
 	if got := dispatcher.Kinds(); len(got) != 3 || got[0] != KindShoutrrr || got[1] != KindSMTP || got[2] != KindWebhook {

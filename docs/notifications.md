@@ -58,13 +58,50 @@ added to `data` (the dashboard URL) and reaches a webhook template as
 
 | Key | Type | Required | Notes |
 |---|---|---|---|
-| `url` | text | ✔ | `http://` or `https://` |
+| `url` | text | ✔ | absolute `http://`/`https://` URL with a host, e.g. `https://hooks.example.com/sync`; see the rules below |
 | `method` | select | | `POST` (default), `PUT`, `PATCH` |
 | `content_type` | text | | default `application/json` |
 | `headers` | json | | e.g. `{"X-Api-Key":"…"}`; a header whose name looks secret (`token`, `auth`, `api_key`, …) is encrypted |
 | `body_template` | textarea | | placeholders below; empty → the full JSON payload is sent |
 | `secret` | password (**secret**) | | when set, the body is signed with HMAC-SHA256 |
 | `timeout_seconds` | int | | default `20` |
+
+The `url` is validated twice, because a channel is a stored setting that a later
+delivery has to trust:
+
+* **Shape** (when the channel is saved, and when the test button runs): an
+  absolute `http`/`https` URL with a host, an optional port between 1 and 65535,
+  and an optional path, query and fragment. Anything else is refused with the
+  reason in the form — a non-http scheme (`ftp://`, `javascript:`), a relative
+  path (`/hook`), a missing host (`http://`), credentials in the authority
+  (`http://user:pass@host/`, which can also hide the real destination), a
+  malformed host and any space or control character.
+* **Destination** (when the connection is opened): the name is resolved once and
+  the address that is actually dialled has to be publicly routable — the answer
+  is checked, and it is the checked address that is connected to, so a name
+  cannot pass the check and then resolve somewhere private (DNS rebinding).
+  Loopback, private (RFC 1918 / `fc00::/7`), link-local (including
+  `169.254.169.254`, the cloud metadata endpoint), carrier-grade NAT
+  (`100.64.0.0/10`, which is also what Tailscale uses), TEST-NET, benchmarking,
+  `240.0.0.0/4` and NAT64 addresses are refused with
+  `webhook destination is not publicly routable`.
+
+Two caveats about that second check:
+
+* When `HTTP_PROXY`/`HTTPS_PROXY`/`NO_PROXY` are set, the request goes through
+  the proxy: the check then applies to the proxy address and what the proxy may
+  reach is its own policy.
+* The destination check belongs to the `webhook` kind. A `shoutrrr` URL (and the
+  `smtp` host) is handed to the shoutrrr engine unchanged, so a LAN mail relay or
+  a `generic://` service keeps working and is not affected by the setting.
+
+To deliver to a target on your own network, set
+`NOTIFY_ALLOW_PRIVATE_TARGETS=true` ([configuration.md §5](configuration.md)); the
+refusal exists because the worker runs inside the Sync container, so without it a
+stored channel could be pointed at the API itself, the database or another
+container. A delivery follows at most 5 redirects, and a redirect that changes
+the host drops `X-Sync-Signature` and every configured header, so an endpoint
+cannot forward an API key to a third party.
 
 Placeholders understood by `body_template` (a literal replacement, never an
 expression language):
@@ -143,5 +180,8 @@ See [api.md](api.md) for payloads.
 | SMTP `starttls` fails | the server wants implicit TLS | switch `encryption` to `ssl` (usually port 465) |
 | nothing is delivered although the channel works | the channel is not subscribed to the event | tick the events (or use `test`, which always delivers) |
 | webhook body is empty | `body_template` is set but expands to nothing | use `{json}` or `{message}`; literal text is kept as-is |
+| test answers `delivery_failed` with `webhook destination is not publicly routable` | the destination is loopback, private, link-local or another reserved range, and the opt-in is off | deliver to a public endpoint, or set `NOTIFY_ALLOW_PRIVATE_TARGETS=true` for a target on your own network |
+| the form refuses the URL of a channel that used to work | the saved value is not an absolute `http`/`https` URL with a host (relative path, `ftp://`, embedded credentials, a space or a control character) | correct the URL; see the shape rules above |
+| a redirect answers 502 | the endpoint redirects more than 5 times | point the channel at the final URL |
 | secret shows as `********` after saving | that is the mask | send `********` again to keep it, or type a new value |
 | frequent `account.error` notifications | refresh token revoked | reconnect the account ([oauth.md](oauth.md)) |
