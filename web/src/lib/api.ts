@@ -158,6 +158,11 @@ export interface ConnectedAccount {
   display_name: string;
   avatar_url: string;
   scopes: string[];
+  /** Capabilities the stored grant satisfies, and the ones it misses. */
+  capabilities: Capability[];
+  missing_capabilities: Capability[];
+  /** needs_reconnect is true when the provider now asks for more permissions. */
+  needs_reconnect: boolean;
   status: 'connected' | 'error';
   last_error?: string;
   expires_at: string;
@@ -293,6 +298,65 @@ export interface ProviderInfo {
   tenant_id?: string;
   source: 'environment' | 'database' | string;
   configured: boolean;
+  /** admin_consent is present for the providers that need a tenant-wide grant. */
+  admin_consent?: AdminConsentStatus;
+}
+
+/** Capability is a class of provider operations (see internal/providers). */
+export type Capability =
+  | 'files'
+  | 'users'
+  | 'groups'
+  | 'members'
+  | 'domains'
+  | 'orgunits'
+  | 'roles'
+  | 'licenses';
+
+/** AdminConsentStatus is the tenant-wide consent recorded for a provider. */
+export interface AdminConsentStatus {
+  tenant?: string;
+  client_id?: string;
+  at?: string;
+  granted: boolean;
+}
+
+/** GuidePermission is one permission the setup guide asks the operator to grant. */
+export interface GuidePermission {
+  capability: Capability;
+  title: string;
+  scope: string;
+  admin_consent: boolean;
+}
+
+/**
+ * GuideStep is one step of the walkthrough. The server owns the structure and the
+ * console links; the text is a catalog key derived from the provider and the id
+ * (`admin.guide.steps.<provider>.<id>.title`), so it is translated here.
+ */
+export interface GuideStep {
+  id: string;
+  url?: string;
+  /** copy names the value of this instance the step asks to paste in the console. */
+  copy?: 'redirect_uri' | 'scopes' | string;
+  optional?: boolean;
+  /** action names an API action the step offers (`admin_consent`). */
+  action?: 'admin_consent' | string;
+}
+
+/** ProviderGuide is `GET /api/providers/:provider/guide`. */
+export interface ProviderGuide {
+  provider: ProviderName;
+  configured: boolean;
+  redirect_uri: string;
+  console_urls: Record<string, string>;
+  permissions: GuidePermission[];
+  scopes: string[];
+  capabilities: Capability[];
+  admin_consent_required: boolean;
+  admin_consent: AdminConsentStatus;
+  steps: GuideStep[];
+  warnings: string[];
 }
 
 /** ChannelField is one input of the server driven channel form. */
@@ -389,6 +453,16 @@ export const accounts = {
       method: 'POST',
       data: { redirect_to: redirectTo },
     }),
+  /**
+   * adminConsent starts the tenant-wide consent flow (Microsoft Entra admin
+   * consent); the answer carries the URL the administrator has to follow.
+   */
+  adminConsent: (provider: ProviderName, redirectTo: string) =>
+    request<{ url: string; state?: string }>({
+      url: `/oauth/${provider}/admin-consent`,
+      method: 'POST',
+      data: { redirect_to: redirectTo },
+    }),
 };
 
 export const jobs = {
@@ -449,6 +523,11 @@ export const providers = {
   ) => request<ProviderInfo>({ url: `/providers/${provider}`, method: 'PUT', data: payload }),
   clear: (provider: ProviderName) =>
     request<ProviderInfo>({ url: `/providers/${provider}`, method: 'DELETE' }),
+  /**
+   * guide is the app-registration walkthrough of a provider: the steps, the
+   * console links, the redirect URI to register and the permission list to grant.
+   */
+  guide: (provider: ProviderName) => request<ProviderGuide>({ url: `/providers/${provider}/guide` }),
 };
 
 export const notifications = {

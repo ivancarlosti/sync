@@ -148,9 +148,17 @@ type FlowKind string
 const (
 	// FlowOAuth is a provider connection (Google Drive / Microsoft Graph).
 	FlowOAuth FlowKind = "oauth"
+	// FlowAdminConsent is the tenant-wide consent of a provider (Microsoft
+	// Entra admin consent), started from Admin > Setup guide.
+	FlowAdminConsent FlowKind = "admin_consent"
 	// FlowKeycloak is an operator login against a Keycloak realm.
 	FlowKeycloak FlowKind = "keycloak"
 )
+
+// SettingAdminConsentSuffix is the field name of the settings key recording the
+// tenant-wide consent of a provider (`provider.<name>.admin_consent`). The value
+// is a small JSON document: `tenant`, `client_id` and `at`.
+const SettingAdminConsentSuffix = "admin_consent"
 
 // Notification events an operator can subscribe a channel to.
 const (

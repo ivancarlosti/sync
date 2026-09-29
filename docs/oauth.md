@@ -5,6 +5,7 @@ Sync runs two authorization-code flows with PKCE (RFC 7636, `S256`):
 | Flow | Purpose | Entry point | Documented in |
 |---|---|---|---|
 | `oauth` | connect a Google Drive / Microsoft Graph account | `POST /api/oauth/:provider/start`, `GET /api/oauth/:provider/callback` | this file |
+| `admin_consent` | grant the provider's permissions for a whole tenant (Microsoft) | `POST /api/oauth/:provider/admin-consent`, same callback | this file |
 | `keycloak` | log an operator in against a realm | `GET /api/auth/keycloak`, `GET /api/auth/callback` | [authentication.md](authentication.md) |
 
 Both use the same building blocks: a `state` value signed with
@@ -39,14 +40,39 @@ through the redirect.
 
 | Condition | Redirect |
 |---|---|
-| `error=` present in the query (consent denied, cancelled) | `/accounts?connect_error=denied&detail=<error_description>` |
+| `error=` present in the query (consent denied, cancelled) | `/accounts?connect_error=<code>&provider=<provider>&detail=<error_description>` |
 | success | `/accounts?connected=<provider>&detail=<email or display name>` |
-| any other failure | `/accounts?connect_error=<code>&detail=<message>` |
+| any other failure | `/accounts?connect_error=<code>&provider=<provider>&detail=<message>` |
 
 `<code>` is the ordinary API error code (`validation`, `unauthorized` — the link
-was already used or expired —, `not_found`, `internal`); the accounts screen
-translates it with the `accounts.error_*` catalog keys and shows `detail` as
-technical text.
+was already used or expired —, `not_found`, `internal`) or one of the OAuth codes
+the provider answered with, mapped by `connectErrorCode`: `access_denied` →
+`denied`, and `consent_required` / `admin_consent_required` /
+`interaction_required` / `invalid_scope` / `unauthorized_client` →
+`consent_required` (which tells the screen to offer the setup guide instead of a
+retry). The accounts screen translates it with the `accounts.error_*` catalog keys
+and shows `detail` as technical text.
+
+### 1.1 Tenant-wide admin consent (Microsoft)
+
+`POST /api/oauth/:provider/admin-consent {redirect_to?}` answers `{url, state}`
+where `url` is `https://login.microsoftonline.com/{tenant}/v2.0/adminconsent`
+carrying the client id, the registered redirect URI, the same scope list as the
+authorization request and the state. The `admin_consent` flow row is identical to
+an `oauth` row minus the PKCE verifier (there is no code exchange).
+
+Microsoft comes back on the same callback with `admin_consent=True&tenant=…` — or
+with `error=access_denied` when the administrator refused. The handler tells the
+two flows apart by the `flow` column of the state row (`OAuthService.FlowOf`, a
+read that does not consume it):
+
+* success → `OAuthService.CompleteAdminConsent` consumes the state and records
+  `provider.microsoft.admin_consent` (`{tenant, client_id, at}` in the `settings`
+  table) → `302 /admin/guide/microsoft?consent=granted`;
+* refusal → the state is consumed all the same (`AbandonAdminConsent`, so a
+  replayed link cannot resurrect the flow) → `302 /admin/guide/microsoft?consent_error=…&detail=…`.
+
+Providers without a consent step (Google) answer `400 validation`.
 
 States are **single use**: `Store.ConsumeOAuthState` deletes the row in the same
 statement that reads it, so a replayed callback is rejected.
@@ -71,6 +97,7 @@ statement that reads it, so a replayed callback is rejected.
 | refresh token rejected or missing | the account is marked `status=error` with `last_error`, the call returns `ErrReconnect` → HTTP **412** with `code=reconnect`; the SPA shows "reconnect this account" |
 | provider answered 401 mid-run | same as above (the run records the file as `failed`) |
 | provider answered 404 for an item | `providers.ErrNotFound` → the engine treats it as a deletion, never an error |
+| authorization server refused the permissions (`access_denied`, `invalid_scope`, `consent_required`) | `providers.AuthError` → `services.ErrConsent` → HTTP **412** with `code=consent_required`; the SPA offers the setup guide |
 
 A background loop (`Scheduler.RefreshTokens`, every 60 s, `DefaultRefreshWindow`
 = 5 min) refreshes tokens proactively, which is why a scheduled run at 3 AM
@@ -79,15 +106,28 @@ forces the same pass and answers `{"refreshed": n}`.
 
 ## 3. Scopes
 
-| Provider | Scopes requested |
-|---|---|
-| Google | `openid`, `https://www.googleapis.com/auth/drive`, `…/auth/userinfo.email`, `…/auth/userinfo.profile` (plus `access_type=offline` and `prompt=consent`, so a refresh token is always returned) |
-| Microsoft | `offline_access`, `openid`, `profile`, `email`, `https://graph.microsoft.com/User.Read`, `…/Files.ReadWrite.All`, `…/Sites.ReadWrite.All` (plus `prompt=consent`, so a reconnection returns a refresh token) |
+Every permission a provider needs is requested **from the first connection**, in
+one authorization request. A connection made today therefore keeps working after
+an upgrade instead of failing on an operation its grant never covered; the price
+is a longer consent screen. The complete list, the capability each scope unlocks
+and the registration instructions are in
+[app-registration.md](app-registration.md); the code side is one table per
+provider (`internal/providers/google/permissions.go`,
+`internal/providers/microsoft/permissions.go`), which is also what
+`GET /api/providers/:provider/guide` renders.
+
+| Provider | Capabilities | Request options |
+|---|---|---|
+| Google | files (`drive`, `userinfo.email`, `userinfo.profile`, `openid`), users (`admin.directory.user`, `.user.alias`), groups (`admin.directory.group`), members (`admin.directory.group.member`), domains (`admin.directory.domain.readonly`), orgunits (`admin.directory.orgunit`), roles (`admin.directory.rolemanagement.readonly`), licenses (`apps.licensing`) | `access_type=offline`, `prompt=consent`, `include_granted_scopes=true`, PKCE `S256` |
+| Microsoft | files (`Files.ReadWrite.All`, `Sites.ReadWrite.All`, `User.Read`, `offline_access`, `openid`, `profile`, `email`), users (`User.Read.All`, `User.ReadWrite.All`), groups (`Group.ReadWrite.All`, `Directory.ReadWrite.All`), members (`GroupMember.ReadWrite.All`), domains (`Domain.Read.All`), orgunits (`AdministrativeUnit.ReadWrite.All`), roles (`RoleManagement.Read.All`), licenses (`Organization.Read.All`, `LicenseAssignment.ReadWrite.All`) | `prompt=consent`, `response_mode=query`, PKCE `S256`; every directory scope needs the tenant-wide admin consent (§1.1) |
 
 `Files.ReadWrite.All` is the Graph scope that covers personal OneDrive;
 `Sites.ReadWrite.All` is what allows synchronising a SharePoint document library
 (`GET /api/accounts/:id/sites`). The account's granted scopes are stored
-space-separated in `connected_accounts.scopes` and shown in the accounts screen.
+space-separated in `connected_accounts.scopes` and shown in the accounts screen,
+which also derives the capability badges: `capabilities` (satisfied by the stored
+grant) and `missing_capabilities` / `needs_reconnect` (requested by this release,
+not yet granted → reconnect).
 
 ## 4. Redirect URIs
 

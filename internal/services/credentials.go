@@ -2,8 +2,10 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ivancarlosti/sync/internal/config"
 	"github.com/ivancarlosti/sync/internal/database"
@@ -21,6 +23,22 @@ const (
 	SourceNone = "none"
 )
 
+// AdminConsentStatus records the tenant-wide consent granted to the OAuth client
+// of a provider (Microsoft Entra "admin consent"). Google has no equivalent
+// endpoint, so the value stays empty there.
+type AdminConsentStatus struct {
+	// Tenant is the directory the administrator consented for.
+	Tenant string `json:"tenant,omitempty"`
+	// ClientID is the application the consent was granted to: consent never
+	// carries over to another app registration.
+	ClientID string `json:"client_id,omitempty"`
+	// At is when the consent was granted.
+	At *time.Time `json:"at,omitempty"`
+	// Granted is computed against the client id configured right now, so a
+	// stale record (the operator replaced the app registration) reports false.
+	Granted bool `json:"granted"`
+}
+
 // ProviderCredentialsInfo is the masked view of a provider configuration used
 // by Admin > Providers: it never contains the client secret itself.
 type ProviderCredentialsInfo struct {
@@ -31,6 +49,9 @@ type ProviderCredentialsInfo struct {
 	TenantID    string              `json:"tenant_id,omitempty"`
 	Source      string              `json:"source"`
 	Configured  bool                `json:"configured"`
+	// AdminConsent is the tenant-wide consent status, for the providers that
+	// need one (Microsoft). It is omitted for the others.
+	AdminConsent *AdminConsentStatus `json:"admin_consent,omitempty"`
 }
 
 // ProviderSettings resolves the OAuth client of a provider. The environment is
@@ -128,6 +149,13 @@ func (p *ProviderSettings) Info(ctx context.Context, provider models.ProviderNam
 	if provider == models.ProviderMicrosoft {
 		info.TenantID = p.cfg.MicrosoftTenant
 	}
+	status, err := p.AdminConsent(ctx, provider)
+	if err != nil {
+		return info, err
+	}
+	if status.At != nil {
+		info.AdminConsent = &status
+	}
 
 	overrides, err := p.settings.Prefix(ctx, models.ProviderConfigPrefix+string(provider)+".")
 	if err != nil {
@@ -185,7 +213,56 @@ func (p *ProviderSettings) Update(ctx context.Context, provider models.ProviderN
 	return nil
 }
 
-// Clear removes every override of a provider so the environment applies again.
+// AdminConsent returns the recorded tenant-wide consent of a provider. The
+// Granted flag is computed against the client id configured right now, so a
+// record left behind by a replaced app registration reports false.
+func (p *ProviderSettings) AdminConsent(ctx context.Context, provider models.ProviderName) (AdminConsentStatus, error) {
+	status := AdminConsentStatus{}
+	raw, found, err := p.settings.Get(ctx, settingKey(provider, models.SettingAdminConsentSuffix))
+	if err != nil {
+		return status, fmt.Errorf("services: reading the %s consent: %w", provider, err)
+	}
+	if !found || strings.TrimSpace(raw) == "" {
+		return status, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &status); err != nil {
+		// A malformed record is not worth failing a screen: the operator simply
+		// grants the consent again.
+		return AdminConsentStatus{}, nil
+	}
+	if creds, err := p.Credentials(ctx, provider); err == nil {
+		status.Granted = status.ClientID != "" && strings.EqualFold(status.ClientID, creds.ClientID)
+	}
+	return status, nil
+}
+
+// SetAdminConsent records that an administrator granted the provider's
+// permissions for a whole tenant. Only non-secret facts are stored: the tenant,
+// the application it was granted to and the moment it happened.
+func (p *ProviderSettings) SetAdminConsent(ctx context.Context, provider models.ProviderName, tenant string) error {
+	creds, err := p.Credentials(ctx, provider)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	status := AdminConsentStatus{
+		Tenant:   strings.TrimSpace(tenant),
+		ClientID: creds.ClientID,
+		At:       &now,
+	}
+	payload, err := json.Marshal(status)
+	if err != nil {
+		return fmt.Errorf("services: encoding the %s consent: %w", provider, err)
+	}
+	if err := p.settings.Set(ctx, settingKey(provider, models.SettingAdminConsentSuffix), string(payload)); err != nil {
+		return fmt.Errorf("services: saving the %s consent: %w", provider, err)
+	}
+	return nil
+}
+
+// The recorded tenant-wide consent is deliberately kept: it belongs to the app
+// registration, not to the credentials, and it is only reported as granted while
+// the configured client id matches it.
 func (p *ProviderSettings) Clear(ctx context.Context, provider models.ProviderName) error {
 	keys := []string{
 		settingKey(provider, "client_id"),

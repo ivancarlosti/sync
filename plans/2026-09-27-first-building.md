@@ -6,6 +6,9 @@
   (Go backend + embedded Vue 3 SPA) with OAuth providers (Google Drive / Microsoft Graph),
   encrypted tokens, 3 auth modes, notifications, 7 locales, light/dark theme (+RTL) and
   full AI-oriented documentation.
+- **Follow-up:** [`2026-09-28-app-registration-guide.md`](./2026-09-28-app-registration-guide.md)
+  — the guided app registration (`Admin > Setup guide`) and the always-on permission set
+  (files, users, groups, distribution lists, roles, licences).
 
 > Progress log rule: **update this file at the end of every work session / context loss point.**
 > “Current status” must always describe exactly what is done and what is next.

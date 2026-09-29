@@ -125,20 +125,16 @@ func (p *Provider) transport() http.RoundTripper {
 // Name implements providers.Provider.
 func (p *Provider) Name() models.ProviderName { return models.ProviderMicrosoft }
 
-// Scopes implements providers.Provider. Files.ReadWrite.All covers OneDrive and
-// every SharePoint document library the user can reach, Sites.ReadWrite.All is
-// needed to resolve a site into its default drive, and offline_access is what
-// makes the token set refreshable.
+// Scopes implements providers.Provider. The list is built from the permission
+// table in permissions.go, which is also what the setup guide renders.
+//
+// Files.ReadWrite.All covers OneDrive and every SharePoint document library the
+// user can reach, Sites.ReadWrite.All resolves a site into its default drive and
+// offline_access is what makes the token set refreshable. Everything above
+// User.Read is a directory permission, which is why the tenant administrator has
+// to grant the consent once (AdminConsentURL).
 func (p *Provider) Scopes() []string {
-	return []string{
-		"offline_access",
-		"openid",
-		"profile",
-		"email",
-		"https://graph.microsoft.com/User.Read",
-		"https://graph.microsoft.com/Files.ReadWrite.All",
-		"https://graph.microsoft.com/Sites.ReadWrite.All",
-	}
+	return providers.ScopesOf(p.Permissions())
 }
 
 // AuthCodeURL implements providers.Provider. prompt=consent guarantees that a
@@ -167,9 +163,22 @@ func (p *Provider) Exchange(ctx context.Context, creds providers.Credentials, co
 	}
 	token, err := oauthConfig(creds).Exchange(ctx, code, options...)
 	if err != nil {
-		return nil, fmt.Errorf("microsoft graph: authorization code exchange failed: %w", err)
+		return nil, fmt.Errorf("microsoft graph: authorization code exchange failed: %w", authFailure(err))
 	}
 	return tokensFromOAuth(token, ""), nil
+}
+
+// authFailure turns the error document of an identity platform refusal into a
+// providers.AuthError, which carries the OAuth error code the services layer maps
+// to `consent_required` (a tenant-wide admin consent that was never granted, a
+// denied prompt, a scope the application may not use). Every other failure is
+// returned untouched.
+func authFailure(err error) error {
+	var retrieve *oauth2.RetrieveError
+	if !errors.As(err, &retrieve) {
+		return err
+	}
+	return providers.NewAuthError(models.ProviderMicrosoft, retrieve.ErrorCode, retrieve.ErrorDescription)
 }
 
 // Refresh implements providers.Provider. Microsoft rotates the refresh token on

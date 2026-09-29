@@ -5,9 +5,10 @@
 // environment variables and the override stored in Sync. Every card says which
 // one is in use, and an empty secret keeps the stored one, so an operator can
 // correct a redirect URI without having the secret at hand.
-import { RefreshCw, Save, Trash2 } from '@lucide/vue';
+import { Compass, RefreshCw, Save, Trash2 } from '@lucide/vue';
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRouter } from 'vue-router';
 
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
@@ -35,6 +36,7 @@ interface Form {
 const EMPTY: Form = { client_id: '', client_secret: '', redirect_uri: '', tenant_id: '' };
 
 const { t } = useI18n();
+const router = useRouter();
 
 const rows = ref<ProviderInfo[]>([]);
 const hints = ref<Record<string, string>>({});
@@ -175,6 +177,11 @@ function sourceStatus(row: ProviderInfo): string {
 onMounted(() => {
   void load();
 });
+
+/** openGuide opens the guided app registration of one provider. */
+function openGuide(provider: ProviderName): void {
+  void router.push({ name: 'admin-guide', params: { provider } });
+}
 </script>
 
 <template>
@@ -287,9 +294,25 @@ onMounted(() => {
         <p class="text-xs text-muted-foreground">
           {{ t('admin.secret') }}: {{ row.secret_set ? t('admin.set') : t('admin.unset') }}
         </p>
+
+        <p v-if="row.admin_consent" class="text-xs text-muted-foreground">
+          {{ t('admin.guide.consentTitle') }}:
+          {{
+            row.admin_consent.granted
+              ? t('admin.guide.consentGranted', {
+                  tenant: row.admin_consent.tenant,
+                  date: row.admin_consent.at,
+                })
+              : t('admin.guide.consentMissing')
+          }}
+        </p>
       </div>
 
       <template #footer>
+        <Button variant="outline" :disabled="saving || removing" @click="openGuide(row.provider)">
+          <Compass class="h-4 w-4" aria-hidden="true" />
+          {{ t('admin.guide.title') }}
+        </Button>
         <Button
           v-if="row.source === 'database'"
           variant="outline"

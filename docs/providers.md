@@ -36,6 +36,28 @@ type Provider interface {
 type SiteBrowser interface {
     SearchSites(ctx, creds, tokens, query string) ([]Drive, error)
 }
+
+// Optional capability: providers that publish their permission table. The table
+// is the single source of truth for Scopes(), the setup guide and the capability
+// badges of the accounts screen.
+type ScopeCatalog interface {
+    Permissions() []Permission // {Capability, Title, Scope, AdminConsent}
+    ConsoleURLs() map[string]string
+}
+
+// Optional capability: providers whose permissions are granted tenant-wide.
+type ConsentGranter interface {
+    AdminConsentURL(creds Credentials, state string) string
+}
+
+// Capability values: files, users, groups, members, domains, orgunits, roles,
+// licenses. helpers: Catalog / ScopesOf / CapabilitiesOf / MissingCapabilities /
+// HasCapability.
+//
+// Authorization refusals the operator can act on are returned as *AuthError
+// ({Provider, Code, Description}); IsConsentRequired reports the ones that mean
+// "the permissions were not granted" (the services layer turns them into
+// ErrConsent → HTTP 412 `consent_required`).
 ```
 
 Key types:
@@ -81,6 +103,11 @@ this order:
 }
 ```
 
+Microsoft adds `admin_consent: {tenant, client_id, at, granted}` once a tenant
+administrator granted the permissions from the setup guide; `granted` is computed
+against the client id configured right now, so a consent left over from a
+replaced app registration reports `false`.
+
 `source` is `environment`, `database` or `none`; `client_secret` is **never**
 returned — only `secret_set`. `PUT /api/providers/:provider` with an empty
 `client_secret` keeps the stored one (so the form can be edited without retyping
@@ -89,28 +116,23 @@ environment value applies again.
 
 ## 3. Registering the OAuth applications
 
-### Google Drive
+The step-by-step instructions (console pages, the exact redirect URI, the exact
+permission list, the tenant-wide admin consent and the pitfalls) live in
+[app-registration.md](app-registration.md) — and in the product, in
+**Admin > Setup guide**, which renders them from the permission table of the
+running binary (`GET /api/providers/:provider/guide`, see
+`internal/services/guide.go`).
 
-1. Google Cloud console → APIs & Services → enable **Google Drive API**.
-2. OAuth consent screen: internal or external; add the test users or publish.
-3. Credentials → OAuth client ID → *Web application*.
-4. Authorized redirect URI: `APP_URL/api/oauth/google/callback`.
-5. Set `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` (or paste them in Admin > Providers).
+What the registration has to expose:
 
-The consent screen is shown with `prompt=consent` + `include_granted_scopes`, so a
-reconnection always returns a refresh token.
+| Provider | Redirect URI to register | APIs / permissions |
+|---|---|---|
+| Google | `APP_URL/api/oauth/google/callback` | Drive API + Admin SDK API + Enterprise License Manager API enabled; the scopes of the permission table (sensitive: `admin.directory.*`, `apps.licensing`); the client ID allow-listed in Admin console → Security → API controls |
+| Microsoft | `APP_URL/api/oauth/microsoft/callback` | the Graph delegated permissions of the permission table, all of them *admin consent required*; the tenant administrator grants them once (the guide has the consent button) |
 
-### Microsoft 365 / OneDrive / SharePoint
+Both flows are shown with `prompt=consent`, so a reconnection always returns a
+refresh token; Google also uses `access_type=offline` and `include_granted_scopes`.
 
-1. Entra ID → App registrations → **New registration**.
-2. Supported account types: *Accounts in this organizational directory* (single
-   tenant), or multitenant if you set `MICROSOFT_TENANT_ID=organizations`/`common`.
-3. Redirect URI → *Web* → `APP_URL/api/oauth/microsoft/callback`.
-4. API permissions → Microsoft Graph → **Delegated** → `User.Read`,
-   `Files.ReadWrite.All`, `Sites.ReadWrite.All`; grant admin consent.
-5. Certificates & secrets → new client secret → `MICROSOFT_CLIENT_SECRET`.
-6. `MICROSOFT_CLIENT_ID`, `MICROSOFT_TENANT_ID` (`common`, `organizations`,
-   `consumers` or a tenant UUID).
 
 ## 4. Behaviour differences that matter
 
@@ -130,16 +152,22 @@ which is how a deletion detected during a run is distinguished from a failure.
 ## 5. What the UI shows
 
 * **Accounts** — one row per connected account: provider, e-mail, status, granted
-  permissions, expiry, last refresh and last synchronisation, with *Check the
-  token* and *Disconnect* actions.
+  permissions, capability badges (the ones the stored grant satisfies, plus the
+  ones the current release asks for on top of it), expiry, last refresh and last
+  synchronisation, with *Check the token*, *Reconnect* (only when a permission is
+  missing) and *Disconnect* actions.
 * **Job editor** — the folder browser calls
   `GET /api/accounts/:id/drives` then
   `GET /api/accounts/:id/drives/:drive/items?folder_id=…`; folders come first,
   then files, both alphabetically. Items with `unsupported: true` are greyed out
   and cannot be selected.
-* **Admin > Providers** — the wizard: client id, client secret, redirect URI,
-  tenant (Microsoft), the current `source`, and the exact redirect URI to paste
-  into the provider console.
+* **Admin > Providers** — client id, client secret, redirect URI, tenant
+  (Microsoft), the current `source`, the exact redirect URI to paste into the
+  provider console and the tenant-wide consent state (Microsoft).
+* **Admin > Setup guide** — the guided registration: ordered steps with console
+  deep links, the redirect URI and the permission list to copy, the capability
+  badges, the caveats, the tenant-wide consent button (Microsoft) and a link to
+  [app-registration.md](../docs/app-registration.md).
 
 ## 6. Troubleshooting
 
@@ -149,5 +177,7 @@ which is how a deletion detected during a run is distinguished from a failure.
 | `redirect_uri_mismatch` (Google) / `AADSTS50011` (Microsoft) | the registered URI differs from `APP_URL/api/oauth/<provider>/callback` | register the exact URL; check for a trailing slash and the `https` scheme |
 | `424 not_configured` when starting a flow | the client is missing or the secret is empty | `secret_set: false` in `GET /api/providers` tells you which field |
 | `412 reconnect` on every call | refresh token revoked/expired | reconnect the account (same remote account → same row, jobs preserved) |
+| `412 consent_required` when connecting | the permissions were refused, or the Microsoft admin consent is missing | collect the setup guide (`Admin > Setup guide`), fix the console, retry |
+| capability badges marked in red on an account | the account was connected before those permissions were requested | reconnect the account |
 | SharePoint libraries missing | `Sites.ReadWrite.All` not granted or no admin consent | grant it and reconnect |
 | Google native docs never copied | by design in V1 (`unsupported`) | export them manually, or keep them out of the source folder |

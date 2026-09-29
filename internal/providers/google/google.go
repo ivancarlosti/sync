@@ -2,6 +2,7 @@ package google
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -42,16 +43,18 @@ func New() *Provider {
 // Name implements providers.Provider.
 func (p *Provider) Name() models.ProviderName { return models.ProviderGoogle }
 
-// Scopes implements providers.Provider. The full drive scope is required to see
-// shared drives and to write into any folder the user can access; the openid
-// scopes are only used to display the connected identity.
+// Scopes implements providers.Provider. The list is built from the permission
+// table below (permissions.go), which is also what the setup guide renders.
+//
+// The full drive scope is required to see shared drives and to write into any
+// folder the user can access; the openid scopes are only used to display the
+// connected identity. The admin.directory.*, apps.licensing and
+// admin.directory.rolemanagement.readonly scopes need a Google Workspace domain
+// and an administrator identity; they are requested up front so a connection
+// made today is already ready for the directory features (see
+// docs/app-registration.md).
 func (p *Provider) Scopes() []string {
-	return []string{
-		"openid",
-		"https://www.googleapis.com/auth/drive",
-		"https://www.googleapis.com/auth/userinfo.email",
-		"https://www.googleapis.com/auth/userinfo.profile",
-	}
+	return providers.ScopesOf(p.Permissions())
 }
 
 // AuthCodeURL implements providers.Provider. offline access plus
@@ -79,9 +82,21 @@ func (p *Provider) Exchange(ctx context.Context, creds providers.Credentials, co
 	}
 	token, err := oauthConfig(creds).Exchange(ctx, code, options...)
 	if err != nil {
-		return nil, fmt.Errorf("google drive: authorization code exchange failed: %w", err)
+		return nil, fmt.Errorf("google drive: authorization code exchange failed: %w", authFailure(err))
 	}
 	return tokensFromOAuth(token, ""), nil
+}
+
+// authFailure turns the error document of an authorization-server refusal into a
+// providers.AuthError, which carries the OAuth error code the services layer maps
+// to `consent_required` (a denied prompt, a scope the OAuth client may not use).
+// Every other failure is returned untouched.
+func authFailure(err error) error {
+	var retrieve *oauth2.RetrieveError
+	if !errors.As(err, &retrieve) {
+		return err
+	}
+	return providers.NewAuthError(models.ProviderGoogle, retrieve.ErrorCode, retrieve.ErrorDescription)
 }
 
 // Refresh implements providers.Provider. Google only returns a new refresh

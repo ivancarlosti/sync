@@ -149,6 +149,7 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 		OAuth:       services.NewOAuthService(store, registry, creds, tokens),
 		Tokens:      tokens,
 		Credentials: creds,
+		Guide:       services.NewGuideService(registry, creds),
 		Registry:    registry,
 		Settings:    appSettings,
 		Notifier:    notifier,

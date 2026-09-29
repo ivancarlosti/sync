@@ -10,7 +10,9 @@ package providers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/ivancarlosti/sync/internal/models"
@@ -178,6 +180,234 @@ type Provider interface {
 	// IsNotFound reports whether err is the provider's "gone" error, so the
 	// engine can treat a vanished file as a deletion.
 	IsNotFound(err error) bool
+}
+
+// Capability names a class of provider operations the operator can recognise in
+// the UI ("this account can manage licences"). Capabilities are derived from the
+// scope string the provider returned, so a connection made before a scope was
+// added reports what it is missing instead of claiming a feature it cannot use.
+type Capability string
+
+const (
+	// CapabilityFiles covers browsing and transferring files (the sync engine).
+	CapabilityFiles Capability = "files"
+	// CapabilityUsers covers reading and managing user accounts.
+	CapabilityUsers Capability = "users"
+	// CapabilityGroups covers groups and Microsoft distribution lists.
+	CapabilityGroups Capability = "groups"
+	// CapabilityMembers covers group membership.
+	CapabilityMembers Capability = "members"
+	// CapabilityDomains covers the verified domains of a tenant.
+	CapabilityDomains Capability = "domains"
+	// CapabilityOrgUnits covers organisational units and their settings.
+	CapabilityOrgUnits Capability = "orgunits"
+	// CapabilityRoles covers the administrative role catalogue (read-only).
+	CapabilityRoles Capability = "roles"
+	// CapabilityLicenses covers subscription and licence assignment.
+	CapabilityLicenses Capability = "licenses"
+)
+
+// ProviderCapabilities lists every capability in the order the UI displays them.
+var ProviderCapabilities = []Capability{
+	CapabilityFiles,
+	CapabilityUsers,
+	CapabilityGroups,
+	CapabilityMembers,
+	CapabilityDomains,
+	CapabilityOrgUnits,
+	CapabilityRoles,
+	CapabilityLicenses,
+}
+
+// Permission documents one requested scope: why it is requested, which feature
+// needs it, and whether a tenant administrator has to grant it for everybody.
+// The slice a provider returns is its single source of truth: Scopes() builds
+// the authorization request from it, GET /api/providers/:provider/guide renders
+// it and the capability badges are derived from it.
+type Permission struct {
+	// Capability is the feature class this scope unlocks.
+	Capability Capability `json:"capability"`
+	// Title is the i18n key suffix of the human readable description
+	// (`admin.capability.<title>`); it lets one capability be described by
+	// several scopes without repeating the text.
+	Title string `json:"title"`
+	// Scope is the exact string sent to the provider.
+	Scope string `json:"scope"`
+	// AdminConsent is true when the scope can only be granted tenant-wide
+	// (Google: administrator identity + API controls allowlist; Microsoft:
+	// admin consent), which the guide has to explain before the flow starts.
+	AdminConsent bool `json:"admin_consent"`
+}
+
+// ScopeCatalog is implemented by providers that publish their permission table.
+// It is optional so the interface above stays the only mandatory contract.
+type ScopeCatalog interface {
+	// Permissions returns every scope the provider requests, in request order.
+	Permissions() []Permission
+	// ConsoleURLs returns the registration-console deep links specific to this
+	// provider (API enablement pages), keyed by a stable name.
+	ConsoleURLs() map[string]string
+}
+
+// Catalog returns the permission table of a provider, or nil when the provider
+// does not publish one.
+func Catalog(provider Provider) []Permission {
+	catalog, ok := provider.(ScopeCatalog)
+	if !ok {
+		return nil
+	}
+	return catalog.Permissions()
+}
+
+// ConsoleURLs returns the provider specific console links, never nil.
+func ConsoleURLs(provider Provider) map[string]string {
+	links := map[string]string{}
+	if catalog, ok := provider.(ScopeCatalog); ok {
+		for key, url := range catalog.ConsoleURLs() {
+			links[key] = url
+		}
+	}
+	return links
+}
+
+// ScopesOf returns the scope strings of a permission table, in order.
+func ScopesOf(permissions []Permission) []string {
+	scopes := make([]string, 0, len(permissions))
+	for _, permission := range permissions {
+		scopes = append(scopes, permission.Scope)
+	}
+	return scopes
+}
+
+// CapabilitiesOf maps a granted scope list onto the capabilities of a permission
+// table. Matching is case-insensitive and a capability is only reported when
+// every scope it declares was granted, so an incomplete or stale grant never
+// claims a feature.
+func CapabilitiesOf(permissions []Permission, granted []string) []Capability {
+	satisfied := []Capability{}
+	for _, capability := range ProviderCapabilities {
+		if HasCapability(permissions, granted, capability) {
+			satisfied = append(satisfied, capability)
+		}
+	}
+	return satisfied
+}
+
+// HasCapability reports whether a grant satisfies every scope of a capability.
+func HasCapability(permissions []Permission, granted []string, capability Capability) bool {
+	declared := false
+	for _, permission := range permissions {
+		if permission.Capability != capability {
+			continue
+		}
+		declared = true
+		if !containsScope(granted, permission.Scope) {
+			return false
+		}
+	}
+	return declared
+}
+
+// MissingCapabilities returns the capabilities of a table that a grant does not
+// satisfy, in display order.
+func MissingCapabilities(permissions []Permission, granted []string) []Capability {
+	missing := []Capability{}
+	for _, capability := range ProviderCapabilities {
+		if HasCapability(permissions, granted, capability) {
+			continue
+		}
+		missing = append(missing, capability)
+	}
+	return missing
+}
+
+// normalizeScope lowercases a scope and drops the Graph resource prefix, so a
+// grant reported as "https://graph.microsoft.com/User.Read" and one reported as
+// "User.Read" are recognised as the same permission.
+func normalizeScope(scope string) string {
+	value := strings.ToLower(strings.TrimSpace(scope))
+	return strings.TrimPrefix(value, graphResource)
+}
+
+// graphResource is the resource prefix of a Microsoft Graph delegated scope. Both
+// forms appear in token responses, so the scope matching above is prefix
+// tolerant instead of the permission tables having to declare every variant.
+const graphResource = "https://graph.microsoft.com/"
+
+// containsScope reports whether a granted scope list holds a scope, ignoring case,
+// surrounding whitespace and (for Microsoft Graph) the resource prefix.
+func containsScope(granted []string, scope string) bool {
+	wanted := normalizeScope(scope)
+	for _, item := range granted {
+		if normalizeScope(item) == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+// AuthError is a refusal of the provider's authorization server that the
+// operator can act on. Code is the OAuth error code (`access_denied`,
+// `invalid_scope`, `consent_required`, …) and Description is the raw text the
+// provider sent, which the UI only shows as technical detail.
+type AuthError struct {
+	Provider    models.ProviderName
+	Code        string
+	Description string
+}
+
+// Error renders a diagnostic message that never contains a token.
+func (e *AuthError) Error() string {
+	description := strings.TrimSpace(e.Description)
+	if description == "" {
+		return fmt.Sprintf("%s: the authorization server refused the request (%s)", e.Provider, e.Code)
+	}
+	return fmt.Sprintf("%s: the authorization server refused the request (%s): %s", e.Provider, e.Code, description)
+}
+
+// NewAuthError normalises an authorization-server refusal, dropping an empty or
+// unhelpful description so the message stays readable in the UI.
+func NewAuthError(provider models.ProviderName, code, description string) *AuthError {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "unknown_error"
+	}
+	return &AuthError{
+		Provider:    provider,
+		Code:        code,
+		Description: strings.TrimSpace(description),
+	}
+}
+
+// consentCodes are the OAuth error codes meaning "the permissions were not
+// granted": a missing tenant-wide admin consent, a denied prompt or a scope the
+// application may not use. They all map to services.ErrConsent instead of the
+// generic validation error the caller would otherwise report.
+var consentCodes = map[string]bool{
+	"access_denied":          true,
+	"admin_consent_required": true,
+	"consent_required":       true,
+	"interaction_required":   true,
+	"invalid_scope":          true,
+	"unauthorized_client":    true,
+}
+
+// IsConsentRequired reports whether err is a provider refusal the operator fixes
+// by granting the requested permissions (and, for Microsoft, the tenant-wide
+// admin consent) rather than by retrying.
+func IsConsentRequired(err error) bool {
+	var authErr *AuthError
+	if !errors.As(err, &authErr) {
+		return false
+	}
+	return consentCodes[strings.ToLower(strings.TrimSpace(authErr.Code))]
+}
+
+// ConsentGranter is implemented by providers whose permissions must be granted
+// once for the whole tenant (the Microsoft Entra "admin consent" endpoint).
+type ConsentGranter interface {
+	// AdminConsentURL builds the tenant-wide consent URL for the credentials.
+	AdminConsentURL(creds Credentials, state string) string
 }
 
 // DriveRoot is the well known id of the root folder of a drive, understood by

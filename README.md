@@ -43,6 +43,11 @@
   `account.connected`, `account.error`.
 * **Seven locales incl. RTL** — `en-US`, `pt-BR`, `es-MX`, `fr-FR`, `h-CN`,
   `hi-IN`, `ar-SA` (the Arabic catalog mirrors the whole document).
+* **Guided app registration** — `Admin > Setup guide` walks an operator through
+  the Google Cloud console or Microsoft Entra with the exact redirect URI, the
+  exact permission list and a one-click tenant-wide admin consent; the Accounts
+  screen then shows which capability each connected account holds and what a
+  reconnection would add.
 * **Admin screens** — provider credentials (with an encrypted override over the
   environment), instance defaults (locale, theme, interval, run timeout), raw
   settings, maintenance actions and build information.
@@ -87,7 +92,8 @@ ACCOUNT_PASSWORD=<at least 8 characters>
 ```
 
 Everything else has a default. Adding `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
-(or configuring them later in **Admin > Providers**) is what enables Google Drive;
+(or creating the application later with **Admin > Setup guide**, and pasting the
+values in **Admin > Providers**) is what enables Google Drive;
 `MICROSOFT_CLIENT_ID`/`MICROSOFT_CLIENT_SECRET` do the same for Microsoft 365.
 Every variable, its default and its validation message:
 [docs/configuration.md](docs/configuration.md).
@@ -95,7 +101,8 @@ Every variable, its default and its validation message:
 ## First run
 
 1. **Accounts** — connect a Google and/or Microsoft account (the OAuth client must
-   be configured first; the screen links to the providers page otherwise).
+   be configured first; the screen links to the providers page otherwise, and
+   **Admin > Setup guide** has the whole registration walkthrough).
 2. **Jobs → New job** — pick the accounts and folders, choose a direction, a
    conflict policy, optional excludes, an interval, then save.
 3. *Synchronise now* runs it immediately; the run, its counters and its per-file
@@ -136,7 +143,8 @@ Details, conventions and the test layout: [docs/development.md](docs/development
 | [configuration.md](docs/configuration.md) | every environment variable, boot sequence, validation, troubleshooting |
 | [database.md](docs/database.md) | tables, indexes, relationships, retention, backup, useful queries |
 | [authentication.md](docs/authentication.md) | the three modes, session cookie, throttling, captcha, Keycloak allow-list |
-| [oauth.md](docs/oauth.md) | provider flows, PKCE, token storage/refresh, redirect URIs |
+| [oauth.md](docs/oauth.md) | provider flows, PKCE, token storage/refresh, redirect URIs, tenant-wide consent |
+| [app-registration.md](docs/app-registration.md) | guided app registration for Google Workspace and Microsoft Entra, permissions, consent, troubleshooting |
 | [providers.md](docs/providers.md) | provider interface, capabilities, app registration, troubleshooting |
 | [notifications.md](docs/notifications.md) | channel schemas, events, placeholders, secrets, delivery semantics |
 | [api.md](docs/api.md) | endpoint reference with payloads, error codes and examples |

@@ -57,7 +57,8 @@
     "toggleTheme": "Changer de thème",
     "changeLanguage": "Changer de langue",
     "skipToContent": "Aller au contenu",
-    "primaryNavigation": "Navigation principale"
+    "primaryNavigation": "Navigation principale",
+    "adminGuide": "Guide de configuration"
   },
   "auth": {
     "title": "Connexion à Sync",
@@ -195,7 +196,12 @@
     "error_validation": "Le fournisseur a répondu avec des données inattendues.",
     "error_unauthorized": "Votre session a expiré. Reconnectez-vous.",
     "error_ratelimited": "Trop de tentatives. Patientez un instant et réessayez.",
-    "error_unknown": "La connexion a échoué."
+    "error_unknown": "La connexion a échoué.",
+    "capabilities": "Capacités",
+    "missingCapabilities": "Ce compte a été connecté avant l’existence de ces autorisations : reconnectez-le pour les accorder.",
+    "reconnect": "Reconnecter",
+    "reconnectHint": "Reconnecter le compte applique les autorisations demandées par cette version.",
+    "error_consent_required": "Le fournisseur a refusé les autorisations. Accordez le consentement administrateur depuis le guide de configuration, puis reconnectez le compte."
   },
   "browser": {
     "title": "Explorateur de dossiers",
@@ -426,7 +432,126 @@
     "localesAvailable": "Langues incluses",
     "health": "Santé",
     "healthOk": "La base de données répond.",
-    "healthDegraded": "La base de données ne répond pas : {detail}"
+    "healthDegraded": "La base de données ne répond pas : {detail}",
+    "capability": {
+      "files": "Fichiers",
+      "users": "Utilisateurs",
+      "groups": "Groupes et listes de diffusion",
+      "members": "Membres de groupes",
+      "domains": "Domaines",
+      "orgunits": "Unités organisationnelles",
+      "roles": "Rôles administratifs",
+      "licenses": "Licences"
+    },
+    "guide": {
+      "title": "Guide de configuration",
+      "subtitle": "Créez l’application OAuth dont Sync a besoin, avec exactement les autorisations qu’il demande.",
+      "providers": "Fournisseur",
+      "intro": {
+        "google": "Google Drive et l’annuaire Workspace partagent un même projet Cloud : quelques minutes dans la console et une décision de l’administrateur.",
+        "microsoft": "Une inscription d’application dans Microsoft Entra, un secret client et un consentement administrateur pour tout le tenant."
+      },
+      "statusReady": "Le client OAuth est configuré.",
+      "statusMissing": "Aucun client OAuth n’est encore configuré.",
+      "redirectTitle": "URI de redirection",
+      "redirectHint": "Enregistrez exactement cette URL dans la console ; toute autre valeur est refusée par le fournisseur.",
+      "permissionsTitle": "Autorisations demandées par Sync",
+      "permissionsHint": "{count} autorisations sont demandées d’un coup : une connexion faite aujourd’hui fonctionne encore après la prochaine version.",
+      "capabilitiesTitle": "Ce que ces autorisations débloquent",
+      "warningsTitle": "Avant de commencer",
+      "console": "Ouvrir la console",
+      "credentialsTitle": "Identifiants du fournisseur",
+      "credentialsHint": "Stockés dans cette instance, afin que chaque connexion les utilise.",
+      "credentialsAction": "Saisir les identifiants",
+      "consentTitle": "Consentement administrateur",
+      "consentGranted": "Accordé pour {tenant} le {date}.",
+      "consentMissing": "Pas encore accordé : sans lui, le fournisseur refuse les autorisations d’annuaire.",
+      "consentAction": "Accorder le consentement administrateur",
+      "consentDone": "L’administrateur a consenti : les autorisations valent désormais pour tout l’annuaire.",
+      "consentError": "Le consentement administrateur n’a pas pu être accordé.",
+      "connectTitle": "Connecter un compte",
+      "connectHint": "Une fois les étapes ci-dessus terminées, connectez le compte depuis l’écran des comptes avec une identité qui atteint les dossiers à synchroniser.",
+      "connectAction": "Ouvrir les comptes",
+      "step": "Étape",
+      "optional": "facultatif",
+      "docs": "Lire le guide complet",
+      "loadError": "Le guide de configuration n’a pas pu être chargé.",
+      "warnings": {
+        "api_enablement": "Chaque API doit être activée dans le même projet que le client OAuth, sinon le premier appel à l’annuaire échoue faute d’autorisation.",
+        "consent_screen_type": "Un écran de consentement Externe resté en mode test ne fonctionne que pour les comptes publiés comme utilisateurs tests, et ses jetons de rafraîchissement expirent au bout de sept jours.",
+        "unverified_app": "Google peut exiger une vérification des autorisations sensibles ; une application non vérifiée est limitée à quelques utilisateurs et affiche un avertissement.",
+        "admin_role_required": "Le compte connecté doit avoir un rôle d’administrateur : une autorisation accordée à l’application ne fait pas de l’utilisateur connecté un administrateur.",
+        "license_required": "Les autorisations de licences et de rôles ne renvoient des données que sur une édition payante de Google Workspace.",
+        "single_tenant_recommended": "Une inscription mono-tenant limite le client à un seul annuaire, ce que veut un outil de synchronisation interne.",
+        "work_accounts_only": "Les autorisations d’annuaire ne peuvent pas être accordées à des comptes Microsoft personnels : les comptes OneDrive personnels ne sont plus connectables."
+      },
+      "steps": {
+        "google": {
+          "project": {
+            "title": "Créez ou choisissez un projet Google Cloud",
+            "body": "Ouvrez la liste des projets et créez-en un (par exemple sync-files), ou sélectionnez le projet que cette instance doit utiliser."
+          },
+          "apis": {
+            "title": "Activez les trois API",
+            "body": "Activez l’API Google Drive, l’API Admin SDK et l’API Enterprise License Manager dans ce projet. Une autorisation d’annuaire échoue tant que l’API correspondante n’est pas activée."
+          },
+          "consent": {
+            "title": "Configurez l’écran de consentement OAuth",
+            "body": "Choisissez Interne pour un domaine Workspace (sans vérification Google), ou Externe avec vos comptes publiés comme utilisateurs tests. Ajoutez les autorisations demandées ; Google classe les admin.directory.* comme sensibles."
+          },
+          "client": {
+            "title": "Créez le client OAuth",
+            "body": "Identifiants > Créer des identifiants > ID client OAuth > Application Web. Copiez l’ID client et le secret dans les identifiants de cette instance."
+          },
+          "redirect": {
+            "title": "Ajoutez l’URI de redirection autorisée",
+            "body": "Dans le même client, ajoutez l’URL ci-dessous aux URI de redirection autorisées puis enregistrez. Un caractère manquant ou en trop est l’erreur d’inscription la plus fréquente."
+          },
+          "permissions": {
+            "title": "Ajoutez les autorisations demandées",
+            "body": "Collez la liste ci-dessous là où l’écran de consentement demande les portées. Sync les demande toutes d’un coup : une connexion faite aujourd’hui reste valable après une mise à jour."
+          },
+          "admin": {
+            "title": "Autorisez l’application dans la console d’administration",
+            "body": "Dans Sécurité > Contrôles des API > Contrôle des accès aux applications, marquez l’ID client comme approuvé (ou ajoutez-le à la liste autorisée de vos unités organisationnelles)."
+          },
+          "connect": {
+            "title": "Connectez un compte administrateur",
+            "body": "Connectez un administrateur Workspace (un super administrateur pour les autorisations d’annuaire). Sync agit en tant que ce compte : révoquez son consentement si vous cessez d’utiliser l’instance."
+          }
+        },
+        "microsoft": {
+          "app": {
+            "title": "Inscrivez une application",
+            "body": "Dans Microsoft Entra (Applications > Inscriptions d’applications) créez une inscription, par exemple Sync, et gardez l’option mono-tenant sauf si le multi-tenant est indispensable."
+          },
+          "redirect": {
+            "title": "Ajoutez l’URI de redirection",
+            "body": "Authentification > Ajouter une plateforme > Web, puis collez l’URL ci-dessous. Laissez les options d’octroi implicite désactivées : Sync utilise le flux de code d’autorisation avec PKCE."
+          },
+          "secret": {
+            "title": "Créez un secret client",
+            "body": "Certificats et secrets > Nouveau secret client, copiez immédiatement la valeur et stockez-la dans les identifiants de cette instance. Notez la date d’expiration : un secret expiré casse toutes les tâches."
+          },
+          "permissions": {
+            "title": "Ajoutez les autorisations Microsoft Graph",
+            "body": "Autorisations API > Ajouter une autorisation > Microsoft Graph > Autorisations déléguées, puis ajoutez toutes les autorisations de la liste ci-dessous. Toutes exigent le consentement d’un administrateur."
+          },
+          "consent": {
+            "title": "Accordez le consentement administrateur",
+            "body": "Un administrateur du tenant accorde les autorisations une fois pour tout l’annuaire. Le bouton ci-dessous ouvre l’écran de consentement et la réponse revient sur cette page."
+          },
+          "role": {
+            "title": "Vérifiez le rôle d’administrateur",
+            "body": "Le consentement n’est pas un privilège : l’identité qui se connecte doit aussi détenir un rôle d’annuaire (Administrateur utilisateurs, Administrateur de groupes ou Administrateur de licences) pour agir."
+          },
+          "connect": {
+            "title": "Connectez le compte",
+            "body": "Connectez le compte depuis l’écran des comptes. Le reconnecter plus tard applique une autorisation ajoutée par une version future."
+          }
+        }
+      }
+    }
   },
   "errors": {
     "notFoundTitle": "Page introuvable",

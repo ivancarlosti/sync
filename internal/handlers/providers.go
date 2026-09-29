@@ -57,6 +57,25 @@ func (s *Server) handleGetProvider(c *gin.Context) {
 	c.JSON(http.StatusOK, info)
 }
 
+// handleProviderGuide answers GET /api/providers/:provider/guide: the ordered
+// walkthrough an operator follows in the provider console, built from the same
+// permission table the authorization request uses (see services.GuideService).
+// It also carries the registration state of this instance: the redirect URI to
+// register, whether an OAuth client is configured and whether the tenant-wide
+// consent (Microsoft) was already granted.
+func (s *Server) handleProviderGuide(c *gin.Context) {
+	provider, ok := s.knownProvider(c)
+	if !ok {
+		return
+	}
+	guide, err := s.deps.Guide.Guide(c.Request.Context(), provider)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, guide)
+}
+
 // handleUpdateProvider answers PUT /api/providers/:provider: it stores the
 // runtime override of the OAuth client (the environment remains the base layer).
 func (s *Server) handleUpdateProvider(c *gin.Context) {

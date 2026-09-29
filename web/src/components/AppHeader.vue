@@ -36,7 +36,7 @@ const LINKS: NavLink[] = [
   {
     route: 'admin-providers',
     label: 'nav.admin',
-    matches: ['admin-providers', 'admin-settings', 'admin-about'],
+    matches: ['admin-providers', 'admin-guide', 'admin-settings', 'admin-about'],
   },
 ];
 

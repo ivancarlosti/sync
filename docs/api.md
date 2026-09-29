@@ -28,6 +28,7 @@ and protected by the signed `state` parameter instead.
   | `not_found` | 404 | unknown id, unknown endpoint under `/api` |
   | `busy` | 409 | a run for this job is already in flight |
   | `reconnect` | 412 | the provider token cannot be used any more (reconnect the account) |
+  | `consent_required` | 412 | the provider permissions were refused or the tenant-wide admin consent is missing: the setup guide is the fix, not a retry |
   | `not_configured` | 424 | missing provider client, or a build without the SPA |
   | `delivery_failed` | 502 | the notification target refused the test message |
   | `internal` | 500 | unexpected error (details only in the log) |
@@ -54,7 +55,7 @@ and protected by the signed `state` parameter instead.
 | `POST` | `/api/auth/logout` | `204`, expires the cookie |
 | `GET` | `/api/auth/keycloak?redirect_to=` | `{url, state}` — where the SPA must navigate |
 | `GET` | `/api/auth/callback?code=&state=` | `302 /` (success) or `302 /login?auth_error=…&auth_detail=…` |
-| `GET` | `/api/oauth/:provider/callback?code=&state=` | `302 /accounts?connected=|connect_error=&detail=` |
+| `GET` | `/api/oauth/:provider/callback?code=&state=` | `302 /accounts?connected=<provider>&detail=…` — or `302 /accounts?connect_error=<code>&provider=<provider>&detail=…`; a tenant-wide consent comes back here too (`admin_consent=True` → `302 /admin/guide/<provider>?consent=granted`) |
 
 ## 3. Sessions and settings
 
@@ -71,11 +72,15 @@ and protected by the signed `state` parameter instead.
 |---|---|---|
 | `GET` | `/api/providers` | `{providers:[ProviderCredentialsInfo], redirect_hint:{google,microsoft,note}}` |
 | `GET` | `/api/providers/:provider` | one `ProviderCredentialsInfo` |
+| `GET` | `/api/providers/:provider/guide` | the guided app registration: `{provider, configured, redirect_uri, console_urls, permissions[], scopes[], capabilities[], admin_consent_required, admin_consent, steps[], warnings[]}` (see [app-registration.md](app-registration.md)) |
 | `PUT` | `/api/providers/:provider` | `{client_id, client_secret, redirect_uri, tenant_id}` (empty `client_secret` keeps the stored one) → refreshed info |
-| `DELETE` | `/api/providers/:provider` | clears the override → refreshed info |
+| `DELETE` | `/api/providers/:provider` | clears the override → refreshed info (the recorded `admin_consent` of the app registration is kept) |
 
 `ProviderCredentialsInfo` = `{provider, client_id, secret_set, redirect_uri,
- tenant_id?, source: environment|database|none, configured}`.
+ tenant_id?, source: environment|database|none, configured,
+ admin_consent?: {tenant, client_id, at, granted}}` — `admin_consent` is present
+once a tenant-wide consent was recorded (Microsoft) and `granted` reflects the
+client id configured right now.
 
 ## 5. Accounts
 
@@ -83,7 +88,13 @@ and protected by the signed `state` parameter instead.
 |---|---|---|
 | `GET` | `/api/oauth` | `{providers:[ProviderCredentialsInfo]}` — what the Connect screen lists |
 | `POST` | `/api/oauth/:provider/start` | `{redirect_to?}` → `{url, state}` |
+| `POST` | `/api/oauth/:provider/admin-consent` | `{redirect_to?}` → `{url, state}` — the tenant-wide consent URL (Microsoft only, `400` elsewhere) |
 | `GET` | `/api/accounts` | `{accounts:[accountView]}` (tokens never included) |
+
+`accountView` carries the derived permissions of the stored grant:
+`capabilities[]` (satisfied by `scopes`), `missing_capabilities[]` (requested by
+this release, not granted yet) and `needs_reconnect` (true when the second list is
+not empty).
 | `POST` | `/api/accounts/:id/verify` | validates the token against the provider → updated `accountView` |
 | `DELETE` | `/api/accounts/:id` | `{id, deleted_jobs}` — the jobs using the account are deleted too |
 | `GET` | `/api/accounts/:id/drives` | `{drives:[{id,name,kind,owner}]}` |

@@ -11,11 +11,12 @@
 // and `detail` in the query (see redirectToAccounts in the Go handler); the codes
 // are translated here like any other API failure, and the query is cleared so a
 // reload does not repeat the message.
-import { Plus, RefreshCw, ShieldCheck, Unplug } from '@lucide/vue';
+import { Compass, Plus, RefreshCw, ShieldCheck, Unplug } from '@lucide/vue';
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
+import CapabilityBadges from '@/components/CapabilityBadges.vue';
 import ConfirmDialog from '@/components/ConfirmDialog.vue';
 import PageHeader from '@/components/PageHeader.vue';
 import StatusBadge from '@/components/StatusBadge.vue';
@@ -36,7 +37,7 @@ import {
   type SyncJob,
 } from '@/lib/api';
 import { formatDateTime } from '@/lib/format';
-import { PROVIDERS, providerLabel } from '@/lib/providers';
+import { PROVIDERS, isProvider, providerLabel } from '@/lib/providers';
 import { useFeedbackStore } from '@/stores/feedback';
 
 const route = useRoute();
@@ -93,20 +94,48 @@ function valueOf(value: unknown): string {
 }
 
 /**
+ * ConnectOutcome is what the OAuth callback left in the URL: the connected
+ * provider, or the code and detail of a failure. A failure also carries the
+ * provider, which is what lets the screen offer its setup guide.
+ */
+type ConnectOutcome =
+  | { tone: 'success'; text: string }
+  | { tone: 'error'; text: string; detail: string; code: string; provider: ProviderName | '' };
+
+/**
  * outcome is what the OAuth callback left in the URL. It is read once per
  * navigation: the effect that consumes it also clears the query.
  */
-const outcome = computed(() => {
+const outcome = computed<ConnectOutcome | null>(() => {
   const connected = valueOf(route.query.connected);
   if (connected !== '') {
-    return { tone: 'success' as const, text: t('accounts.connectBanner', { provider: providerLabel(connected) }) };
+    return { tone: 'success', text: t('accounts.connectBanner', { provider: providerLabel(connected) }) };
   }
   const code = valueOf(route.query.connect_error);
   if (code !== '') {
-    const detail = valueOf(route.query.detail);
-    return { tone: 'error' as const, text: t(messageKey(code)), detail };
+    const failed = valueOf(route.query.provider);
+    return {
+      tone: 'error',
+      text: t(messageKey(code)),
+      detail: valueOf(route.query.detail),
+      code,
+      provider: isProvider(failed) ? failed : '',
+    };
   }
   return null;
+});
+
+/**
+ * lastOutcome keeps the result of the callback after the query was cleared, so a
+ * missing permission stays visible with a link to the guide instead of a toast
+ * that scrolls away.
+ */
+const lastOutcome = ref<ConnectOutcome | null>(null);
+
+/** consentFailure is the outcome that needs the setup guide rather than a retry. */
+const consentFailure = computed(() => {
+  const shown = lastOutcome.value;
+  return shown && shown.tone === 'error' && shown.code === 'consent_required' ? shown : null;
 });
 
 /** load reads the accounts, the providers this build can offer and the jobs. */
@@ -178,6 +207,7 @@ onMounted(async () => {
   await load();
   if (outcome.value) {
     const shown = outcome.value;
+    lastOutcome.value = shown;
     if (shown.tone === 'success') {
       feedback.success(shown.text);
     } else {
@@ -214,6 +244,24 @@ onMounted(async () => {
     <Alert v-if="failure" tone="destructive" :title="t('accounts.loadError')" :message="failure">
       <template #footer>
         <Button variant="outline" size="sm" @click="load">{{ t('common.retry') }}</Button>
+      </template>
+    </Alert>
+
+    <Alert v-if="consentFailure" tone="warning" :title="consentFailure.text" :message="consentFailure.detail">
+      <template #footer>
+        <Button
+          variant="outline"
+          size="sm"
+          @click="
+            router.push({
+              name: 'admin-guide',
+              params: consentFailure.provider ? { provider: consentFailure.provider } : {},
+            })
+          "
+        >
+          <Compass class="h-4 w-4" aria-hidden="true" />
+          {{ t('admin.guide.title') }}
+        </Button>
       </template>
     </Alert>
 
@@ -274,6 +322,14 @@ onMounted(async () => {
               </td>
               <td class="px-4 py-3 text-muted-foreground" :title="account.scopes.join(', ')">
                 {{ t('accounts.scopesCount', { count: account.scopes.length }) }}
+                <CapabilityBadges
+                  class="mt-1"
+                  :capabilities="account.capabilities"
+                  :missing="account.missing_capabilities"
+                />
+                <p v-if="account.needs_reconnect" class="mt-1 max-w-64 text-xs text-warning">
+                  {{ t('accounts.missingCapabilities') }}
+                </p>
               </td>
               <td class="px-4 py-3 text-muted-foreground">{{ when(account.expires_at) }}</td>
               <td class="px-4 py-3 text-muted-foreground">
@@ -284,6 +340,17 @@ onMounted(async () => {
               </td>
               <td class="px-4 py-3">
                 <div class="flex items-center justify-end gap-2">
+                  <Button
+                    v-if="account.needs_reconnect"
+                    variant="outline"
+                    size="sm"
+                    :title="t('accounts.reconnectHint')"
+                    :loading="connecting === account.provider"
+                    @click="connect(account.provider)"
+                  >
+                    <RefreshCw class="h-4 w-4" aria-hidden="true" />
+                    {{ t('accounts.reconnect') }}
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"

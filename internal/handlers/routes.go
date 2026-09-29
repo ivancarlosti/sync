@@ -29,6 +29,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	oauth := api.Group("/oauth")
 	oauth.GET("", s.requireSession(), s.handleOAuthProviders)
 	oauth.POST("/:provider/start", s.requireSession(), s.handleOAuthStart)
+	oauth.POST("/:provider/admin-consent", s.requireSession(), s.handleAdminConsentStart)
 	oauth.GET("/:provider/callback", s.handleOAuthCallback)
 
 	secured := api.Group("")
@@ -67,6 +68,8 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		providers.GET("/:provider", s.handleGetProvider)
 		providers.PUT("/:provider", s.handleUpdateProvider)
 		providers.DELETE("/:provider", s.handleClearProvider)
+		// The walkthrough an operator follows in the provider console.
+		providers.GET("/:provider/guide", s.handleProviderGuide)
 
 		notifications := secured.Group("/notifications")
 		notifications.GET("", s.handleListNotifications)

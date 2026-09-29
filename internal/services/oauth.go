@@ -106,6 +106,88 @@ func (o *OAuthService) Begin(ctx context.Context, provider models.ProviderName, 
 	return Authorization{URL: implementation.AuthCodeURL(creds, state, challenge), State: state}, nil
 }
 
+// BeginAdminConsent starts the tenant-wide consent flow of a provider
+// (Microsoft Entra admin consent). Only providers implementing
+// providers.ConsentGranter have one, and they need the credentials to be
+// configured first.
+//
+// The returned state is a single-use, ten minute token that the consent redirect
+// carries back to the provider callback, which is what makes an unsolicited
+// `admin_consent=True` impossible to forge.
+func (o *OAuthService) BeginAdminConsent(ctx context.Context, provider models.ProviderName, redirectTo string) (Authorization, error) {
+	if !provider.Valid() {
+		return Authorization{}, fmt.Errorf("%w: unknown provider %q", ErrValidation, provider)
+	}
+	implementation, err := o.registry.Get(provider)
+	if err != nil {
+		return Authorization{}, err
+	}
+	granter, ok := implementation.(providers.ConsentGranter)
+	if !ok {
+		return Authorization{}, fmt.Errorf("%w: %s does not have a tenant-wide consent step", ErrValidation, provider)
+	}
+	creds, err := o.creds.Credentials(ctx, provider)
+	if err != nil {
+		return Authorization{}, err
+	}
+	state, err := crypto.RandomToken(32)
+	if err != nil {
+		return Authorization{}, fmt.Errorf("services: generating the consent state: %w", err)
+	}
+	row := &models.OAuthState{
+		State:      state,
+		Flow:       string(models.FlowAdminConsent),
+		Provider:   string(provider),
+		RedirectTo: SafeRedirect(redirectTo),
+		ExpiresAt:  o.now().Add(stateTTL),
+	}
+	if err := o.store.SaveOAuthState(ctx, row); err != nil {
+		return Authorization{}, err
+	}
+	return Authorization{URL: granter.AdminConsentURL(creds, state), State: state}, nil
+}
+
+// CompleteAdminConsent redeems the state an admin-consent redirect carried back
+// and records the consent for the tenant. It returns the same-origin page the
+// flow asked to return to (possibly empty).
+//
+// tenant is whatever the identity platform reported (`tenant` query parameter);
+// it is stored for display only, since the directory an administrator consented
+// for is defined by the sign-in that just happened.
+func (o *OAuthService) CompleteAdminConsent(ctx context.Context, provider models.ProviderName, stateValue, tenant string) (string, error) {
+	if strings.TrimSpace(stateValue) == "" {
+		return "", fmt.Errorf("%w: the consent request is missing its state", ErrValidation)
+	}
+	row, err := o.store.ConsumeOAuthState(ctx, stateValue)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return "", fmt.Errorf("%w: this consent link was already used or has expired", ErrUnauthorized)
+		}
+		return "", err
+	}
+	if row.Flow != string(models.FlowAdminConsent) || row.Provider != string(provider) {
+		return "", fmt.Errorf("%w: the consent request does not belong to %s", ErrValidation, provider)
+	}
+	if row.Expired(o.now()) {
+		return "", fmt.Errorf("%w: the consent request expired, start again", ErrValidation)
+	}
+	if _, err := o.registry.Get(provider); err != nil {
+		return "", err
+	}
+	if err := o.creds.SetAdminConsent(ctx, provider, tenant); err != nil {
+		return "", err
+	}
+	slog.Info("provider admin consent granted", "provider", provider, "tenant", tenant)
+	if o.publisher != nil {
+		o.publisher.Publish(ctx, models.EventAccountConnected, map[string]any{
+			"provider": string(provider),
+			"tenant":   tenant,
+			"consent":  "admin",
+		})
+	}
+	return row.RedirectTo, nil
+}
+
 // Complete redeems the authorization code returned by the provider, reads the
 // remote identity and stores (or rotates) the connected account.
 //
@@ -142,6 +224,14 @@ func (o *OAuthService) Complete(ctx context.Context, provider models.ProviderNam
 	}
 	tokens, err := implementation.Exchange(ctx, creds, code, row.CodeVerifier)
 	if err != nil {
+		if providers.IsConsentRequired(err) {
+			// The permissions were never granted (or the tenant-wide consent is
+			// missing): the fix is in the provider console, so this is reported
+			// as ErrConsent (412 + `consent_required`) and not as a validation
+			// problem with the request.
+			return nil, fmt.Errorf("%w: connecting %s failed because the permissions are missing: %v",
+				ErrConsent, provider, err)
+		}
 		return nil, fmt.Errorf("%w: exchanging the %s authorization code failed: %v", ErrValidation, provider, err)
 	}
 	remote, err := implementation.Account(ctx, creds, tokens)
@@ -178,6 +268,43 @@ func (o *OAuthService) Complete(ctx context.Context, provider models.ProviderNam
 		})
 	}
 	return account, nil
+}
+
+// FlowOf reports the kind of the pending flow a state belongs to without
+// consuming it, which is what the provider callback needs in order to tell a
+// tenant-wide consent answer from an authorization code before redeeming
+// anything. A missing, unknown or foreign state answers ErrNotFound, so the
+// caller falls back to the authorization-code path.
+func (o *OAuthService) FlowOf(ctx context.Context, provider models.ProviderName, stateValue string) (models.FlowKind, error) {
+	if strings.TrimSpace(stateValue) == "" {
+		return "", fmt.Errorf("%w: no state in the callback", ErrNotFound)
+	}
+	row, err := o.store.FindOAuthState(ctx, stateValue)
+	if err != nil {
+		return "", err
+	}
+	if row.Provider != string(provider) {
+		return "", fmt.Errorf("%w: the state does not belong to %s", ErrNotFound, provider)
+	}
+	return models.FlowKind(row.Flow), nil
+}
+
+// AbandonAdminConsent consumes a consent flow that was refused or cancelled and
+// returns the page the operator asked to return to (possibly empty). It is best
+// effort on purpose: the operator is being redirected out of a failure, so a
+// storage problem must not replace the failure message.
+func (o *OAuthService) AbandonAdminConsent(ctx context.Context, provider models.ProviderName, stateValue string) string {
+	if strings.TrimSpace(stateValue) == "" {
+		return ""
+	}
+	row, err := o.store.ConsumeOAuthState(ctx, stateValue)
+	if err != nil {
+		return ""
+	}
+	if row.Provider != string(provider) || row.Flow != string(models.FlowAdminConsent) {
+		return ""
+	}
+	return row.RedirectTo
 }
 
 // PruneStates deletes the authorization requests that were never redeemed.

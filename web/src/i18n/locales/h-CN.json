@@ -57,7 +57,8 @@
     "toggleTheme": "切换主题",
     "changeLanguage": "切换语言",
     "skipToContent": "跳到内容",
-    "primaryNavigation": "主导航"
+    "primaryNavigation": "主导航",
+    "adminGuide": "设置指南"
   },
   "auth": {
     "title": "登录 Sync",
@@ -209,7 +210,12 @@
     "error_validation": "提供商返回了意外的数据。",
     "error_unauthorized": "会话已过期，请重新登录。",
     "error_ratelimited": "尝试次数过多。请稍后重试。",
-    "error_unknown": "连接失败。"
+    "error_unknown": "连接失败。",
+    "capabilities": "权限能力",
+    "missingCapabilities": "此账号在这些权限存在之前已连接：重新连接即可授予。",
+    "reconnect": "重新连接",
+    "reconnectHint": "重新连接账号会应用此版本所申请的权限。",
+    "error_consent_required": "提供方拒绝了这些权限。请在设置指南中授予管理员同意，然后重新连接账号。"
   },
   "browser": {
     "title": "文件夹浏览器",
@@ -440,7 +446,126 @@
     "localesAvailable": "可用语言",
     "health": "健康",
     "healthOk": "数据库响应正常。",
-    "healthDegraded": "数据库无响应：{detail}"
+    "healthDegraded": "数据库无响应：{detail}",
+    "capability": {
+      "files": "文件",
+      "users": "用户",
+      "groups": "群组与邮件列表",
+      "members": "群组成员",
+      "domains": "域名",
+      "orgunits": "组织单位",
+      "roles": "管理角色",
+      "licenses": "许可证"
+    },
+    "guide": {
+      "title": "设置指南",
+      "subtitle": "创建 Sync 所需的 OAuth 应用，并使用它申请的完整权限。",
+      "providers": "提供方",
+      "intro": {
+        "google": "Google Drive 与 Workspace 目录共用同一个 Cloud 项目：在控制台花几分钟，并由管理员做一次决定。",
+        "microsoft": "在 Microsoft Entra 中注册一个应用、创建一个客户端密码，并授予一次租户范围的管理员同意。"
+      },
+      "statusReady": "OAuth 客户端已配置。",
+      "statusMissing": "尚未配置 OAuth 客户端。",
+      "redirectTitle": "重定向 URI",
+      "redirectHint": "请在控制台中登记完全一致的 URL；其他值会被提供方拒绝。",
+      "permissionsTitle": "Sync 申请的权限",
+      "permissionsHint": "一次性申请 {count} 项权限，因此今天建立的连接在下次升级后仍然有效。",
+      "capabilitiesTitle": "这些权限可解锁的功能",
+      "warningsTitle": "开始之前",
+      "console": "打开控制台",
+      "credentialsTitle": "提供方凭据",
+      "credentialsHint": "保存在本实例中，所有连接都会使用它们。",
+      "credentialsAction": "填写凭据",
+      "consentTitle": "管理员同意",
+      "consentGranted": "已于 {date} 为 {tenant} 授予。",
+      "consentMissing": "尚未授予：没有它，提供方会拒绝目录权限。",
+      "consentAction": "授予管理员同意",
+      "consentDone": "管理员已同意：这些权限现在对整个目录生效。",
+      "consentError": "无法授予管理员同意。",
+      "connectTitle": "连接账号",
+      "connectHint": "完成上述步骤后，请用可访问待同步文件夹的身份在账号页面连接账号。",
+      "connectAction": "打开账号页面",
+      "step": "步骤",
+      "optional": "可选",
+      "docs": "阅读完整指南",
+      "loadError": "无法加载设置指南。",
+      "warnings": {
+        "api_enablement": "每个 API 都必须在与 OAuth 客户端相同的项目中启用，否则首次目录调用会因权限不足而失败。",
+        "consent_screen_type": "仍处于测试模式的外部同意屏幕仅对你发布为测试用户的账号有效，其刷新令牌会在七天后过期。",
+        "unverified_app": "Google 可能要求对敏感权限进行验证；未验证的应用只能供少量用户使用，并会显示警告页面。",
+        "admin_role_required": "所连接的账号必须具有管理员角色：授予应用的权限不会让登录用户成为管理员。",
+        "license_required": "许可证与角色权限仅在付费的 Google Workspace 版本中返回数据。",
+        "single_tenant_recommended": "单租户注册使该客户端只服务于一个目录，这正是内部同步工具所需的。",
+        "work_accounts_only": "目录权限无法授予个人 Microsoft 账号，因此个人 OneDrive 账号不再支持连接。"
+      },
+      "steps": {
+        "google": {
+          "project": {
+            "title": "创建或选择一个 Google Cloud 项目",
+            "body": "打开项目列表并创建一个（例如 sync-files），或选择本实例要使用的项目。"
+          },
+          "apis": {
+            "title": "启用这三个 API",
+            "body": "在该项目中启用 Google Drive API、Admin SDK API 与 Enterprise License Manager API。只要对应的 API 未启用，目录权限调用就会失败。"
+          },
+          "consent": {
+            "title": "配置 OAuth 同意屏幕",
+            "body": "Workspace 域名请选择内部（无需 Google 验证）；若选择外部，请把账号发布为测试用户。加入 Sync 申请的权限；Google 将 admin.directory.* 视为敏感权限。"
+          },
+          "client": {
+            "title": "创建 OAuth 客户端",
+            "body": "凭据 > 创建凭据 > OAuth 客户端 ID > Web 应用。将客户端 ID 与客户端密码复制到本实例的凭据中。"
+          },
+          "redirect": {
+            "title": "添加已获授权的重定向 URI",
+            "body": "在同一个客户端中，将下方 URL 添加到已获授权的重定向 URI 并保存。这里多一个或少一个字符是最常见的登记失败原因。"
+          },
+          "permissions": {
+            "title": "添加所需权限",
+            "body": "在同意屏幕要求填写范围的位置粘贴下方列表。Sync 会一次性申请全部权限，因此今天建立的连接在升级后依然有效。"
+          },
+          "admin": {
+            "title": "在管理控制台中允许该应用",
+            "body": "在安全性 > API 控制 > 应用访问控制中，将客户端 ID 标记为受信任（或加入组织单位的允许列表）。"
+          },
+          "connect": {
+            "title": "连接管理员账号",
+            "body": "连接一个 Workspace 管理员（目录权限建议使用超级管理员）。Sync 以该账号身份操作，停止使用本实例时请撤销其同意。"
+          }
+        },
+        "microsoft": {
+          "app": {
+            "title": "注册应用",
+            "body": "在 Microsoft Entra（应用 > 应用注册）中创建一个注册，例如 Sync，并保留单租户选项，除非确实需要多租户。"
+          },
+          "redirect": {
+            "title": "添加重定向 URI",
+            "body": "身份验证 > 添加平台 > Web，然后粘贴下方 URL。请不要开启隐式授权：Sync 使用带 PKCE 的授权码流程。"
+          },
+          "secret": {
+            "title": "创建客户端密码",
+            "body": "证书和密码 > 新客户端密码，立即复制该值并保存到本实例的凭据中。请记下到期日期：密码过期会导致所有任务失败。"
+          },
+          "permissions": {
+            "title": "添加 Microsoft Graph 权限",
+            "body": "API 权限 > 添加权限 > Microsoft Graph > 委托的权限，然后添加下方列表中的全部权限。它们都需要管理员同意。"
+          },
+          "consent": {
+            "title": "授予管理员同意",
+            "body": "由租户管理员为整个目录授予一次权限。下方按钮会打开同意页面，结果会返回到本页。"
+          },
+          "role": {
+            "title": "确认管理员角色",
+            "body": "同意并不等于权限：连接所用的身份还必须拥有目录角色（用户管理员、群组管理员或许可证管理员）才能执行操作。"
+          },
+          "connect": {
+            "title": "连接账号",
+            "body": "在账号页面连接账号。日后重新连接即可应用新版本新增的权限。"
+          }
+        }
+      }
+    }
   },
   "errors": {
     "notFoundTitle": "页面未找到",

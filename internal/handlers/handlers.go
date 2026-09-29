@@ -38,6 +38,8 @@ type Deps struct {
 	Tokens *services.TokenManager
 	// Credentials reads and writes the provider OAuth clients.
 	Credentials *services.ProviderSettings
+	// Guide assembles the guided app-registration walkthrough per provider.
+	Guide *services.GuideService
 	// Registry lists the providers compiled into this binary.
 	Registry *providers.Registry
 	// Settings reads and writes the editable settings.
@@ -106,6 +108,8 @@ func (d Deps) validate() error {
 		return errors.New("handlers: Tokens is required")
 	case d.Credentials == nil:
 		return errors.New("handlers: Credentials is required")
+	case d.Guide == nil:
+		return errors.New("handlers: Guide is required")
 	case d.Registry == nil:
 		return errors.New("handlers: Registry is required")
 	case d.Settings == nil:

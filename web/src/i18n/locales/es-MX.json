@@ -57,7 +57,8 @@
     "toggleTheme": "Cambiar el tema",
     "changeLanguage": "Cambiar el idioma",
     "skipToContent": "Ir al contenido",
-    "primaryNavigation": "Navegación principal"
+    "primaryNavigation": "Navegación principal",
+    "adminGuide": "Guía de configuración"
   },
   "auth": {
     "title": "Iniciar sesión en Sync",
@@ -195,7 +196,12 @@
     "error_validation": "El proveedor respondió con datos inesperados.",
     "error_unauthorized": "Su sesión expiró. Inicie sesión de nuevo.",
     "error_ratelimited": "Demasiados intentos. Espere un momento e intente de nuevo.",
-    "error_unknown": "La conexión falló."
+    "error_unknown": "La conexión falló.",
+    "capabilities": "Capacidades",
+    "missingCapabilities": "Esta cuenta se conectó antes de que existieran estos permisos: vuelve a conectarla para concederlos.",
+    "reconnect": "Reconectar",
+    "reconnectHint": "Conectar la cuenta de nuevo aplica los permisos que solicita esta versión.",
+    "error_consent_required": "El proveedor rechazó los permisos. Concede el consentimiento de administrador desde la guía de configuración y vuelve a conectar la cuenta."
   },
   "browser": {
     "title": "Explorador de carpetas",
@@ -426,7 +432,126 @@
     "localesAvailable": "Idiomas incluidos",
     "health": "Salud",
     "healthOk": "La base de datos responde.",
-    "healthDegraded": "La base de datos no responde: {detail}"
+    "healthDegraded": "La base de datos no responde: {detail}",
+    "capability": {
+      "files": "Archivos",
+      "users": "Usuarios",
+      "groups": "Grupos y listas de distribución",
+      "members": "Miembros de grupos",
+      "domains": "Dominios",
+      "orgunits": "Unidades organizativas",
+      "roles": "Roles administrativos",
+      "licenses": "Licencias"
+    },
+    "guide": {
+      "title": "Guía de configuración",
+      "subtitle": "Crea la aplicación OAuth que Sync necesita, con los permisos exactos que solicita.",
+      "providers": "Proveedor",
+      "intro": {
+        "google": "Google Drive y el directorio de Workspace comparten un solo proyecto de Cloud: unos minutos en la consola y una decisión del administrador.",
+        "microsoft": "Un registro de aplicación en Microsoft Entra, un secreto de cliente y un consentimiento de administrador para todo el inquilino."
+      },
+      "statusReady": "El cliente OAuth está configurado.",
+      "statusMissing": "Todavía no hay un cliente OAuth configurado.",
+      "redirectTitle": "URI de redireccionamiento",
+      "redirectHint": "Registra exactamente esta URL en la consola; cualquier otra cosa la rechaza el proveedor.",
+      "permissionsTitle": "Permisos que solicita Sync",
+      "permissionsHint": "Se solicitan {count} permisos a la vez, así una conexión hecha hoy sigue funcionando después de la próxima versión.",
+      "capabilitiesTitle": "Qué desbloquean estos permisos",
+      "warningsTitle": "Antes de empezar",
+      "console": "Abrir la consola",
+      "credentialsTitle": "Credenciales del proveedor",
+      "credentialsHint": "Guardadas en esta instancia, para que todas las conexiones las usen.",
+      "credentialsAction": "Capturar las credenciales",
+      "consentTitle": "Consentimiento de administrador",
+      "consentGranted": "Concedido para {tenant} el {date}.",
+      "consentMissing": "Aún no concedido: sin él el proveedor rechaza los permisos de directorio.",
+      "consentAction": "Conceder consentimiento de administrador",
+      "consentDone": "El administrador dio su consentimiento: los permisos ya aplican a todo el directorio.",
+      "consentError": "No se pudo conceder el consentimiento de administrador.",
+      "connectTitle": "Conectar una cuenta",
+      "connectHint": "Cuando termines los pasos anteriores, conecta la cuenta desde la pantalla de cuentas con una identidad que alcance las carpetas que quieres sincronizar.",
+      "connectAction": "Abrir las cuentas",
+      "step": "Paso",
+      "optional": "opcional",
+      "docs": "Leer la guía completa",
+      "loadError": "No se pudo cargar la guía de configuración.",
+      "warnings": {
+        "api_enablement": "Cada API debe estar habilitada en el mismo proyecto que el cliente OAuth; de lo contrario la primera llamada al directorio falla por falta de permisos.",
+        "consent_screen_type": "Una pantalla de consentimiento Externa aún en modo de prueba solo funciona para las cuentas que publicaste como usuarios de prueba, y sus tokens de actualización caducan a los siete días.",
+        "unverified_app": "Google puede exigir verificación de los permisos sensibles; una aplicación no verificada queda limitada a pocos usuarios y muestra una página de advertencia.",
+        "admin_role_required": "La cuenta que conectes debe tener un rol de administrador: un permiso concedido a la aplicación no convierte al usuario que inicia sesión en administrador.",
+        "license_required": "Los permisos de licencias y de roles solo devuelven datos en una edición de pago de Google Workspace.",
+        "single_tenant_recommended": "Un registro de un solo inquilino mantiene el cliente utilizable por un único directorio, que es lo que busca una herramienta interna de sincronización.",
+        "work_accounts_only": "Los permisos de directorio no se pueden conceder a cuentas personales de Microsoft, así que las cuentas personales de OneDrive ya no se pueden conectar."
+      },
+      "steps": {
+        "google": {
+          "project": {
+            "title": "Crea o elige un proyecto de Google Cloud",
+            "body": "Abre la lista de proyectos y crea uno (por ejemplo sync-files), o selecciona el proyecto que debe usar esta instancia."
+          },
+          "apis": {
+            "title": "Habilita las tres API",
+            "body": "Habilita la Google Drive API, la Admin SDK API y la Enterprise License Manager API en ese proyecto. Un permiso de directorio falla mientras no esté habilitada la API a la que pertenece."
+          },
+          "consent": {
+            "title": "Configura la pantalla de consentimiento OAuth",
+            "body": "Elige Interna para un dominio de Workspace (sin verificación de Google) o Externa con tus cuentas publicadas como usuarios de prueba. Agrega los permisos que solicita Sync; Google clasifica los admin.directory.* como sensibles."
+          },
+          "client": {
+            "title": "Crea el cliente OAuth",
+            "body": "Credenciales > Crear credenciales > ID de cliente de OAuth > Aplicación web. Copia el ID de cliente y el secreto en las credenciales de esta instancia."
+          },
+          "redirect": {
+            "title": "Agrega la URI de redireccionamiento autorizada",
+            "body": "En el mismo cliente, agrega la URL de abajo a las URI de redireccionamiento autorizadas y guarda. Un carácter de más o de menos aquí es el error de registro más común."
+          },
+          "permissions": {
+            "title": "Agrega los permisos solicitados",
+            "body": "Pega la lista de abajo donde la pantalla de consentimiento pide los ámbitos. Sync los solicita todos a la vez, así una conexión hecha hoy sigue siendo válida después de actualizar."
+          },
+          "admin": {
+            "title": "Permite la aplicación en la Consola de administrador",
+            "body": "En Seguridad > Controles de API > Control de acceso de aplicaciones, marca el ID de cliente como confiable (o agrégalo a la lista de permitidos de tus unidades organizativas)."
+          },
+          "connect": {
+            "title": "Conecta una cuenta de administrador",
+            "body": "Conecta un administrador de Workspace (un superadministrador para los permisos de directorio). Sync actúa como esa cuenta, así que revoca su consentimiento cuando dejes de usar la instancia."
+          }
+        },
+        "microsoft": {
+          "app": {
+            "title": "Registra una aplicación",
+            "body": "En Microsoft Entra (Aplicaciones > Registros de aplicaciones) crea un registro, por ejemplo Sync, y mantén la opción de un solo inquilino salvo que realmente necesites multiinquilino."
+          },
+          "redirect": {
+            "title": "Agrega la URI de redireccionamiento",
+            "body": "Autenticación > Agregar una plataforma > Web y pega la URL de abajo. Deja desactivadas las opciones de concesión implícita: Sync usa el flujo de código de autorización con PKCE."
+          },
+          "secret": {
+            "title": "Crea un secreto de cliente",
+            "body": "Certificados y secretos > Nuevo secreto de cliente, copia el valor de inmediato y guárdalo en las credenciales de esta instancia. Anota la fecha de expiración: un secreto vencido rompe todas las tareas."
+          },
+          "permissions": {
+            "title": "Agrega los permisos de Microsoft Graph",
+            "body": "Permisos de API > Agregar un permiso > Microsoft Graph > Permisos delegados y agrega todos los permisos de la lista de abajo. Todos requieren que un administrador dé su consentimiento."
+          },
+          "consent": {
+            "title": "Concede el consentimiento de administrador",
+            "body": "Un administrador del inquilino concede los permisos una vez para todo el directorio. El botón de abajo abre la pantalla de consentimiento y la respuesta regresa a esta página."
+          },
+          "role": {
+            "title": "Verifica el rol de administrador",
+            "body": "El consentimiento no es un privilegio: la identidad que conecta también debe tener un rol de directorio (Administrador de usuarios, Administrador de grupos o Administrador de licencias) para ejecutar una operación."
+          },
+          "connect": {
+            "title": "Conecta la cuenta",
+            "body": "Conecta la cuenta desde la pantalla de cuentas. Reconectarla después es lo que aplica un permiso que agregue una versión futura."
+          }
+        }
+      }
+    }
   },
   "errors": {
     "notFoundTitle": "Página no encontrada",

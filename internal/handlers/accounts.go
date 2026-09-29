@@ -17,20 +17,28 @@ import (
 // are never part of it: the model already hides them (`json:"-"`), and this view
 // documents the contract (see docs/api.md).
 type accountView struct {
-	ID                uint       `json:"id"`
-	Provider          string     `json:"provider"`
-	ProviderAccountID string     `json:"provider_account_id"`
-	Email             string     `json:"email"`
-	DisplayName       string     `json:"display_name"`
-	AvatarURL         string     `json:"avatar_url"`
-	Scopes            []string   `json:"scopes"`
-	Status            string     `json:"status"`
-	LastError         string     `json:"last_error,omitempty"`
-	ExpiresAt         time.Time  `json:"expires_at"`
-	RefreshedAt       *time.Time `json:"refreshed_at,omitempty"`
-	LastSyncedAt      *time.Time `json:"last_synced_at,omitempty"`
-	CreatedAt         time.Time  `json:"created_at"`
-	UpdatedAt         time.Time  `json:"updated_at"`
+	ID                uint     `json:"id"`
+	Provider          string   `json:"provider"`
+	ProviderAccountID string   `json:"provider_account_id"`
+	Email             string   `json:"email"`
+	DisplayName       string   `json:"display_name"`
+	AvatarURL         string   `json:"avatar_url"`
+	Scopes            []string `json:"scopes"`
+	// Capabilities lists the features the stored grant satisfies, and
+	// MissingCapabilities the ones the provider now requests but this grant does
+	// not cover, so the UI can explain what a reconnection adds.
+	Capabilities        []providers.Capability `json:"capabilities"`
+	MissingCapabilities []providers.Capability `json:"missing_capabilities"`
+	// NeedsReconnect is true when the account was connected with fewer
+	// permissions than the provider asks for today.
+	NeedsReconnect bool       `json:"needs_reconnect"`
+	Status         string     `json:"status"`
+	LastError      string     `json:"last_error,omitempty"`
+	ExpiresAt      time.Time  `json:"expires_at"`
+	RefreshedAt    *time.Time `json:"refreshed_at,omitempty"`
+	LastSyncedAt   *time.Time `json:"last_synced_at,omitempty"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 // driveView is one root the account can synchronise.
@@ -57,23 +65,46 @@ type itemView struct {
 }
 
 // newAccountView converts a stored account into its API representation.
-func newAccountView(account models.ConnectedAccount) accountView {
-	return accountView{
-		ID:                account.ID,
-		Provider:          account.Provider,
-		ProviderAccountID: account.ProviderAccountID,
-		Email:             account.Email,
-		DisplayName:       account.DisplayName,
-		AvatarURL:         account.AvatarURL,
-		Scopes:            strings.Fields(account.Scopes),
-		Status:            account.Status,
-		LastError:         account.LastError,
-		ExpiresAt:         account.ExpiresAt,
-		RefreshedAt:       account.RefreshedAt,
-		LastSyncedAt:      account.LastSyncedAt,
-		CreatedAt:         account.CreatedAt,
-		UpdatedAt:         account.UpdatedAt,
+// permissions is the permission table of its provider (providers.Catalog); when
+// it is missing the capability lists stay empty instead of guessing.
+func newAccountView(account models.ConnectedAccount, permissions []providers.Permission) accountView {
+	granted := strings.Fields(account.Scopes)
+	view := accountView{
+		ID:                  account.ID,
+		Provider:            account.Provider,
+		ProviderAccountID:   account.ProviderAccountID,
+		Email:               account.Email,
+		DisplayName:         account.DisplayName,
+		AvatarURL:           account.AvatarURL,
+		Scopes:              granted,
+		Capabilities:        []providers.Capability{},
+		MissingCapabilities: []providers.Capability{},
+		Status:              account.Status,
+		LastError:           account.LastError,
+		ExpiresAt:           account.ExpiresAt,
+		RefreshedAt:         account.RefreshedAt,
+		LastSyncedAt:        account.LastSyncedAt,
+		CreatedAt:           account.CreatedAt,
+		UpdatedAt:           account.UpdatedAt,
 	}
+	if permissions == nil {
+		return view
+	}
+	view.Capabilities = providers.CapabilitiesOf(permissions, granted)
+	view.MissingCapabilities = providers.MissingCapabilities(permissions, granted)
+	view.NeedsReconnect = len(view.MissingCapabilities) > 0
+	return view
+}
+
+// permissionsFor returns the permission table of a provider, so the API can
+// report what a stored grant covers. A provider this build does not ship (a row
+// left behind by another build) yields nil.
+func (s *Server) permissionsFor(provider string) []providers.Permission {
+	implementation, err := s.deps.Registry.Get(models.ProviderName(provider))
+	if err != nil {
+		return nil
+	}
+	return providers.Catalog(implementation)
 }
 
 // newItemView converts a provider item, marking the types V1 does not transfer.
@@ -99,7 +130,7 @@ func (s *Server) handleListAccounts(c *gin.Context) {
 	}
 	views := make([]accountView, 0, len(accounts))
 	for _, account := range accounts {
-		views = append(views, newAccountView(account))
+		views = append(views, newAccountView(account, s.permissionsFor(account.Provider)))
 	}
 	c.JSON(http.StatusOK, gin.H{"accounts": views})
 }
@@ -147,7 +178,7 @@ func (s *Server) handleVerifyAccount(c *gin.Context) {
 		fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, newAccountView(*account))
+	c.JSON(http.StatusOK, newAccountView(*account, s.permissionsFor(account.Provider)))
 }
 
 // refreshIdentity copies the remote profile onto the stored account. The account

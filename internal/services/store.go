@@ -516,6 +516,21 @@ func (s *Store) SaveOAuthState(ctx context.Context, state *models.OAuthState) er
 	return nil
 }
 
+// FindOAuthState returns a pending flow without consuming it, which is what the
+// provider callback needs to tell a tenant-wide consent answer from an
+// authorization code before redeeming anything.
+func (s *Store) FindOAuthState(ctx context.Context, value string) (*models.OAuthState, error) {
+	var row models.OAuthState
+	err := s.db.WithContext(ctx).Where("state = ?", value).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("services: reading oauth state: %w", err)
+	}
+	return &row, nil
+}
+
 // ConsumeOAuthState returns a pending flow and deletes it in the same
 // transaction, which makes a replayed callback impossible.
 func (s *Store) ConsumeOAuthState(ctx context.Context, value string) (*models.OAuthState, error) {

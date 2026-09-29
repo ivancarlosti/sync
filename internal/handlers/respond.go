@@ -15,14 +15,18 @@ import (
 // the code with i18n and shows the message as technical detail, so the UI never
 // has to match on an English string (see docs/i18n.md).
 const (
-	codeValidation    = "validation"
-	codeNotFound      = "not_found"
-	codeUnauthorized  = "unauthorized"
-	codeForbidden     = "forbidden"
-	codeBusy          = "busy"
-	codeReconnect     = "reconnect"
-	codeNotConfigured = "not_configured"
-	codeInternal      = "internal"
+	codeValidation   = "validation"
+	codeNotFound     = "not_found"
+	codeUnauthorized = "unauthorized"
+	codeForbidden    = "forbidden"
+	codeBusy         = "busy"
+	codeReconnect    = "reconnect"
+	// codeConsentRequired means the provider permissions were never granted (or
+	// the tenant-wide admin consent is missing). The UI answers with the setup
+	// guide link instead of a retry button.
+	codeConsentRequired = "consent_required"
+	codeNotConfigured   = "not_configured"
+	codeInternal        = "internal"
 	// codeDeliveryFailed is specific to the notification test endpoint: the
 	// channel is valid but the remote end refused it, so the operator needs the
 	// reason (codeInternal would hide it behind "check the server logs").
@@ -56,6 +60,10 @@ func statusFor(err error) int {
 		// The request is understood but cannot be satisfied until the operator
 		// connects the account again.
 		return http.StatusPreconditionFailed
+	case errors.Is(err, services.ErrConsent):
+		// Same family as ErrReconnect: the request is understood, and the fix
+		// is an action in the provider console, not a retry of the request.
+		return http.StatusPreconditionFailed
 	case errors.Is(err, services.ErrNotConfigured):
 		return http.StatusFailedDependency
 	case errors.Is(err, http.ErrHandlerTimeout):
@@ -82,6 +90,8 @@ func codeFor(err error) string {
 		return codeBusy
 	case errors.Is(err, services.ErrReconnect):
 		return codeReconnect
+	case errors.Is(err, services.ErrConsent):
+		return codeConsentRequired
 	case errors.Is(err, services.ErrNotConfigured):
 		return codeNotConfigured
 	default:

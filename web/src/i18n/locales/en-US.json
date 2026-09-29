@@ -50,6 +50,7 @@
     "notifications": "Notifications",
     "admin": "Administration",
     "adminProviders": "Providers",
+    "adminGuide": "Setup guide",
     "adminSettings": "Settings",
     "adminAbout": "About",
     "signOut": "Sign out",
@@ -195,7 +196,12 @@
     "error_validation": "The provider answered with an unexpected payload.",
     "error_unauthorized": "Your session expired. Sign in again.",
     "error_ratelimited": "Too many attempts. Wait a moment and try again.",
-    "error_unknown": "The connection failed."
+    "error_unknown": "The connection failed.",
+    "capabilities": "Capabilities",
+    "missingCapabilities": "This account was connected before these permissions existed: reconnect it to grant them.",
+    "reconnect": "Reconnect",
+    "reconnectHint": "Connecting the account again applies the permissions this version requests.",
+    "error_consent_required": "The provider refused the permissions. Grant the admin consent from the setup guide, then connect the account again."
   },
   "browser": {
     "title": "Folder browser",
@@ -426,7 +432,126 @@
     "localesAvailable": "Shipped languages",
     "health": "Health",
     "healthOk": "The database answers.",
-    "healthDegraded": "The database does not answer: {detail}"
+    "healthDegraded": "The database does not answer: {detail}",
+    "capability": {
+      "files": "Files",
+      "users": "Users",
+      "groups": "Groups & distribution lists",
+      "members": "Group membership",
+      "domains": "Domains",
+      "orgunits": "Organisational units",
+      "roles": "Administrative roles",
+      "licenses": "Licences"
+    },
+    "guide": {
+      "title": "Setup guide",
+      "subtitle": "Create the OAuth application Sync needs, with the exact permissions it requests.",
+      "providers": "Provider",
+      "intro": {
+        "google": "Google Drive and the Workspace directory share one Cloud project: a few minutes in the console and one administrator decision.",
+        "microsoft": "One application registration in Microsoft Entra, one client secret and one tenant-wide admin consent."
+      },
+      "statusReady": "The OAuth client is configured.",
+      "statusMissing": "No OAuth client is configured yet.",
+      "redirectTitle": "Redirect URI",
+      "redirectHint": "Register this exact URL in the console; anything else is refused by the provider.",
+      "permissionsTitle": "Permissions Sync requests",
+      "permissionsHint": "{count} permissions are requested at once, so a connection made today still works after the next release.",
+      "capabilitiesTitle": "What these permissions unlock",
+      "warningsTitle": "Before you start",
+      "console": "Open the console",
+      "credentialsTitle": "Provider credentials",
+      "credentialsHint": "Stored in this instance, so every connection uses them.",
+      "credentialsAction": "Fill in the credentials",
+      "consentTitle": "Admin consent",
+      "consentGranted": "Granted for {tenant} on {date}.",
+      "consentMissing": "Not granted yet: without it the provider refuses the directory permissions.",
+      "consentAction": "Grant admin consent",
+      "consentDone": "The administrator consented: the permissions are now granted for the whole directory.",
+      "consentError": "The admin consent could not be granted.",
+      "connectTitle": "Connect an account",
+      "connectHint": "When the steps above are done, connect the account from the accounts screen with an identity that can reach the folders you want to synchronise.",
+      "connectAction": "Open the accounts",
+      "step": "Step",
+      "optional": "optional",
+      "docs": "Read the full guide",
+      "loadError": "The setup guide could not be loaded.",
+      "warnings": {
+        "api_enablement": "Every API must be enabled in the same project as the OAuth client, otherwise the first directory call fails with a permission error.",
+        "consent_screen_type": "An External consent screen still in testing mode only works for the accounts you published as test users, and its refresh tokens expire after seven days.",
+        "unverified_app": "Google may require verification of the sensitive scopes; an unverified app is limited to a small number of users and shows a warning page.",
+        "admin_role_required": "The account you connect must hold an administrator role: a permission granted to the application does not make the signed-in user an administrator.",
+        "license_required": "The licence and role permissions only return data on a paid Google Workspace edition.",
+        "single_tenant_recommended": "A single-tenant registration keeps the client usable by one directory only, which is what an internal synchronisation tool wants.",
+        "work_accounts_only": "Directory permissions cannot be granted to personal Microsoft accounts, so personal OneDrive accounts can no longer be connected."
+      },
+      "steps": {
+        "google": {
+          "project": {
+            "title": "Create or pick a Google Cloud project",
+            "body": "Open the project list and create one (for example sync-files), or select the project this instance should use."
+          },
+          "apis": {
+            "title": "Enable the three APIs",
+            "body": "Enable the Google Drive API, the Admin SDK API and the Enterprise License Manager API in that project. A directory permission fails until the API it belongs to is enabled."
+          },
+          "consent": {
+            "title": "Configure the OAuth consent screen",
+            "body": "Choose Internal for a Workspace domain (no Google verification), or External with your accounts published as test users. Add the permissions Sync requests; Google classifies the admin.directory.* ones as sensitive."
+          },
+          "client": {
+            "title": "Create the OAuth client",
+            "body": "Credentials > Create credentials > OAuth client ID > Web application. Copy the client id and the client secret into the credentials of this instance."
+          },
+          "redirect": {
+            "title": "Add the authorised redirect URI",
+            "body": "In the same client, add the URL below to the authorised redirect URIs and save. A missing or extra character here is the most common registration failure."
+          },
+          "permissions": {
+            "title": "Add the requested permissions",
+            "body": "Paste the list below where the consent screen asks for scopes. Sync requests them all at once, so a connection made today stays valid after an upgrade."
+          },
+          "admin": {
+            "title": "Allow the app in the Admin console",
+            "body": "In Security > API controls > App access control, mark the client ID as trusted (or add it to the allow-list of your organisational units)."
+          },
+          "connect": {
+            "title": "Connect an administrator account",
+            "body": "Connect a Workspace administrator (a super administrator for the directory permissions). Sync acts as that account, so revoke its consent when you stop using the instance."
+          }
+        },
+        "microsoft": {
+          "app": {
+            "title": "Register an application",
+            "body": "In Microsoft Entra (Applications > App registrations) create a registration, for example Sync, and keep the single-tenant option unless you really need multi-tenant."
+          },
+          "redirect": {
+            "title": "Add the redirect URI",
+            "body": "Authentication > Add a platform > Web, then paste the URL below. Leave the implicit grant options off: Sync uses the authorization code flow with PKCE."
+          },
+          "secret": {
+            "title": "Create a client secret",
+            "body": "Certificates & secrets > New client secret, copy the value immediately and store it in the credentials of this instance. Note the expiry date: an expired secret breaks every job."
+          },
+          "permissions": {
+            "title": "Add the Microsoft Graph permissions",
+            "body": "API permissions > Add a permission > Microsoft Graph > Delegated permissions, then add every permission of the list below. All of them need an administrator to consent."
+          },
+          "consent": {
+            "title": "Grant the admin consent",
+            "body": "A tenant administrator grants the permissions once for the whole directory. The button below opens the consent screen and the answer comes back to this page."
+          },
+          "role": {
+            "title": "Check the administrator role",
+            "body": "Consent is not a privilege: the identity that connects must also hold a directory role (User Administrator, Groups Administrator or License Administrator) to perform an operation."
+          },
+          "connect": {
+            "title": "Connect the account",
+            "body": "Connect the account from the accounts screen. Reconnecting it later is what applies a permission a future version adds."
+          }
+        }
+      }
+    }
   },
   "errors": {
     "notFoundTitle": "Page not found",

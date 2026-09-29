@@ -19,6 +19,7 @@ export type RouteName =
   | 'runs'
   | 'notifications'
   | 'admin-providers'
+  | 'admin-guide'
   | 'admin-settings'
   | 'admin-about'
   | 'not-found';
@@ -79,6 +80,13 @@ const routes: RouteRecordRaw[] = [
             path: 'providers',
             name: 'admin-providers',
             component: () => import('@/views/admin/ProvidersView.vue'),
+          },
+          {
+            // The guided app registration: the walkthrough an operator follows
+            // in the provider console (see views/admin/SetupGuideView.vue).
+            path: 'guide/:provider?',
+            name: 'admin-guide',
+            component: () => import('@/views/admin/SetupGuideView.vue'),
           },
           {
             path: 'settings',
