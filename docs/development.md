@@ -5,7 +5,7 @@
 | Tool | Version used by this repository |
 |---|---|
 | Go | `go 1.27.1` (`go.mod`), the Dockerfile builds with `golang:1.27-alpine` |
-| Node | 18 or newer (`web/package.json` → `engines.node >= 18`); the Dockerfile builds with `node:22-alpine` |
+| Node | `^20.19.0 || >=22.12.0` (`web/package.json` → `engines.node`), the floor Vite 8 declares; the Dockerfile builds with `node:22-alpine` |
 | npm | ships with Node; `npm ci` in `web/` |
 | Docker | any recent release with buildx (multi-arch `amd64` + `arm64` are built in CI) |
 | Database | MySQL 8 / MariaDB 11 for local runs; the unit tests need none (see §4) |
