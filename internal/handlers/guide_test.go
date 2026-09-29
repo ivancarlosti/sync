@@ -146,6 +146,34 @@ func TestAccountCapabilitiesAreDerived(t *testing.T) {
 	}
 }
 
+// TestProviderGuideEndpointWithoutAClient pins the walkthrough an operator opens
+// before creating the application: the redirect URI is derived from APP_URL, so
+// the answer carries it even though no OAuth client exists yet.
+func TestProviderGuideEndpointWithoutAClient(t *testing.T) {
+	server, _ := newTestServer(t, models.AuthModeNone)
+
+	for _, name := range []models.ProviderName{models.ProviderGoogle, models.ProviderMicrosoft} {
+		recorder := call(t, server, http.MethodGet, "/api/providers/"+string(name)+"/guide", nil)
+		requireStatus(t, recorder, http.StatusOK)
+		guide := decodeJSON[guideAnswer](t, recorder)
+		if guide.Configured {
+			t.Fatalf("%s: a provider without an OAuth client was reported as configured", name)
+		}
+		if want := "https://sync.example.com/api/oauth/" + string(name) + "/callback"; guide.RedirectURI != want {
+			t.Fatalf("%s: redirect_uri = %q, want %q", name, guide.RedirectURI, want)
+		}
+		copies := 0
+		for _, step := range guide.Steps {
+			if step.Copy == services.GuideCopyRedirectURI {
+				copies++
+			}
+		}
+		if copies != 1 {
+			t.Fatalf("%s: %d steps ask to copy the redirect URI, want 1", name, copies)
+		}
+	}
+}
+
 // TestProviderGuideEndpoint pins GET /api/providers/:provider/guide: the answer
 // carries the redirect URI of this instance, the permission table of the running
 // binary and the ordered walkthrough.

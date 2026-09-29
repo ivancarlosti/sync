@@ -98,7 +98,9 @@ func (p *ProviderSettings) Credentials(ctx context.Context, provider models.Prov
 	creds := providers.Credentials{
 		ClientID:     base.ClientID,
 		ClientSecret: base.ClientSecret,
-		RedirectURI:  base.RedirectURI,
+		// The redirect URI falls back to the one derived from APP_URL when the
+		// environment left it empty (see config.OAuthRedirectURL).
+		RedirectURI: p.cfg.OAuthRedirectURL(provider),
 	}
 	if provider == models.ProviderMicrosoft {
 		creds.TenantID = p.cfg.MicrosoftTenant
@@ -140,11 +142,14 @@ func (p *ProviderSettings) Credentials(ctx context.Context, provider models.Prov
 func (p *ProviderSettings) Info(ctx context.Context, provider models.ProviderName) (ProviderCredentialsInfo, error) {
 	info := ProviderCredentialsInfo{Provider: provider, Source: SourceNone}
 	base := p.static(provider)
+	// The redirect URI does not depend on the OAuth client: it is derived from
+	// APP_URL, so it is known — and reported — before an operator creates the
+	// application, which is the state the setup guide starts from.
+	info.RedirectURI = p.cfg.OAuthRedirectURL(provider)
 	if base.ClientID != "" {
 		info.Source = SourceEnvironment
 		info.ClientID = base.ClientID
 		info.SecretSet = base.ClientSecret != ""
-		info.RedirectURI = base.RedirectURI
 	}
 	if provider == models.ProviderMicrosoft {
 		info.TenantID = p.cfg.MicrosoftTenant

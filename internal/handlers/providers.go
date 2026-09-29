@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ivancarlosti/sync/internal/config"
 	"github.com/ivancarlosti/sync/internal/models"
 	"github.com/ivancarlosti/sync/internal/services"
 )
@@ -35,9 +36,12 @@ func (s *Server) handleListProviders(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"providers": providers,
+		// The hint is the same path the redirect URI of the guide is derived
+		// from (config.OAuthCallbackPath), so the form and the walkthrough can
+		// never disagree.
 		"redirect_hint": gin.H{
-			"google":    "/api/oauth/google/callback",
-			"microsoft": "/api/oauth/microsoft/callback",
+			"google":    config.OAuthCallbackPath(models.ProviderGoogle),
+			"microsoft": config.OAuthCallbackPath(models.ProviderMicrosoft),
 			"note":      "append this path to APP_URL when registering the application",
 		},
 	})

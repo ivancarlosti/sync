@@ -366,6 +366,43 @@ func contains(list []string, value string) bool {
 	return false
 }
 
+// OAuthCallbackPath is the path of a provider's OAuth redirect URI, relative to
+// APP_URL. It is the single source of the value the provider console has to
+// register (the setup guide copies the absolute URL verbatim).
+func OAuthCallbackPath(provider models.ProviderName) string {
+	switch provider {
+	case models.ProviderGoogle:
+		return "/api/oauth/google/callback"
+	case models.ProviderMicrosoft:
+		return "/api/oauth/microsoft/callback"
+	default:
+		return ""
+	}
+}
+
+// OAuthRedirectURL is the redirect URI of a provider: the configured value, or
+// the one derived from APP_URL when it was left empty. The redirect URI does not
+// depend on the OAuth client, so it is known — and reportable, for the setup
+// guide — before an operator creates the application.
+func (c *Config) OAuthRedirectURL(provider models.ProviderName) string {
+	switch provider {
+	case models.ProviderGoogle:
+		if c.Google.RedirectURI != "" {
+			return c.Google.RedirectURI
+		}
+	case models.ProviderMicrosoft:
+		if c.Microsoft.RedirectURI != "" {
+			return c.Microsoft.RedirectURI
+		}
+	default:
+		return ""
+	}
+	if path := OAuthCallbackPath(provider); path != "" {
+		return c.AppURL + path
+	}
+	return ""
+}
+
 // derive fills every value that is computed instead of configured.
 func (c *Config) derive() {
 	if c.AppPort <= 0 {
@@ -379,10 +416,10 @@ func (c *Config) derive() {
 	}
 	callback := func(path string) string { return c.AppURL + path }
 	if c.Google.RedirectURI == "" {
-		c.Google.RedirectURI = callback("/api/oauth/google/callback")
+		c.Google.RedirectURI = callback(OAuthCallbackPath(models.ProviderGoogle))
 	}
 	if c.Microsoft.RedirectURI == "" {
-		c.Microsoft.RedirectURI = callback("/api/oauth/microsoft/callback")
+		c.Microsoft.RedirectURI = callback(OAuthCallbackPath(models.ProviderMicrosoft))
 	}
 	if c.Keycloak.RedirectURI == "" {
 		c.Keycloak.RedirectURI = callback("/api/auth/callback")

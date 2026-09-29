@@ -198,6 +198,11 @@ answers everything the screen renders:
 | `steps[]` | the ordered walkthrough: `id`, `url`, `copy` (`redirect_uri` / `scopes`), `action` (`admin_consent`), `optional` |
 | `warnings[]` | caveat codes the UI renders (`api_enablement`, `consent_screen_type`, `unverified_app`, `admin_role_required`, `license_required`, `tenant_scope`, `work_accounts_only`) |
 
+`redirect_uri` is derived from `APP_URL` (`/api/oauth/<provider>/callback`), so the
+walkthrough carries it **before** the OAuth client exists — that is the value to
+register while following the steps. An override saved in **Admin > Providers**
+wins over it.
+
 The step text is not in the answer: the SPA translates
 `admin.guide.steps.<provider>.<id>.title` / `.body`, so the walkthrough is
 available in all seven languages. `internal/services/i18n_test.go` fails the build

@@ -100,6 +100,90 @@ func TestGuideUnknownProvider(t *testing.T) {
 	}
 }
 
+// TestGuideReportsTheRedirectURIBeforeTheClientExists pins the value the setup
+// guide copies: the redirect URI is derived from APP_URL, so it must be reported
+// while the instance still has no OAuth client at all — which is exactly the
+// state the walkthrough starts from.
+func TestGuideReportsTheRedirectURIBeforeTheClientExists(t *testing.T) {
+	store := newTestStore(t)
+	cfg := testConfig(t)
+	creds := NewProviderSettings(cfg, store.Settings(), NewSecretBox(cfg.EncryptionKeyBytes()))
+	guide := NewGuideService(providers.NewRegistry(google.New(), microsoft.New()), creds)
+	ctx := context.Background()
+
+	for _, name := range []models.ProviderName{models.ProviderGoogle, models.ProviderMicrosoft} {
+		want := cfg.AppURL + config.OAuthCallbackPath(name)
+
+		info, err := creds.Info(ctx, name)
+		if err != nil {
+			t.Fatalf("Info(%s) error = %v", name, err)
+		}
+		if info.RedirectURI != want {
+			t.Fatalf("%s: Info() redirect_uri = %q, want %q", name, info.RedirectURI, want)
+		}
+		if info.Configured {
+			t.Fatalf("%s: a provider without an OAuth client was reported as configured", name)
+		}
+
+		built, err := guide.Guide(ctx, name)
+		if err != nil {
+			t.Fatalf("Guide(%s) error = %v", name, err)
+		}
+		if built.RedirectURI != want {
+			t.Fatalf("%s: Guide() redirect_uri = %q, want %q", name, built.RedirectURI, want)
+		}
+		copies := 0
+		for _, step := range built.Steps {
+			if step.Copy == GuideCopyRedirectURI {
+				copies++
+			}
+		}
+		if copies != 1 {
+			t.Fatalf("%s: %d steps ask to copy the redirect URI, want 1", name, copies)
+		}
+	}
+}
+
+// TestGuidePrefersTheStoredRedirectURI pins the precedence: an override saved
+// through Admin > Providers wins over the URI derived from APP_URL.
+func TestGuidePrefersTheStoredRedirectURI(t *testing.T) {
+	store := newTestStore(t)
+	cfg := testConfig(t)
+	creds := NewProviderSettings(cfg, store.Settings(), NewSecretBox(cfg.EncryptionKeyBytes()))
+	guide := NewGuideService(providers.NewRegistry(google.New(), microsoft.New()), creds)
+	ctx := context.Background()
+
+	custom := "https://sync.internal.example.com/api/oauth/google/callback"
+	if err := creds.Update(ctx, models.ProviderGoogle, "", "", custom, ""); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	built, err := guide.Guide(ctx, models.ProviderGoogle)
+	if err != nil {
+		t.Fatalf("Guide() error = %v", err)
+	}
+	if built.RedirectURI != custom {
+		t.Fatalf("redirect_uri = %q, want the stored %q", built.RedirectURI, custom)
+	}
+}
+
+// TestCredentialsDeriveTheRedirectURI pins that an environment carrying a client
+// but no redirect URI still yields a usable and complete credential set: the URI
+// is derived from APP_URL instead of failing the flow.
+func TestCredentialsDeriveTheRedirectURI(t *testing.T) {
+	store := newTestStore(t)
+	cfg := testConfig(t)
+	cfg.Google = config.ProviderCredentials{ClientID: "google-client-id", ClientSecret: "google-client-secret"}
+	creds := NewProviderSettings(cfg, store.Settings(), NewSecretBox(cfg.EncryptionKeyBytes()))
+
+	got, err := creds.Credentials(context.Background(), models.ProviderGoogle)
+	if err != nil {
+		t.Fatalf("Credentials() error = %v", err)
+	}
+	if want := cfg.AppURL + config.OAuthCallbackPath(models.ProviderGoogle); got.RedirectURI != want {
+		t.Fatalf("redirect_uri = %q, want %q", got.RedirectURI, want)
+	}
+}
+
 // TestGuideReportsTheRecordedConsent pins that the guide (and therefore the
 // setup screen) reports the tenant-wide consent of this instance.
 func TestGuideReportsTheRecordedConsent(t *testing.T) {
