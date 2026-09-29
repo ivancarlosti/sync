@@ -22,7 +22,7 @@ and protected by the signed `state` parameter instead.
 
   | Code | HTTP | Meaning |
   |---|---|---|
-  | `validation` | 400 | malformed body, bad id, unknown provider, rejected value |
+  | `validation` | 400 | malformed body, bad id, unknown provider, rejected value (including a remote identifier a provider refuses) |
   | `unauthorized` | 401 | no/expired session, invalid credentials, redeemed OAuth link |
   | `forbidden` | 403 | throttled login, captcha refused, account not on the allow-list |
   | `not_found` | 404 | unknown id, unknown endpoint under `/api` |
@@ -37,6 +37,13 @@ and protected by the signed `state` parameter instead.
 * **IDs** — path parameters are unsigned integers; `0` or a non-numeric value is
   a `400`. Optional numeric query parameters (`job_id`) are validated the same
   way, optional integers (`days`, `limit`) fall back to their default instead.
+* **Remote identifiers** — a provider id sent onwards (the `:drive` path
+  parameter, `folder_id`, a job's stored folder/drive) must look like a token
+  that provider hands out. Anything else is answered `400`/`validation` and no
+  request leaves the server (see [providers.md](providers.md) §1). The same
+  answer covers the second guard, on the request URL itself: if an id ever
+  reaches a URL without being narrowed, the provider refuses to send it instead
+  of failing with a `500`.
 * **Lists are bounded** — `limit` is clamped (`runs` 50/200, run items 500/1000,
   items 100/1000); `GET /api/runs` supports `job_id` and `status` filters, the
   status filter applies to the returned page.

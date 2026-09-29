@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/ivancarlosti/sync/internal/providers"
 	"github.com/ivancarlosti/sync/internal/services"
 )
 
@@ -39,9 +40,10 @@ type errorBody struct {
 	Error string `json:"error"`
 }
 
-// statusFor maps a service sentinel error to the HTTP status the API answers
-// with. Keeping the mapping in one place means no handler ever string-matches an
-// error message.
+// statusFor maps a sentinel error to the HTTP status the API answers with: the
+// ones of the service layer, plus the provider errors that describe something
+// the caller supplied (a remote identifier). Keeping the mapping in one place
+// means no handler ever string-matches an error message.
 func statusFor(err error) int {
 	switch {
 	case err == nil:
@@ -49,6 +51,12 @@ func statusFor(err error) int {
 	case errors.Is(err, services.ErrNotFound):
 		return http.StatusNotFound
 	case errors.Is(err, services.ErrValidation):
+		return http.StatusBadRequest
+	case errors.Is(err, providers.ErrInvalidIdentifier):
+		// A provider refused an identifier the caller handed it (a folder id in
+		// a stored job or in an explorer link). The request is understood and
+		// the value is the problem, so the caller has to fix it instead of
+		// retrying: that is a 400, not a server error.
 		return http.StatusBadRequest
 	case errors.Is(err, services.ErrUnauthorized):
 		return http.StatusUnauthorized
@@ -81,6 +89,8 @@ func codeFor(err error) string {
 	case errors.Is(err, services.ErrNotFound):
 		return codeNotFound
 	case errors.Is(err, services.ErrValidation):
+		return codeValidation
+	case errors.Is(err, providers.ErrInvalidIdentifier):
 		return codeValidation
 	case errors.Is(err, services.ErrUnauthorized):
 		return codeUnauthorized

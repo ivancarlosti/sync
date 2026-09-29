@@ -26,6 +26,14 @@ var ErrNotFound = errors.New("remote item not found")
 // a native Google document, which has no single file representation).
 var ErrUnsupported = errors.New("operation not supported by this provider")
 
+// ErrInvalidIdentifier marks an identifier a caller handed to a provider that
+// the provider refuses to put into a request. Remote ids are opaque tokens the
+// provider itself hands out (see DriveRoot for the synthetic ones); a value
+// carrying a path separator, a query delimiter or whitespace is not one, and is
+// refused instead of being interpolated into a request (see
+// docs/providers.md — identifiers).
+var ErrInvalidIdentifier = errors.New("invalid provider identifier")
+
 // Credentials is the OAuth client used against one provider. Values come from
 // the environment or from Admin > Providers (database override wins).
 type Credentials struct {

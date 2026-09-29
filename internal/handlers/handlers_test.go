@@ -1960,7 +1960,8 @@ func TestAccountScreensThroughProvider(t *testing.T) {
 
 // TestAccountScreensRefreshAndFailures covers the paths that decide whether the
 // account screens can be trusted: an expired access token is renewed behind the
-// operator's back (and only once), a provider that fails answers with a mapped
+// operator's back (and only once), a provider that refuses an identifier answers
+// a 400 the caller can act on, a provider that fails answers with a mapped
 // status whose body never leaks the provider's own message, and a refused
 // refresh asks for a reconnection instead of pretending the account works.
 func TestAccountScreensRefreshAndFailures(t *testing.T) {
@@ -2007,6 +2008,16 @@ func TestAccountScreensRefreshAndFailures(t *testing.T) {
 	recorder = call(t, server, http.MethodPost, "/api/accounts/not-a-number/verify", nil)
 	requireStatus(t, recorder, http.StatusBadRequest)
 	requireErrorCode(t, recorder, codeValidation)
+
+	// A provider that refuses an identifier the caller supplied (a folder id in
+	// an explorer link, a drive id in a stored job) is neither a server failure
+	// nor a missing resource: the value is wrong, so the answer is 400 with the
+	// validation code and the caller is told to fix it.
+	stub.failure = providers.ErrInvalidIdentifier
+	recorder = call(t, server, http.MethodGet, "/api/accounts/"+id+"/drives/drive-1/items?folder_id=../permissions", nil)
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
+	stub.failure = nil
 
 	// A provider that fails while the token is still valid is a server side
 	// failure: 500, with the provider's own message left in the logs.

@@ -42,6 +42,20 @@ func (p *Provider) Upload(ctx context.Context, _ providers.Credentials, tokens *
 // upload performs the two-step resumable transfer: the initiation request
 // carries the metadata and returns a session URI, which then receives the bytes.
 func (p *Provider) upload(ctx context.Context, tokens *providers.Tokens, driveID, parentID, itemID, name, mimeType string, modified time.Time, size int64, body io.Reader) (*providers.Item, error) {
+	// The three ids below reach the initiation request: the item id as a path
+	// segment, the parent in the metadata document and the drive in the query,
+	// so they are narrowed here, in the function that builds it (see
+	// identifierPattern). An empty item id means "create", an empty parent or
+	// drive means "the default one".
+	if itemID != "" && !identifierPattern.MatchString(itemID) {
+		return nil, invalidIdentifierError("item id", itemID)
+	}
+	if parentID != "" && !identifierPattern.MatchString(parentID) {
+		return nil, invalidIdentifierError("parent folder id", parentID)
+	}
+	if driveID != "" && !optionalIdentifierPattern.MatchString(driveID) {
+		return nil, invalidIdentifierError("drive id", driveID)
+	}
 	ctx, cancel := context.WithTimeout(ctx, uploadTimeout)
 	defer cancel()
 	client := p.client(tokens)
@@ -64,6 +78,12 @@ func (p *Provider) upload(ctx context.Context, tokens *providers.Tokens, driveID
 	}
 	target = withParam(withParam(withParam(withParam(target, "uploadType", "resumable"),
 		"supportsAllDrives", "true"), "fields", itemFields), "driveId", driveIDOrNone(driveID, MyDrive))
+	// This function issues its own requests instead of going through doJSON, so
+	// the initiation URL is narrowed here, in the function that sends it (see
+	// requestURLPattern).
+	if !requestURLPattern.MatchString(target) {
+		return nil, unsafeRequestURLError("upload URL", target)
+	}
 
 	payload, err := json.Marshal(metadata)
 	if err != nil {
@@ -94,6 +114,13 @@ func (p *Provider) upload(ctx context.Context, tokens *providers.Tokens, driveID
 	if session == "" {
 		return nil, fmt.Errorf("google drive: the upload session for %q was not returned", name)
 	}
+	// The session URI comes from Google's own answer, so it is a provider
+	// anomaly rather than caller input when it is not the Drive API host: the
+	// bytes of the file must not be posted anywhere else (see
+	// requestURLPattern).
+	if !requestURLPattern.MatchString(session) {
+		return nil, fmt.Errorf("google drive: the upload session URI for %q is not on the Drive API host: %q", name, session)
+	}
 
 	putRequest, err := http.NewRequestWithContext(ctx, http.MethodPut, session, body)
 	if err != nil {
@@ -123,6 +150,15 @@ func (p *Provider) upload(ctx context.Context, tokens *providers.Tokens, driveID
 func (p *Provider) CreateFolder(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, driveID, parentID, name string) (*providers.Item, error) {
 	if parentID == "" {
 		parentID = providers.DriveRoot
+	}
+	// The parent id lands in the metadata document of the request below and the
+	// drive id in its query, so both are narrowed here, in the function that
+	// builds it (see identifierPattern).
+	if !identifierPattern.MatchString(parentID) {
+		return nil, invalidIdentifierError("parent folder id", parentID)
+	}
+	if driveID != "" && !optionalIdentifierPattern.MatchString(driveID) {
+		return nil, invalidIdentifierError("drive id", driveID)
 	}
 	target := listURL("/files", itemFields)
 	if driveID != "" && driveID != MyDrive {

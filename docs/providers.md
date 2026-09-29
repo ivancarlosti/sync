@@ -73,11 +73,44 @@ Key types:
   synchronised root), `Hash` is the provider checksum (Google `md5Checksum`,
   Graph `quickXorHash`) and may be empty.
 * `DriveRoot = "root"` is the well known id of a drive's root for both providers.
+* **Remote identifiers are guarded before they reach a URL.** Google matches
+  every id it interpolates — item, folder, parent and drive id — against
+  `^[A-Za-z0-9_-]{1,512}$`
+  (`internal/providers/google/identifiers.go`; empty is accepted in the optional
+  *drive* position, where the interface defines it as "the drive the account
+  considers its default"). The pattern is the alphabet Drive hands out (opaque
+  base64url tokens), plus the synthetic ids Sync adds (`root`, `my-drive`); it
+  refuses a path separator or relative segment, a query/fragment/userinfo
+  delimiter, the percent-encoded form of one, a backslash, whitespace and
+  control characters, and anything longer than a real token. A refused value is
+  returned as `providers.ErrInvalidIdentifier`, which the API answers with
+  `400`/`validation`: the id comes from a stored job, a crafted explorer link or
+  the engine, so the caller has to fix it. The guard is written inline in the
+  function that builds the request (a helper would hide the check from a static
+  analyser) and `identifiers_test.go` pins both halves — a refused value never
+  reaches the network, an accepted one lands in the request untouched.
+* **A request is pinned to the Drive API host as well.** The three functions that
+  issue a request — `doJSON`, `Download` and `Upload` (its initiation leg and its
+  session leg) — match the finished URL against
+  `^https://([A-Za-z0-9-]+\.)+googleapis\.com/`
+  followed by a path, query and fragment drawn from the URL alphabet
+  (`requestURLPattern`, same file). The host is the one every Drive endpoint
+  lives under, so no call site can steer a request (or the bytes of a file, on
+  the upload session leg) to another destination, and the alphabet keeps
+  whitespace, a control character, a backslash and a quote out of the URL. A URL
+  that fails the guard is refused as `ErrInvalidIdentifier` too, before
+  `http.NewRequestWithContext` sees it. This is the second layer: the
+  per-identifier guards answer `400` with the offending value, while this one is
+  what keeps a call site that forgets its own guard from leaving Google — the
+  only shape on which the guard is recognised, because it is inline and applied
+  to the very value handed to the request.
 * `NativeMimePrefix = "application/vnd.google-apps."` marks Google native
   documents (Docs/Sheets/Slides) that have no binary body.
 
-Sentinel errors: `providers.ErrNotFound` (the engine records a deletion) and
-`providers.ErrUnsupported` (a provider cannot express the operation).
+Sentinel errors: `providers.ErrNotFound` (the engine records a deletion),
+`providers.ErrUnsupported` (a provider cannot express the operation) and
+`providers.ErrInvalidIdentifier` (a caller handed the provider an identifier it
+refuses to put into a request → `400`/`validation`).
 
 ## 2. Credential resolution (environment vs Admin > Providers)
 

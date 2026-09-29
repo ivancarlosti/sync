@@ -113,6 +113,16 @@ func (p *Provider) Children(ctx context.Context, _ providers.Credentials, tokens
 	if folderID == "" {
 		folderID = providers.DriveRoot
 	}
+	// Both ids are interpolated into the request built below — the folder into
+	// the `q` filter, the drive into the corpus selection — so both are narrowed
+	// here, in the function that uses them (see identifierPattern). A stored job
+	// or a crafted explorer link cannot turn them into another path or host.
+	if !identifierPattern.MatchString(folderID) {
+		return nil, invalidIdentifierError("folder id", folderID)
+	}
+	if driveID != "" && !optionalIdentifierPattern.MatchString(driveID) {
+		return nil, invalidIdentifierError("drive id", driveID)
+	}
 	client := p.client(tokens)
 	base := withDriveScope(listURL("/files", "nextPageToken,files("+itemFields+")"), driveID)
 	base = withParam(base, "q", fmt.Sprintf("'%s' in parents and trashed = false", strings.ReplaceAll(folderID, "'", "\\'")))
@@ -149,6 +159,14 @@ func (p *Provider) Children(ctx context.Context, _ providers.Credentials, tokens
 // Item implements providers.Provider, resolving a single id. A vanished id is
 // reported as providers.ErrNotFound so the engine records a deletion.
 func (p *Provider) Item(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, driveID, itemID string) (*providers.Item, error) {
+	// The item id becomes a path segment of the request URL below, so it is
+	// narrowed here, in the function that interpolates it (see identifierPattern).
+	if !identifierPattern.MatchString(itemID) {
+		return nil, invalidIdentifierError("item id", itemID)
+	}
+	if driveID != "" && !optionalIdentifierPattern.MatchString(driveID) {
+		return nil, invalidIdentifierError("drive id", driveID)
+	}
 	target := withParam(listURL("/files/"+itemID, itemFields), "supportsAllDrives", "true")
 	if driveID != "" && driveID != MyDrive {
 		target = withParam(target, "driveId", driveID)
@@ -168,10 +186,24 @@ func (p *Provider) Item(ctx context.Context, _ providers.Credentials, tokens *pr
 // file. Native Google documents have no downloadable body and are reported as
 // providers.ErrUnsupported (Sync V1 skips them during the scan).
 func (p *Provider) Download(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, driveID, itemID string) (*providers.Transfer, error) {
+	// The item id becomes a path segment of the request URL below, so it is
+	// narrowed here, in the function that interpolates it (see identifierPattern).
+	if !identifierPattern.MatchString(itemID) {
+		return nil, invalidIdentifierError("item id", itemID)
+	}
+	if driveID != "" && !optionalIdentifierPattern.MatchString(driveID) {
+		return nil, invalidIdentifierError("drive id", driveID)
+	}
 	target := withParam(apiBase+"/files/"+itemID, "alt", "media")
 	target = withParam(target, "supportsAllDrives", "true")
 	if driveID != "" && driveID != MyDrive {
 		target = withParam(target, "driveId", driveID)
+	}
+	// This function issues its own request instead of going through doJSON, so
+	// the URL is narrowed here too, in the function that sends it (see
+	// requestURLPattern).
+	if !requestURLPattern.MatchString(target) {
+		return nil, unsafeRequestURLError("download URL", target)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
@@ -215,6 +247,14 @@ func (p *Provider) Download(ctx context.Context, _ providers.Credentials, tokens
 // Delete implements providers.Provider. Deleting an item that is already gone is
 // not an error: the engine only needs the postcondition.
 func (p *Provider) Delete(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, driveID, itemID string) error {
+	// The item id becomes a path segment of the request URL below, so it is
+	// narrowed here, in the function that interpolates it (see identifierPattern).
+	if !identifierPattern.MatchString(itemID) {
+		return invalidIdentifierError("item id", itemID)
+	}
+	if driveID != "" && !optionalIdentifierPattern.MatchString(driveID) {
+		return invalidIdentifierError("drive id", driveID)
+	}
 	target := withParam(apiBase+"/files/"+itemID, "supportsAllDrives", "true")
 	if driveID != "" && driveID != MyDrive {
 		target = withParam(target, "driveId", driveID)

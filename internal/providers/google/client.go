@@ -117,6 +117,15 @@ func (p *Provider) client(tokens *providers.Tokens) *http.Client {
 // doJSON performs a request and decodes the JSON response into out. A nil body
 // means "no request payload"; out may be nil when the response is irrelevant.
 func (p *Provider) doJSON(ctx context.Context, client *http.Client, method, target string, body, out any) error {
+	// Every request this provider issues goes through here, and the URL reaches
+	// the request built below, so it is narrowed here, in the function that
+	// sends it (see requestURLPattern). The per-identifier guards of the callers
+	// refuse a bad id with a 400 well before this point; this layer keeps the
+	// request on Google's API host even when a call site builds an URL of its
+	// own.
+	if !requestURLPattern.MatchString(target) {
+		return unsafeRequestURLError("request URL", target)
+	}
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
