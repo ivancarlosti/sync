@@ -59,7 +59,10 @@ type ProviderGuide struct {
 	ConsoleURLs map[string]string `json:"console_urls"`
 	// Permissions is the permission table of the provider, in request order.
 	Permissions []providers.Permission `json:"permissions"`
-	// Scopes is the same list as the space separated grant, ready to copy.
+	// Scopes is the same list in request order. The authorization request joins
+	// it with a space (the `scope` parameter); the setup guide renders it comma
+	// separated, which is what the Google consent screen's "Manually add scopes"
+	// box expects.
 	Scopes []string `json:"scopes"`
 	// Capabilities are the features the table unlocks once granted.
 	Capabilities []providers.Capability `json:"capabilities"`

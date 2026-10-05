@@ -58,8 +58,14 @@ const provider = computed<ProviderName>(() => {
   return isProvider(raw) ? raw : PROVIDERS[0];
 });
 
-/** scopeText is the permission list as the console expects it: space separated. */
-const scopeText = computed(() => (guide.value ? guide.value.scopes.join(' ') : ''));
+/**
+ * scopeText is the permission list as the Google consent screen expects it: a
+ * comma separated list for the *Manually add scopes* box. The authorization
+ * request itself keeps the space separated form (the `scope` parameter), which
+ * the provider builds from the very same permission table, so only the value the
+ * operator copies changes.
+ */
+const scopeText = computed(() => (guide.value ? guide.value.scopes.join(', ') : ''));
 
 /**
  * GRAPH_RESOURCE is the Microsoft Graph resource prefix of the permission table.

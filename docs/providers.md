@@ -174,11 +174,11 @@ Both flows are shown with `prompt=consent`, so a reconnection always returns a
 refresh token; Google also uses `access_type=offline` and `include_granted_scopes`.
 
 The permission list is copied differently per console, because that is how the
-guide asks for it: the Google consent screen takes the whole space-separated grant
-in one paste (`copy: "scopes"`), while the Entra **Add a permission** picker only
-accepts the Graph permissions one by one, so the guide offers one field per
-permission with the `https://graph.microsoft.com/` prefix stripped
-(`copy: "permissions"` — `User.Read`, `Files.ReadWrite.All`, …).
+guide asks for it: the Google consent screen's *Manually add scopes* box takes the
+whole comma-separated grant in one paste (`copy: "scopes"`), while the Entra
+**Add a permission** picker only accepts the Graph permissions one by one, so the
+guide offers one field per permission with the `https://graph.microsoft.com/`
+prefix stripped (`copy: "permissions"` — `User.Read`, `Files.ReadWrite.All`, …).
 
 
 ## 4. Behaviour differences that matter

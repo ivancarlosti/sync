@@ -73,7 +73,8 @@ Two things a permission does **not** buy:
 5. **Redirect URI** — in the same client, add
    `APP_URL/api/oauth/google/callback` to *Authorised redirect URIs* (verbatim:
    the guide shows the exact value).
-6. **Permissions** — on the consent screen, add every scope of the table above.
+6. **Permissions** — on the consent screen, open *Manually add scopes* and paste
+   the comma-separated list the guide offers (step 6 of **Admin > Setup guide**).
    Google classifies `admin.directory.*` and `apps.licensing` as **sensitive**, so
    an External app has to be verified to be used by more than a handful of
    accounts.
@@ -198,11 +199,11 @@ answers everything the screen renders:
 | `redirect_uri` | the exact URL to register |
 | `console_urls` | the console deep links (`drive_api`, `admin_api`, `licensing_api`, `entra_apps`, `entra_authentication`, `entra_credentials`, `entra_api_permissions`, `graph_permissions`) |
 | `permissions[]` | the permission table: `capability`, `title` (i18n suffix), `scope`, `admin_consent`, `informational` (requested for the protocol, proves no capability — see §3.3) |
-| `scopes[]` | the same list space-separated, ready to paste |
+| `scopes[]` | the permission scopes in request order — the OAuth request joins them with a space (`scope` parameter); the guide renders them comma-separated, which is what the Google consent screen's *Manually add scopes* box expects |
 | `capabilities[]` | the capabilities the table unlocks |
 | `admin_consent_required` | the provider has a tenant-wide consent step (Microsoft) |
 | `admin_consent` | `{tenant, client_id, at, granted}` of this instance |
-| `steps[]` | the ordered walkthrough: `id`, `url`, `copy` (`redirect_uri` / `scopes`), `action` (`admin_consent`), `optional` |
+| `steps[]` | the ordered walkthrough: `id`, `url`, `copy` (`redirect_uri` / `scopes` / `permissions`), `action` (`admin_consent`), `optional` |
 | `warnings[]` | caveat codes the UI renders (`api_enablement`, `consent_screen_type`, `unverified_app`, `admin_role_required`, `license_required`, `tenant_scope`, `work_accounts_only`) |
 
 `redirect_uri` is derived from `APP_URL` (`/api/oauth/<provider>/callback`), so the
