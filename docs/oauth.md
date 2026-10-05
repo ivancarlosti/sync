@@ -133,6 +133,18 @@ which also derives the capability badges: `capabilities` (satisfied by the store
 grant) and `missing_capabilities` / `needs_reconnect` (requested by this release,
 not yet granted → reconnect).
 
+The four OpenID Connect scopes (`openid`, `profile`, `email`, `offline_access`)
+are requested but never used to **prove** a capability. Microsoft Entra ID grants
+them without reporting them back — the token response `scope` value carries the
+Graph resource scopes only, percent-encoded
+(`"scope": "https%3A%2F%2Fgraph.microsoft.com%2Fmail.read"`) — so the table marks
+them `informational` (`providers.Permission.Informational`) and the splitter
+tolerates that encoding (`providers.SplitScopes`). Without both, an account
+connected with the current permission set would be reported as needing a
+reconnect it cannot fix. A red *files* badge on a Microsoft account therefore
+always means `User.Read`, `Files.ReadWrite.All` or `Sites.ReadWrite.All` is
+missing from the grant.
+
 ## 4. Redirect URIs
 
 | Flow | Default (derived from `APP_URL`) | Where to register it |

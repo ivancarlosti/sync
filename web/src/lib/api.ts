@@ -327,6 +327,12 @@ export interface GuidePermission {
   title: string;
   scope: string;
   admin_consent: boolean;
+  /**
+   * informational marks a scope requested for the protocol (the OpenID Connect
+   * scopes) that never proves a capability: the provider grants it without
+   * reporting it back, so it is listed but never gates a capability badge.
+   */
+  informational?: boolean;
 }
 
 /**

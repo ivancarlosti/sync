@@ -202,10 +202,9 @@ func (m *TokenManager) RefreshExpiring(ctx context.Context, within time.Duration
 }
 
 // splitScopes splits the space separated scope string stored on an account.
+// A grant stored by a release that kept the percent-encoded value Microsoft
+// Entra returns is decoded here, so the tokens of an existing account are read
+// as the same list (see providers.SplitScopes).
 func splitScopes(raw string) []string {
-	fields := strings.Fields(raw)
-	if len(fields) == 0 {
-		return nil
-	}
-	return fields
+	return providers.SplitScopes(raw)
 }

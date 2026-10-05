@@ -68,7 +68,7 @@ type itemView struct {
 // permissions is the permission table of its provider (providers.Catalog); when
 // it is missing the capability lists stay empty instead of guessing.
 func newAccountView(account models.ConnectedAccount, permissions []providers.Permission) accountView {
-	granted := strings.Fields(account.Scopes)
+	granted := providers.SplitScopes(account.Scopes)
 	view := accountView{
 		ID:                  account.ID,
 		Provider:            account.Provider,

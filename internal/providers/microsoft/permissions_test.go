@@ -90,6 +90,59 @@ func TestDirectoryScopesRequireAdminConsent(t *testing.T) {
 	}
 }
 
+// TestGrantAsEntraReportsItSatisfiesEveryCapability reproduces the token response
+// of Microsoft Entra ID: it carries the Graph resource scopes it granted, in the
+// percent-encoded form Microsoft documents, and it never echoes the four OpenID
+// Connect scopes. A grant like that is complete, so the Accounts screen must not
+// tell the operator to reconnect the account.
+func TestGrantAsEntraReportsItSatisfiesEveryCapability(t *testing.T) {
+	provider := New()
+	// An Entra token response carries the Graph resource scopes only: the four
+	// OpenID Connect scopes it granted are never reported back, and the values
+	// are percent-encoded.
+	encoded := []string{}
+	for _, permission := range provider.Permissions() {
+		if !strings.HasPrefix(permission.Scope, graphResource) {
+			continue
+		}
+		encoded = append(encoded, url.QueryEscape(permission.Scope))
+	}
+	if len(encoded) == 0 {
+		t.Fatal("the table declares no Graph resource scope")
+	}
+	granted := providers.SplitScopes(strings.Join(encoded, "%20"))
+	if len(granted) != len(encoded) {
+		t.Fatalf("granted = %v, want %d scopes", granted, len(encoded))
+	}
+	if missing := providers.MissingCapabilities(provider.Permissions(), granted); len(missing) != 0 {
+		t.Fatalf("a grant as Entra reports it is missing %v", missing)
+	}
+	if got := providers.CapabilitiesOf(provider.Permissions(), granted); len(got) != len(providers.ProviderCapabilities) {
+		t.Fatalf("capabilities = %v, want all of them", got)
+	}
+}
+
+// TestOnlyTheOIDCScopesAreInformational pins which declarations do not prove a
+// capability: exactly the four OpenID Connect protocol scopes, because Entra ID
+// never reports them back in the token response.
+func TestOnlyTheOIDCScopesAreInformational(t *testing.T) {
+	informational := map[string]bool{}
+	for _, permission := range New().Permissions() {
+		if permission.Informational {
+			informational[permission.Scope] = true
+		}
+	}
+	want := []string{"offline_access", "openid", "profile", "email"}
+	if len(informational) != len(want) {
+		t.Fatalf("informational = %v, want %v", informational, want)
+	}
+	for _, scope := range want {
+		if !informational[scope] {
+			t.Fatalf("scope %q is not marked informational", scope)
+		}
+	}
+}
+
 // TestAdminConsentURLCarriesTheContract pins the tenant-wide consent URL: the
 // consented directory, the client, the registered callback, the same scope list
 // as the authorization request and the state that ties the callback to this flow.

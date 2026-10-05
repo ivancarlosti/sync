@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -245,6 +246,16 @@ type Permission struct {
 	// (Google: administrator identity + API controls allowlist; Microsoft:
 	// admin consent), which the guide has to explain before the flow starts.
 	AdminConsent bool `json:"admin_consent"`
+	// Informational marks a scope that is requested and documented but never
+	// used to prove its capability. The OpenID Connect scopes (`openid`,
+	// `profile`, `email`, `offline_access`) are the case in point: they buy no
+	// feature of their own, and the identity platform does not have to report
+	// them back — Microsoft Entra ID grants them while the token response only
+	// carries the Graph resource scopes, percent-encoded
+	// (`"scope": "https%3A%2F%2Fgraph.microsoft.com%2Fmail.read"`, see
+	// SplitScopes) — so requiring them would report a freshly connected account
+	// as missing permissions it already holds.
+	Informational bool `json:"informational,omitempty"`
 }
 
 // ScopeCatalog is implemented by providers that publish their permission table.
@@ -287,6 +298,24 @@ func ScopesOf(permissions []Permission) []string {
 	return scopes
 }
 
+// SplitScopes splits a scope string into its values. Both the space separated
+// form and the percent-encoded one the Microsoft identity platform uses in the
+// `scope` value of a token response
+// (`"scope": "https%3A%2F%2Fgraph.microsoft.com%2Fmail.read"`) describe the same
+// grant, so a stored or reported value is always read as a list: without the
+// decoding an Entra grant would be one unreadable scope, and every capability
+// would look ungranted. A value that is not encoded is returned untouched.
+func SplitScopes(raw string) []string {
+	if decoded, err := url.QueryUnescape(raw); err == nil {
+		raw = decoded
+	}
+	fields := strings.Fields(raw)
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
+}
+
 // CapabilitiesOf maps a granted scope list onto the capabilities of a permission
 // table. Matching is case-insensitive and a capability is only reported when
 // every scope it declares was granted, so an incomplete or stale grant never
@@ -302,6 +331,9 @@ func CapabilitiesOf(permissions []Permission, granted []string) []Capability {
 }
 
 // HasCapability reports whether a grant satisfies every scope of a capability.
+// The declarations marked Informational are requested for the protocol, not for
+// the feature, so a grant that does not carry them still satisfies the
+// capability (see Permission.Informational).
 func HasCapability(permissions []Permission, granted []string, capability Capability) bool {
 	declared := false
 	for _, permission := range permissions {
@@ -309,6 +341,9 @@ func HasCapability(permissions []Permission, granted []string, capability Capabi
 			continue
 		}
 		declared = true
+		if permission.Informational {
+			continue
+		}
 		if !containsScope(granted, permission.Scope) {
 			return false
 		}

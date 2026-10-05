@@ -168,6 +168,13 @@ connection to a directory that has not consented yet still fails with
 * The sign-in endpoints are built from the configured tenant, so a tenant id that
   is not a valid segment falls back to `common` instead of escaping the endpoint
   (`internal/providers/microsoft/provider.go`, `tenantID`).
+* The four OpenID Connect scopes (`openid`, `profile`, `email`, `offline_access`)
+  are requested and listed by the guide, but Entra ID does not report them back:
+  the token response `scope` value only carries the Graph resource scopes, and it
+  is percent-encoded (`"scope": "https%3A%2F%2Fgraph.microsoft.com%2Fmail.read"`).
+  They are therefore declared `informational` — requested, documented, and never
+  used to prove a capability — and the stored grant is decoded before it is
+  compared (`providers.SplitScopes`).
 * The consent endpoint uses that same value except for the generic ones: Microsoft
   documents `common` as unsupported by `adminconsent` ("Do not use common"), so
   `common` and `consumers` — and therefore an empty tenant id — become
@@ -190,7 +197,7 @@ answers everything the screen renders:
 | `configured` | an OAuth client is usable (environment or Admin > Providers) |
 | `redirect_uri` | the exact URL to register |
 | `console_urls` | the console deep links (`drive_api`, `admin_api`, `licensing_api`, `entra_apps`, `entra_authentication`, `entra_credentials`, `entra_api_permissions`, `graph_permissions`) |
-| `permissions[]` | the permission table: `capability`, `title` (i18n suffix), `scope`, `admin_consent` |
+| `permissions[]` | the permission table: `capability`, `title` (i18n suffix), `scope`, `admin_consent`, `informational` (requested for the protocol, proves no capability — see §3.3) |
 | `scopes[]` | the same list space-separated, ready to paste |
 | `capabilities[]` | the capabilities the table unlocks |
 | `admin_consent_required` | the provider has a tenant-wide consent step (Microsoft) |
@@ -222,6 +229,11 @@ When a release adds a permission:
 
 File synchronisation keeps working the whole time: the missing capabilities only
 affect the operations that need them, and the engine never calls one.
+
+The four OpenID Connect scopes never appear here: they are declared
+`informational`, because Entra ID grants them without echoing them in the token
+response `scope` value, and a scope that is never reported cannot prove a
+capability.
 
 ## 6. Troubleshooting
 

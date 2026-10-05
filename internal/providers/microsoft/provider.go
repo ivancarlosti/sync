@@ -293,13 +293,12 @@ func normaliseTokenType(raw string) string {
 	return raw
 }
 
-// splitScopes splits the space separated scope string Microsoft returns.
+// splitScopes splits the scope string Microsoft returns. Entra ID may
+// percent-encode the value (`https%3A%2F%2Fgraph.microsoft.com%2Fmail.read`), so
+// the splitting is shared with the rest of the stack (providers.SplitScopes)
+// instead of being a plain strings.Fields.
 func splitScopes(raw string) []string {
-	fields := strings.Fields(raw)
-	if len(fields) == 0 {
-		return nil
-	}
-	return fields
+	return providers.SplitScopes(raw)
 }
 
 // graphError is the error shape of the raw transfer requests in transfer.go.

@@ -26,12 +26,19 @@ var _ providers.ScopeCatalog = (*Provider)(nil)
 // Graph scopes are declared in their fully qualified form because that is what
 // the token response carries; matching is prefix tolerant (see
 // providers.normalizeScope), so both forms of a Graph scope are recognised.
+//
+// The four OpenID Connect scopes are Informational: they are requested (and the
+// guide lists them, because the app registration carries them) but they prove no
+// capability. Entra ID grants `openid`, `profile`, `email` and `offline_access`
+// without reporting them back in the token response `scope` value — which only
+// carries the Graph resource scopes — so requiring them would mark every account
+// that connects today as "connected before these permissions existed".
 func (p *Provider) Permissions() []providers.Permission {
 	return []providers.Permission{
-		{Capability: providers.CapabilityFiles, Title: "files", Scope: "offline_access"},
-		{Capability: providers.CapabilityFiles, Title: "files", Scope: "openid"},
-		{Capability: providers.CapabilityFiles, Title: "files", Scope: "profile"},
-		{Capability: providers.CapabilityFiles, Title: "files", Scope: "email"},
+		{Capability: providers.CapabilityFiles, Title: "files", Scope: "offline_access", Informational: true},
+		{Capability: providers.CapabilityFiles, Title: "files", Scope: "openid", Informational: true},
+		{Capability: providers.CapabilityFiles, Title: "files", Scope: "profile", Informational: true},
+		{Capability: providers.CapabilityFiles, Title: "files", Scope: "email", Informational: true},
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("User.Read")},
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("Files.ReadWrite.All")},
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("Sites.ReadWrite.All")},

@@ -220,5 +220,6 @@ which is how a deletion detected during a run is distinguished from a failure.
 | `412 reconnect` on every call | refresh token revoked/expired | reconnect the account (same remote account → same row, jobs preserved) |
 | `412 consent_required` when connecting | the permissions were refused, or the Microsoft admin consent is missing | collect the setup guide (`Admin > Setup guide`), fix the console, retry |
 | capability badges marked in red on an account | the account was connected before those permissions were requested | reconnect the account |
+| Microsoft: the *files* badge is red right after connecting, and reconnecting changes nothing | the grant is missing a **Graph** permission — `User.Read`, `Files.ReadWrite.All` or `Sites.ReadWrite.All`. The four OpenID Connect scopes are `informational` and never gate the badge (Entra does not report them back) | grant the missing Graph permission (admin consent for the tenant), then reconnect |
 | SharePoint libraries missing | `Sites.ReadWrite.All` not granted or no admin consent | grant it and reconnect |
 | Google native docs never copied | by design in V1 (`unsupported`) | export them manually, or keep them out of the source folder |

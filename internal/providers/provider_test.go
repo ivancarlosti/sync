@@ -98,6 +98,75 @@ func TestScopesOfKeepsRequestOrder(t *testing.T) {
 	}
 }
 
+// TestInformationalPermissionsDoNotGateACapability pins the rule that keeps a
+// Microsoft account from being reported as missing permissions it holds: the
+// OpenID Connect scopes are requested for the protocol, so a grant that does not
+// carry them still satisfies the capability they are declared under.
+func TestInformationalPermissionsDoNotGateACapability(t *testing.T) {
+	table := []Permission{
+		{Capability: CapabilityFiles, Title: "files", Scope: "files.read"},
+		{Capability: CapabilityFiles, Title: "files", Scope: "offline_access", Informational: true},
+	}
+	if !HasCapability(table, []string{"files.read"}, CapabilityFiles) {
+		t.Fatal("a grant without the informational scope was reported as incomplete")
+	}
+	if len(MissingCapabilities(table, []string{"files.read"})) != len(ProviderCapabilities)-1 {
+		t.Fatal("a table that declares one capability was reported as missing another one")
+	}
+	for _, capability := range MissingCapabilities(table, []string{"files.read"}) {
+		if capability == CapabilityFiles {
+			t.Fatal("an informational scope was reported as a missing capability")
+		}
+	}
+	if HasCapability(table, []string{"offline_access"}, CapabilityFiles) {
+		t.Fatal("the proof-bearing scope of the capability was not required")
+	}
+}
+
+// TestSplitScopesAcceptsTheEncodedGraphValue pins the tolerance for the
+// percent-encoded `scope` value of a Microsoft token response: the example
+// Microsoft documents and the space separated form have to yield the same list,
+// otherwise an Entra grant is stored as one unreadable scope.
+func TestSplitScopesAcceptsTheEncodedGraphValue(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{
+			name: "the documented example",
+			raw:  "https%3A%2F%2Fgraph.microsoft.com%2Fmail.read",
+			want: []string{"https://graph.microsoft.com/mail.read"},
+		},
+		{
+			name: "a whole encoded grant",
+			raw:  "https%3A%2F%2Fgraph.microsoft.com%2Fmail.read%20openid",
+			want: []string{"https://graph.microsoft.com/mail.read", "openid"},
+		},
+		{
+			name: "the space separated form",
+			raw:  "openid files.read",
+			want: []string{"openid", "files.read"},
+		},
+		{
+			name: "an empty grant",
+			raw:  "",
+			want: nil,
+		},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := SplitScopes(testCase.raw)
+			if fmt.Sprint(got) != fmt.Sprint(testCase.want) {
+				t.Fatalf("SplitScopes(%q) = %v, want %v", testCase.raw, got, testCase.want)
+			}
+		})
+	}
+	if !containsScope(SplitScopes("https%3A%2F%2Fgraph.microsoft.com%2FMail.Read"), "https://graph.microsoft.com/mail.read") {
+		t.Fatal("a decoded Graph scope was not matched against the table")
+	}
+}
+
 // TestIsConsentRequired pins which authorization-server refusals are reported as
 // a missing consent (HTTP 412, `code: consent_required`) and which stay generic.
 func TestIsConsentRequired(t *testing.T) {

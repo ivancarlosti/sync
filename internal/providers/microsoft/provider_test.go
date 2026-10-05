@@ -9,6 +9,7 @@ import (
 	"time"
 
 	graphmodels "github.com/microsoftgraph/msgraph-sdk-go/models"
+	"golang.org/x/oauth2"
 
 	"github.com/ivancarlosti/sync/internal/providers"
 )
@@ -68,6 +69,20 @@ func TestHelpers(t *testing.T) {
 	}
 	if got := normaliseTokenType("bearer"); got != "Bearer" {
 		t.Fatalf("normaliseTokenType = %q", got)
+	}
+}
+
+// TestTokensFromOAuthDecodesTheReportedScopeValue pins the live connection path:
+// the `scope` value Entra returns is stored as a list of scopes, so a grant that
+// only differs in its encoding still satisfies the capability badges.
+func TestTokensFromOAuthDecodesTheReportedScopeValue(t *testing.T) {
+	token := (&oauth2.Token{AccessToken: "access"}).WithExtra(map[string]any{
+		"scope": "https%3A%2F%2Fgraph.microsoft.com%2FFiles.ReadWrite.All%20openid",
+	})
+	tokens := tokensFromOAuth(token, "")
+	want := []string{"https://graph.microsoft.com/Files.ReadWrite.All", "openid"}
+	if strings.Join(tokens.Scopes, " ") != strings.Join(want, " ") {
+		t.Fatalf("scopes = %v, want %v", tokens.Scopes, want)
 	}
 }
 

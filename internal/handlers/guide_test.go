@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/ivancarlosti/sync/internal/models"
 	"github.com/ivancarlosti/sync/internal/providers"
 	"github.com/ivancarlosti/sync/internal/providers/google"
+	"github.com/ivancarlosti/sync/internal/providers/microsoft"
 	"github.com/ivancarlosti/sync/internal/services"
 )
 
@@ -143,6 +145,48 @@ func TestAccountCapabilitiesAreDerived(t *testing.T) {
 	}
 	if len(current.Capabilities) != len(providers.ProviderCapabilities) {
 		t.Fatalf("capabilities = %v, want every one", current.Capabilities)
+	}
+}
+
+// TestAccountCapabilitiesReportAnEntraGrantAsComplete reproduces the reported
+// failure: an account connected with the current scope set was still marked
+// "connected before these permissions existed", because Microsoft Entra ID only
+// reports the Graph resource scopes — percent-encoded — and never echoes the four
+// OpenID Connect scopes it granted.
+func TestAccountCapabilitiesReportAnEntraGrantAsComplete(t *testing.T) {
+	server, store := newTestServer(t, models.AuthModeNone)
+	account := saveAccount(t, store, models.ProviderMicrosoft, "ms-1", "u@contoso.com")
+	// The grant of an Entra token response: the Graph resource scopes only,
+	// percent-encoded. The four OpenID Connect scopes it granted are not in it.
+	encoded := []string{}
+	for _, permission := range microsoft.New().Permissions() {
+		if !strings.HasPrefix(permission.Scope, "https://graph.microsoft.com/") {
+			continue
+		}
+		encoded = append(encoded, url.QueryEscape(permission.Scope))
+	}
+	if len(encoded) == 0 {
+		t.Fatal("the microsoft table declares no Graph resource scope")
+	}
+	account.Scopes = strings.Join(encoded, "%20")
+	if err := store.SaveAccount(context.Background(), account); err != nil {
+		t.Fatalf("saving the account: %v", err)
+	}
+
+	recorder := call(t, server, http.MethodGet, "/api/accounts", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	list := decodeJSON[struct {
+		Accounts []accountView `json:"accounts"`
+	}](t, recorder)
+	if len(list.Accounts) != 1 {
+		t.Fatalf("accounts = %+v", list.Accounts)
+	}
+	connected := list.Accounts[0]
+	if connected.NeedsReconnect || len(connected.MissingCapabilities) != 0 {
+		t.Fatalf("missing = %v (needs_reconnect=%v), want none", connected.MissingCapabilities, connected.NeedsReconnect)
+	}
+	if len(connected.Capabilities) != len(providers.ProviderCapabilities) {
+		t.Fatalf("capabilities = %v, want every one", connected.Capabilities)
 	}
 }
 
