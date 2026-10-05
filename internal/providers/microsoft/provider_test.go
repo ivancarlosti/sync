@@ -189,3 +189,81 @@ func TestGraphClientNeedsAToken(t *testing.T) {
 		t.Fatal("expected Account to fail without a token")
 	}
 }
+
+// TestGraphRewritesTheMeSentinel pins the request adapter's middleware pipeline.
+// The generated client builds Me() as /users/me-token-to-replace, and Graph's URL
+// replace handler is the only thing that turns that sentinel into /me. Losing the
+// handler is invisible to the compiler and only surfaces as a Graph "resource
+// does not exist" error, so the outgoing URL is asserted here instead.
+func TestGraphRewritesTheMeSentinel(t *testing.T) {
+	transport := &recordingTransport{bodies: map[string]string{
+		"/v1.0/me":        `{"id":"user-1","displayName":"Ada Lovelace","userPrincipalName":"ada@contoso.com"}`,
+		"/v1.0/me/drives": `{"value":[{"id":"drive-1","name":"OneDrive","driveType":"personal"}]}`,
+	}}
+	provider := New()
+	provider.httpClient.Transport = transport
+	tokens := &providers.Tokens{AccessToken: "sentinel-test-token"}
+
+	account, err := provider.Account(context.Background(), providers.Credentials{}, tokens)
+	if err != nil {
+		t.Fatalf("Account = %v", err)
+	}
+	if account.ID != "user-1" || account.Name != "Ada Lovelace" || account.Email != "ada@contoso.com" {
+		t.Errorf("Account = %+v, want the document served for /me", account)
+	}
+
+	drives, err := provider.Drives(context.Background(), providers.Credentials{}, tokens)
+	if err != nil {
+		t.Fatalf("Drives = %v", err)
+	}
+	if len(drives) != 1 || drives[0].ID != "drive-1" || drives[0].Kind != "personal" {
+		t.Errorf("Drives = %+v, want the document served for /me/drives", drives)
+	}
+
+	want := []string{
+		"https://graph.microsoft.com/v1.0/me",
+		"https://graph.microsoft.com/v1.0/me/drives",
+	}
+	if len(transport.urls) != len(want) {
+		t.Fatalf("the pipeline issued %d requests (%v), want %d", len(transport.urls), transport.urls, len(want))
+	}
+	for i, url := range transport.urls {
+		if !strings.HasPrefix(url, want[i]) {
+			t.Errorf("request %d went to %q, want %q", i, url, want[i])
+		}
+		if strings.Contains(url, "me-token-to-replace") {
+			t.Errorf("request %d leaked the graph sentinel: %q", i, url)
+		}
+	}
+	if got := transport.headers[0].Get("Authorization"); got != "Bearer sentinel-test-token" {
+		t.Errorf("Authorization = %q, want the stored access token", got)
+	}
+}
+
+// recordingTransport answers every request from a canned body per path while
+// recording the URLs, so a test never reaches Microsoft Graph.
+type recordingTransport struct {
+	urls    []string
+	headers []http.Header
+	bodies  map[string]string
+}
+
+// RoundTrip implements http.RoundTripper.
+func (t *recordingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.urls = append(t.urls, request.URL.String())
+	t.headers = append(t.headers, request.Header.Clone())
+	body := t.bodies[request.URL.Path]
+	if body == "" {
+		body = "{}"
+	}
+	header := http.Header{}
+	header.Set("Content-Type", "application/json")
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Status:        "200 OK",
+		Header:        header,
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Request:       request,
+	}, nil
+}

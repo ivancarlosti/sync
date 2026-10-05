@@ -35,6 +35,7 @@ import (
 	auth "github.com/microsoft/kiota-abstractions-go/authentication"
 	kiotahttp "github.com/microsoft/kiota-http-go"
 	msgraphsdk "github.com/microsoftgraph/msgraph-sdk-go"
+	msgraphgocore "github.com/microsoftgraph/msgraph-sdk-go-core"
 	"github.com/microsoftgraph/msgraph-sdk-go/models/odataerrors"
 	"github.com/microsoftgraph/msgraph-sdk-go/users"
 	"golang.org/x/oauth2"
@@ -121,10 +122,12 @@ func New() *Provider {
 	}
 }
 
-// transport returns the shared round tripper used underneath the SDK middleware.
+// transport returns the round tripper the SDK middleware pipeline runs on top
+// of. It is the provider's pooled transport, or whatever else the HTTP client
+// was given, so a custom transport is never silently dropped.
 func (p *Provider) transport() http.RoundTripper {
-	if transport, ok := p.httpClient.Transport.(*http.Transport); ok {
-		return transport
+	if p.httpClient != nil && p.httpClient.Transport != nil {
+		return p.httpClient.Transport
 	}
 	return http.DefaultTransport
 }
@@ -422,9 +425,19 @@ func (p *Provider) graphSession(tokens *providers.Tokens) (*msgraphsdk.GraphServ
 // newAdapter builds a Kiota request adapter whose bearer token comes from the
 // stored credentials and whose transport is the provider's own HTTP client, so
 // the whole SDK shares one connection pool and one set of middlewares.
+//
+// The pipeline is Graph's, not Kiota's plain default. The generated client asks
+// for Me() as /users/me-token-to-replace and only Graph's UrlReplaceHandler
+// rewrites that sentinel to /me, so dropping it makes every Me()-scoped call
+// (the identity read and the drive list) fail with a "resource does not exist"
+// error from Graph. GetDefaultClient cannot be used here: it would install the
+// right middlewares on a transport of its own, discarding the pooled one.
 func (p *Provider) newAdapter(accessToken string) (abstractions.RequestAdapter, error) {
+	options := msgraphsdk.GetDefaultClientOptions()
+	middlewares := msgraphgocore.GetDefaultMiddlewaresWithOptions(&options)
+
 	httpClient := kiotahttp.GetDefaultClient()
-	httpClient.Transport = kiotahttp.NewCustomTransportWithParentTransport(p.transport(), kiotahttp.GetDefaultMiddlewares()...)
+	httpClient.Transport = kiotahttp.NewCustomTransportWithParentTransport(p.transport(), middlewares...)
 
 	credential := auth.NewBaseBearerTokenAuthenticationProvider(newTokenProvider(accessToken))
 	adapter, err := msgraphsdk.NewGraphRequestAdapterWithParseNodeFactoryAndSerializationWriterFactoryAndHttpClient(
