@@ -93,7 +93,7 @@ client id configured right now.
 
 | Method | Path | Payload / answer |
 |---|---|---|
-| `GET` | `/api/oauth` | `{providers:[ProviderCredentialsInfo]}` — what the Connect screen lists |
+| `GET` | `/api/oauth` | `{providers:[ProviderCredentialsInfo]}` — every compiled provider with the state of its OAuth client; the Connect screen offers the ones with `configured: true` |
 | `POST` | `/api/oauth/:provider/start` | `{redirect_to?}` → `{url, state}` |
 | `POST` | `/api/oauth/:provider/admin-consent` | `{redirect_to?}` → `{url, state}` — the tenant-wide consent URL (Microsoft only, `400` elsewhere) |
 | `GET` | `/api/accounts` | `{accounts:[accountView]}` (tokens never included) |

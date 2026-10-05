@@ -1489,6 +1489,14 @@ func TestAccountsAndOAuthGuards(t *testing.T) {
 	if len(offered.Providers) != 2 {
 		t.Errorf("providers = %+v, want the two compiled-in providers", offered.Providers)
 	}
+	// The object shape (not bare names) and `configured` are what the connect
+	// screen reads: it offers a provider only once its OAuth client is complete,
+	// so a fresh instance advertises both and offers none.
+	for _, info := range offered.Providers {
+		if info.Configured {
+			t.Errorf("%s: reported as configured without an OAuth client", info.Provider)
+		}
+	}
 
 	// An unknown provider is refused before any state is created.
 	recorder = call(t, server, http.MethodPost, "/api/oauth/dropbox/start", nil)

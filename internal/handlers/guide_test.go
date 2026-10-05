@@ -202,6 +202,21 @@ func TestProviderGuideEndpoint(t *testing.T) {
 		if want := name == models.ProviderMicrosoft; guide.AdminConsentRequired != want {
 			t.Fatalf("%s: admin_consent_required = %v", name, guide.AdminConsentRequired)
 		}
+		// The wire value the setup screen switches on when it decides between the
+		// whole grant in one field and one field per permission.
+		wantCopy := services.GuideCopyScopes
+		if name == models.ProviderMicrosoft {
+			wantCopy = services.GuideCopyPermissions
+		}
+		copies := 0
+		for _, step := range guide.Steps {
+			if step.Copy == wantCopy {
+				copies++
+			}
+		}
+		if copies != 1 {
+			t.Fatalf("%s: %d steps ask to copy %q, want 1", name, copies, wantCopy)
+		}
 	}
 
 	// An unknown provider is refused before the service is reached.

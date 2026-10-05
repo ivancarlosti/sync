@@ -12,8 +12,12 @@ import (
 const (
 	// GuideCopyRedirectURI is the callback URL registered with the provider.
 	GuideCopyRedirectURI = "redirect_uri"
-	// GuideCopyScopes is the complete permission list this instance requests.
+	// GuideCopyScopes is the complete permission list this instance requests, for
+	// the consoles that take it in a single paste.
 	GuideCopyScopes = "scopes"
+	// GuideCopyPermissions is the same list as one value per permission, for the
+	// consoles that only accept them one by one (Microsoft Entra).
+	GuideCopyPermissions = "permissions"
 	// GuideActionAdminConsent marks the step that starts the tenant-wide
 	// consent flow (Microsoft Entra admin consent).
 	GuideActionAdminConsent = "admin_consent"
@@ -30,7 +34,9 @@ type GuideStep struct {
 	// URL is the registration-console page the step opens, when it has one.
 	URL string `json:"url,omitempty"`
 	// Copy names the value of this instance the step asks to paste in the
-	// console: `redirect_uri`, `scopes`, or empty.
+	// console: `redirect_uri`, `scopes` (the whole grant, when the console takes
+	// the list at once), `permissions` (one value per permission, when it does
+	// not), or empty.
 	Copy string `json:"copy,omitempty"`
 	// Optional marks a step a first, files-only setup can postpone.
 	Optional bool `json:"optional,omitempty"`
@@ -157,7 +163,8 @@ func guideSteps(provider models.ProviderName, links map[string]string) []GuideSt
 			{ID: "app", URL: links["entra_apps"]},
 			{ID: "redirect", URL: links["entra_authentication"], Copy: GuideCopyRedirectURI},
 			{ID: "secret", URL: links["entra_credentials"]},
-			{ID: "permissions", URL: links["entra_api_permissions"], Copy: GuideCopyScopes},
+			// Entra has no bulk paste: the permissions are added one by one.
+			{ID: "permissions", URL: links["entra_api_permissions"], Copy: GuideCopyPermissions},
 			{ID: "consent", Action: GuideActionAdminConsent},
 			{ID: "role"},
 			{ID: "connect"},

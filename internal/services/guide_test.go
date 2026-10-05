@@ -76,6 +76,22 @@ func TestGuideDescribesBothProviders(t *testing.T) {
 				t.Fatalf("%s: a step has no id", name)
 			}
 		}
+		// The console of the provider decides how the permission list is copied:
+		// Entra only accepts the Graph permissions one by one, while the Google
+		// consent screen takes the whole grant in a single paste.
+		wantCopy := GuideCopyScopes
+		if name == models.ProviderMicrosoft {
+			wantCopy = GuideCopyPermissions
+		}
+		copies := 0
+		for _, step := range built.Steps {
+			if step.Copy == wantCopy {
+				copies++
+			}
+		}
+		if copies != 1 {
+			t.Fatalf("%s: %d steps ask to copy %q, want 1", name, copies, wantCopy)
+		}
 		if len(built.Warnings) == 0 {
 			t.Fatalf("%s: no caveat was reported", name)
 		}

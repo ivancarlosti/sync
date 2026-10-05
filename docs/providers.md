@@ -166,6 +166,13 @@ What the registration has to expose:
 Both flows are shown with `prompt=consent`, so a reconnection always returns a
 refresh token; Google also uses `access_type=offline` and `include_granted_scopes`.
 
+The permission list is copied differently per console, because that is how the
+guide asks for it: the Google consent screen takes the whole space-separated grant
+in one paste (`copy: "scopes"`), while the Entra **Add a permission** picker only
+accepts the Graph permissions one by one, so the guide offers one field per
+permission with the `https://graph.microsoft.com/` prefix stripped
+(`copy: "permissions"` — `User.Read`, `Files.ReadWrite.All`, …).
+
 
 ## 4. Behaviour differences that matter
 
@@ -198,9 +205,10 @@ which is how a deletion detected during a run is distinguished from a failure.
   (Microsoft), the current `source`, the exact redirect URI to paste into the
   provider console and the tenant-wide consent state (Microsoft).
 * **Admin > Setup guide** — the guided registration: ordered steps with console
-  deep links, the redirect URI and the permission list to copy, the capability
-  badges, the caveats, the tenant-wide consent button (Microsoft) and a link to
-  [app-registration.md](../docs/app-registration.md).
+  deep links, the redirect URI and the permission list to copy (the whole grant in
+  one field for Google, one field per permission for Microsoft Entra), the
+  capability badges, the caveats, the tenant-wide consent button (Microsoft) and a
+  link to [app-registration.md](../docs/app-registration.md).
 
 ## 6. Troubleshooting
 

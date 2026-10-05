@@ -11,7 +11,7 @@
 // and `detail` in the query (see redirectToAccounts in the Go handler); the codes
 // are translated here like any other API failure, and the query is cleared so a
 // reload does not repeat the message.
-import { Compass, Plus, RefreshCw, ShieldCheck, Unplug } from '@lucide/vue';
+import { Compass, KeyRound, Plus, RefreshCw, ShieldCheck, Unplug } from '@lucide/vue';
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
@@ -150,8 +150,13 @@ async function load(): Promise<void> {
     ]);
     rows.value = list.accounts;
     usedJobs.value = all.jobs;
-    // Kept in the display order of the provider list, not in the answer order.
-    offered.value = PROVIDERS.filter((provider) => available.providers.includes(provider));
+    // Kept in the display order of the provider list, not in the answer order,
+    // and only the providers whose OAuth client is complete: a flow cannot be
+    // started without one, so offering it would fail on the click
+    // (see ProviderSettings.Info and its `configured` flag).
+    offered.value = PROVIDERS.filter((provider) =>
+      available.providers.some((info) => info.provider === provider && info.configured),
+    );
   } catch (error) {
     failure.value = messageOf(error);
   } finally {
@@ -272,18 +277,32 @@ onMounted(async () => {
 
     <Card v-else-if="rows.length === 0" content-class="p-0">
       <EmptyState :icon="Plus" :title="t('accounts.empty')" :message="t('accounts.emptyHint')">
-        <Button
-          v-for="provider in offered"
-          :key="provider"
-          variant="outline"
-          size="sm"
-          :loading="connecting === provider"
-          @click="connect(provider)"
-        >
-          {{
-            provider === 'google' ? t('accounts.connectGoogle') : t('accounts.connectMicrosoft')
-          }}
-        </Button>
+        <template v-if="offered.length">
+          <Button
+            v-for="provider in offered"
+            :key="provider"
+            variant="outline"
+            size="sm"
+            :loading="connecting === provider"
+            @click="connect(provider)"
+          >
+            {{
+              provider === 'google' ? t('accounts.connectGoogle') : t('accounts.connectMicrosoft')
+            }}
+          </Button>
+        </template>
+        <!-- No provider has an OAuth client yet, so there is nothing to connect
+             with: the walkthrough and the credentials screen are the way out. -->
+        <template v-else>
+          <Button variant="outline" size="sm" @click="router.push({ name: 'admin-guide' })">
+            <Compass class="h-4 w-4" aria-hidden="true" />
+            {{ t('admin.guide.title') }}
+          </Button>
+          <Button variant="outline" size="sm" @click="router.push({ name: 'admin-providers' })">
+            <KeyRound class="h-4 w-4" aria-hidden="true" />
+            {{ t('admin.providers') }}
+          </Button>
+        </template>
       </EmptyState>
     </Card>
 

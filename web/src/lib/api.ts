@@ -337,8 +337,13 @@ export interface GuidePermission {
 export interface GuideStep {
   id: string;
   url?: string;
-  /** copy names the value of this instance the step asks to paste in the console. */
-  copy?: 'redirect_uri' | 'scopes' | string;
+  /**
+   * copy names the value of this instance the step asks to paste in the console:
+   * `redirect_uri`, `scopes` (the whole grant, for a console that takes the list
+   * in one paste) or `permissions` (one field per permission, for a console that
+   * does not).
+   */
+  copy?: 'redirect_uri' | 'scopes' | 'permissions' | string;
   optional?: boolean;
   /** action names an API action the step offers (`admin_consent`). */
   action?: 'admin_consent' | string;
@@ -428,10 +433,11 @@ export const auth = {
     }),
 };
 
-// oauth lists the providers of this build that have a usable OAuth client,
-// which is what the "Connect an account" screen offers.
+// oauth lists the providers of this build with the state of their OAuth client
+// (ProviderCredentialsInfo): `configured` says which one can start a flow, which
+// is what the "Connect an account" screen offers.
 export const oauth = {
-  providers: () => request<{ providers: ProviderName[] }>({ url: '/oauth' }),
+  providers: () => request<{ providers: ProviderInfo[] }>({ url: '/oauth' }),
 };
 
 export const accounts = {

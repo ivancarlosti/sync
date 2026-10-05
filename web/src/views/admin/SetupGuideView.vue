@@ -61,6 +61,19 @@ const provider = computed<ProviderName>(() => {
 /** scopeText is the permission list as the console expects it: space separated. */
 const scopeText = computed(() => (guide.value ? guide.value.scopes.join(' ') : ''));
 
+/**
+ * GRAPH_RESOURCE is the Microsoft Graph resource prefix of the permission table.
+ * Entra's permission picker expects the bare name (User.Read), so the prefix is
+ * dropped from the value the operator copies; the Google scopes are full URLs and
+ * the four OpenID scopes are bare identifiers, so both are copied verbatim.
+ */
+const GRAPH_RESOURCE = 'https://graph.microsoft.com/';
+
+/** permissionName is a permission as the provider console expects it to be typed. */
+function permissionName(scope: string): string {
+  return scope.startsWith(GRAPH_RESOURCE) ? scope.slice(GRAPH_RESOURCE.length) : scope;
+}
+
 /** stepKey builds the catalog key of one field of a step. */
 function stepKey(step: GuideStep, field: 'title' | 'body'): string {
   return `admin.guide.steps.${provider.value}.${step.id}.${field}`;
@@ -270,6 +283,13 @@ watch(provider, async () => {
                     class="max-w-2xl"
                   />
                   <CopyField v-else-if="step.copy === 'scopes'" :value="scopeText" multiline />
+                  <!-- A console that only takes the permissions one by one (Entra)
+                       gets one field per permission instead of the whole grant. -->
+                  <ul v-else-if="step.copy === 'permissions'" class="space-y-2">
+                    <li v-for="permission in guide.permissions" :key="permission.scope">
+                      <CopyField :value="permissionName(permission.scope)" class="max-w-2xl" />
+                    </li>
+                  </ul>
 
                   <div v-if="step.action === 'admin_consent'" class="space-y-2">
                     <Alert
@@ -313,8 +333,7 @@ watch(provider, async () => {
             :description="t('admin.guide.permissionsHint', { count: guide.permissions.length })"
             content-class="space-y-3"
           >
-            <CopyField :value="scopeText" multiline />
-            <ul class="space-y-2">
+            <ul class="space-y-3">
               <li v-for="permission in guide.permissions" :key="permission.scope" class="space-y-1">
                 <div class="flex flex-wrap items-center gap-2">
                   <span class="text-xs font-medium">{{ capabilityLabel(permission.capability) }}</span>
@@ -322,9 +341,7 @@ watch(provider, async () => {
                     {{ t('admin.guide.consentTitle') }}
                   </Badge>
                 </div>
-                <code class="block break-all font-mono text-xs text-muted-foreground">{{
-                  permission.scope
-                }}</code>
+                <CopyField :value="permissionName(permission.scope)" />
               </li>
             </ul>
           </Card>
