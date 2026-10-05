@@ -81,8 +81,9 @@ const (
 // Compile time guards: the registry hands these out as interfaces, so a drifted
 // signature must fail the build rather than a job at runtime.
 var (
-	_ providers.Provider    = (*Provider)(nil)
-	_ providers.SiteBrowser = (*Provider)(nil)
+	_ providers.Provider     = (*Provider)(nil)
+	_ providers.SiteBrowser  = (*Provider)(nil)
+	_ providers.SiteResolver = (*Provider)(nil)
 )
 
 // Provider talks to Microsoft Graph with a stored OAuth token set.

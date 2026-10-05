@@ -37,6 +37,13 @@ type SiteBrowser interface {
     SearchSites(ctx, creds, tokens, query string) ([]Drive, error)
 }
 
+// Optional capability: providers able to turn an operator supplied location
+// (a URL, a server-relative path or a remote id) into a browsable drive. It
+// backs the manual fallback of the folder picker.
+type SiteResolver interface {
+    ResolveSite(ctx, creds, tokens, location string) (Drive, error)
+}
+
 // Optional capability: providers that publish their permission table. The table
 // is the single source of truth for Scopes(), the setup guide and the capability
 // badges of the accounts screen.
@@ -179,7 +186,7 @@ permission with the `https://graph.microsoft.com/` prefix stripped
 | Topic | Google | Microsoft |
 |---|---|---|
 | API | `google.golang.org/api/drive/v3` + `oauth2` | `msgraph-sdk-go` v1.103 with a custom kiota token provider fed by our encrypted tokens |
-| Drive list | My Drive + shared drives (`drives.list`) | personal OneDrive + SharePoint libraries reached through `GET /api/accounts/:id/sites?q=` |
+| Drive list | My Drive + shared drives (`drives.list`) | personal OneDrive from `/me/drives` plus SharePoint libraries: `GET /api/accounts/:id/sites` (`$search=*` when no keyword, so every reachable site is listed) and the manual fallback `POST /api/accounts/:id/sites/resolve` for a pasted SharePoint URL |
 | Checksum | `md5Checksum` (only for binary files) | `quickXorHash` |
 | Native documents (`application/vnd.google-apps.*`) | exposed but marked `unsupported` — V1 never exports them | n/a |
 | Shortcuts / links | marked `unsupported`, never followed | links are skipped the same way |
@@ -200,7 +207,11 @@ which is how a deletion detected during a run is distinguished from a failure.
   `GET /api/accounts/:id/drives` then
   `GET /api/accounts/:id/drives/:drive/items?folder_id=…`; folders come first,
   then files, both alphabetically. Items with `unsupported: true` are greyed out
-  and cannot be selected.
+  and cannot be selected. For Microsoft, the site field above the drive selector
+  lists the SharePoint libraries of the tenant (`$search=*` on open, `$search=<q>`
+  while typing) and resolves a pasted SharePoint URL through
+  `POST /api/accounts/:id/sites/resolve` when the search does not surface a
+  library.
 * **Admin > Providers** — client id, client secret, redirect URI, tenant
   (Microsoft), the current `source`, the exact redirect URI to paste into the
   provider console and the tenant-wide consent state (Microsoft).
@@ -221,5 +232,5 @@ which is how a deletion detected during a run is distinguished from a failure.
 | `412 consent_required` when connecting | the permissions were refused, or the Microsoft admin consent is missing | collect the setup guide (`Admin > Setup guide`), fix the console, retry |
 | capability badges marked in red on an account | the account was connected before those permissions were requested | reconnect the account |
 | Microsoft: the *files* badge is red right after connecting, and reconnecting changes nothing | the grant is missing a **Graph** permission — `User.Read`, `Files.ReadWrite.All` or `Sites.ReadWrite.All`. The four OpenID Connect scopes are `informational` and never gate the badge (Entra does not report them back) | grant the missing Graph permission (admin consent for the tenant), then reconnect |
-| SharePoint libraries missing | `Sites.ReadWrite.All` not granted or no admin consent | grant it and reconnect |
+| SharePoint libraries missing | `Sites.ReadWrite.All` not granted, no admin consent, or the library belongs to a site the signed-in user cannot reach | grant the scope and reconnect; the picker also accepts a pasted SharePoint URL (the manual fallback of the site field) |
 | Google native docs never copied | by design in V1 (`unsupported`) | export them manually, or keep them out of the source folder |

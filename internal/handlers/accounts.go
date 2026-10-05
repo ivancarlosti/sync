@@ -264,8 +264,10 @@ func (s *Server) handleAccountItems(c *gin.Context) {
 
 // handleAccountSites answers GET /api/accounts/:id/sites?q=…: it searches the
 // extra drives of a provider (SharePoint document libraries for Microsoft) so an
-// operator can synchronise a library outside the personal OneDrive. Providers
-// without the SiteBrowser capability answer an empty list instead of an error.
+// operator can synchronise a library outside the personal OneDrive. `q` is a
+// keyword and an empty one means "every site the account can reach" (the provider
+// decides how to express that). Providers without the SiteBrowser capability
+// answer an empty list instead of an error.
 func (s *Server) handleAccountSites(c *gin.Context) {
 	id, ok := parseID(c, "id")
 	if !ok {
@@ -293,4 +295,43 @@ func (s *Server) handleAccountSites(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"sites": drives})
+}
+
+// handleResolveSite answers POST /api/accounts/:id/sites/resolve with a body of
+// `{"url": "https://tenant.sharepoint.com/sites/marketing"}`: it turns a
+// SharePoint location the operator pasted into the default library of that site.
+// It is the manual fallback of the folder picker, for the libraries the keyword
+// search does not surface. The answer carries the same `{sites:[…]}` shape as
+// GET …/sites so the picker merges it the same way, and it answers 424
+// not_configured for a provider without the SiteResolver capability, 400 for a
+// value that is not a SharePoint URL and 404 for a site the account cannot reach.
+func (s *Server) handleResolveSite(c *gin.Context) {
+	id, ok := parseID(c, "id")
+	if !ok {
+		return
+	}
+	var payload struct {
+		URL string `json:"url"`
+	}
+	if !decode(c, &payload) {
+		return
+	}
+	sites := []driveView{}
+	err := s.deps.Tokens.Use(c.Request.Context(), id, func(session services.ProviderSession) error {
+		resolver, ok := s.deps.Registry.SiteResolverFor(session.Provider.Name())
+		if !ok {
+			return services.ErrNotConfigured
+		}
+		remote, err := resolver.ResolveSite(c.Request.Context(), session.Credentials, session.Tokens, payload.URL)
+		if err != nil {
+			return err
+		}
+		sites = []driveView{{ID: remote.ID, Name: remote.Name, Kind: remote.Kind, Owner: remote.Owner}}
+		return nil
+	})
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"sites": sites})
 }

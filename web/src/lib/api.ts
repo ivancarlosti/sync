@@ -452,7 +452,27 @@ export const accounts = {
     request<{ id: number; deleted_jobs: number }>({ url: `/accounts/${id}`, method: 'DELETE' }),
   verify: (id: number) => request<ConnectedAccount>({ url: `/accounts/${id}/verify`, method: 'POST' }),
   drives: (id: number) => request<{ drives: Drive[] }>({ url: `/accounts/${id}/drives` }),
-  sites: (id: number) => request<{ sites: Drive[] }>({ url: `/accounts/${id}/sites` }),
+  /**
+   * sites searches the extra roots of an account (`q` is the keyword; an empty
+   * one lists every site the account can reach). It answers an empty list for a
+   * provider without the capability, so a personal account is not an error.
+   */
+  sites: (id: number, q = '') =>
+    request<{ sites: Drive[] }>({
+      url: `/accounts/${id}/sites`,
+      params: q === '' ? undefined : { q },
+    }),
+  /**
+   * resolveSite is the manual fallback of the folder picker: the server turns a
+   * SharePoint URL the operator pasted into the default library of that site.
+   * It answers the same shape as `sites` so both merge the same way.
+   */
+  resolveSite: (id: number, url: string) =>
+    request<{ sites: Drive[] }>({
+      url: `/accounts/${id}/sites/resolve`,
+      method: 'POST',
+      data: { url },
+    }),
   items: (id: number, driveId: string, folderId: string) =>
     request<{ drive_id: string; folder_id: string; items: FolderItem[] }>({
       url: `/accounts/${id}/drives/${encodeURIComponent(driveId)}/items`,

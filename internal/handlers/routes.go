@@ -42,6 +42,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		accounts.GET("/:id/drives", s.handleAccountDrives)
 		accounts.GET("/:id/drives/:drive/items", s.handleAccountItems)
 		accounts.GET("/:id/sites", s.handleAccountSites)
+		accounts.POST("/:id/sites/resolve", s.handleResolveSite)
 
 		jobs := secured.Group("/jobs")
 		jobs.GET("", s.handleListJobs)

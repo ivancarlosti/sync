@@ -52,6 +52,11 @@ func statusFor(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, services.ErrValidation):
 		return http.StatusBadRequest
+	case errors.Is(err, providers.ErrNotFound):
+		// A remote item (or, for the site resolver, a remote site) that does
+		// not exist. The request is understood and the resource is gone, which
+		// is a 404 rather than a server side failure.
+		return http.StatusNotFound
 	case errors.Is(err, providers.ErrInvalidIdentifier):
 		// A provider refused an identifier the caller handed it (a folder id in
 		// a stored job or in an explorer link). The request is understood and
@@ -90,6 +95,8 @@ func codeFor(err error) string {
 		return codeNotFound
 	case errors.Is(err, services.ErrValidation):
 		return codeValidation
+	case errors.Is(err, providers.ErrNotFound):
+		return codeNotFound
 	case errors.Is(err, providers.ErrInvalidIdentifier):
 		return codeValidation
 	case errors.Is(err, services.ErrUnauthorized):

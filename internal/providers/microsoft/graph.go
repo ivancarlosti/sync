@@ -3,9 +3,11 @@ package microsoft
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
+	abstractions "github.com/microsoft/kiota-abstractions-go"
 	msgraphsdk "github.com/microsoftgraph/msgraph-sdk-go"
 	msgraphgocore "github.com/microsoftgraph/msgraph-sdk-go-core"
 	"github.com/microsoftgraph/msgraph-sdk-go/drives"
@@ -288,9 +290,13 @@ func (p *Provider) touch(ctx context.Context, tokens *providers.Tokens, driveID,
 	return nil
 }
 
-// SearchSites implements providers.SiteBrowser. Graph rejects an empty $search,
-// so an empty query lists the root site of the tenant instead, which keeps the
-// drive picker useful even before the operator types anything.
+// SearchSites implements providers.SiteBrowser. SharePoint libraries are reached
+// through the delegated, access-scoped `GET /sites?search=…`; a plain `GET /sites`
+// without `$search` is documented as application-only and surfaces at most the
+// tenant root site, which is why an empty query searches for the wildcard "*"
+// instead of listing the collection. A tenant that refuses the wildcard still
+// gets the root site, and ResolveSite keeps a manual URL fallback for the
+// libraries neither call returns.
 func (p *Provider) SearchSites(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, query string) ([]providers.Drive, error) {
 	client, adapter, err := p.graphSession(tokens)
 	if err != nil {
@@ -299,10 +305,25 @@ func (p *Provider) SearchSites(ctx context.Context, _ providers.Credentials, tok
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
+	query = strings.TrimSpace(query)
+	if query == "" {
+		// Every site the signed-in user can reach. Graph rejects the wildcard in
+		// some tenants, so the plain collection (the tenant root site) is the
+		// fallback rather than an error that would empty the picker.
+		if drives, err := p.listSites(ctx, client, adapter, "*"); err == nil {
+			return drives, nil
+		}
+	}
+	return p.listSites(ctx, client, adapter, query)
+}
+
+// listSites runs one /sites listing and resolves the default document library of
+// every hit. No $orderby is carried: a few SharePoint tenants reject the
+// combination of $search and $orderby, and the picker does not depend on order.
+func (p *Provider) listSites(ctx context.Context, client *msgraphsdk.GraphServiceClient, adapter abstractions.RequestAdapter, query string) ([]providers.Drive, error) {
 	params := &sites.SitesRequestBuilderGetQueryParameters{Select: siteSelect}
-	if q := strings.TrimSpace(query); q != "" {
-		// $search and $orderby cannot be combined on /sites.
-		params.Search = ptr(q)
+	if query != "" {
+		params.Search = ptr(query)
 	}
 	page, err := client.Sites().Get(ctx, &sites.SitesRequestBuilderGetRequestConfiguration{QueryParameters: params})
 	if err != nil {
@@ -369,4 +390,96 @@ func siteLabel(site graphmodels.Siteable) string {
 		return name
 	}
 	return deref(site.GetWebUrl())
+}
+
+// ResolveSite implements providers.SiteResolver: it turns an operator supplied
+// SharePoint location into the default document library of that site. It is the
+// manual fallback of the picker, for the libraries a keyword search does not
+// surface. The location is normalised into a Graph site id (see
+// siteIDFromLocation) and read through GET /sites/{id}.
+func (p *Provider) ResolveSite(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, location string) (providers.Drive, error) {
+	siteID, err := siteIDFromLocation(location)
+	if err != nil {
+		return providers.Drive{}, err
+	}
+	client, err := p.graphClient(tokens)
+	if err != nil {
+		return providers.Drive{}, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+
+	site, err := client.Sites().BySiteId(siteID).Get(ctx, &sites.SiteItemRequestBuilderGetRequestConfiguration{
+		QueryParameters: &sites.SiteItemRequestBuilderGetQueryParameters{Select: siteSelect},
+	})
+	if err != nil {
+		if p.IsNotFound(err) {
+			return providers.Drive{}, fmt.Errorf("%w: microsoft graph site %s", providers.ErrNotFound, siteID)
+		}
+		return providers.Drive{}, fmt.Errorf("microsoft graph: cannot resolve site %s: %w", siteID, err)
+	}
+	return p.siteDrive(ctx, client, site)
+}
+
+// siteIDFromLocation normalises an operator supplied SharePoint location into the
+// Graph site id that GET /sites/{id} understands. Accepted forms:
+//
+//	https://tenant.sharepoint.com/sites/marketing  → tenant.sharepoint.com:/sites/marketing
+//	tenant.sharepoint.com:/sites/marketing         → unchanged (server-relative path id)
+//	tenant.sharepoint.com,g1,g2                    → unchanged (Graph site id)
+//	tenant.sharepoint.com                          → unchanged (the tenant root site)
+//
+// A URL that points deeper — a document library or a page — is truncated to its
+// site collection root, because that is the resource a library belongs to.
+// Anything else (an empty value, a keyword, a value carrying whitespace) is
+// refused with providers.ErrInvalidIdentifier, so the caller answers 400 instead
+// of interpolating an arbitrary string into a request.
+func siteIDFromLocation(raw string) (string, error) {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "", fmt.Errorf("%w: a SharePoint URL is required", providers.ErrInvalidIdentifier)
+	}
+	if strings.ContainsAny(value, " \t\r\n") {
+		return "", fmt.Errorf("%w: %q is not a SharePoint URL", providers.ErrInvalidIdentifier, value)
+	}
+	lower := strings.ToLower(value)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		parsed, err := url.Parse(value)
+		if err != nil {
+			return "", fmt.Errorf("%w: %q is not a valid URL", providers.ErrInvalidIdentifier, value)
+		}
+		host := strings.ToLower(parsed.Hostname())
+		if host == "" {
+			return "", fmt.Errorf("%w: %q has no host", providers.ErrInvalidIdentifier, value)
+		}
+		// EscapedPath keeps a percent-encoded site name (%20) intact, which is
+		// the form Graph expects inside the composite site id.
+		path := siteRootPath(strings.TrimRight(parsed.EscapedPath(), "/"))
+		if path == "" {
+			return host, nil
+		}
+		return host + ":" + path, nil
+	}
+	// Without a scheme the value is either a Graph site id (host,g1,g2), the
+	// "host:/path" form SharePoint itself shows, or a bare host.
+	if strings.ContainsAny(value, ":,") || strings.Contains(value, ".") {
+		return value, nil
+	}
+	return "", fmt.Errorf("%w: %q is not a SharePoint URL", providers.ErrInvalidIdentifier, value)
+}
+
+// siteRootPath truncates a SharePoint URL path to its site collection root, so a
+// URL copied from a document library or a page still resolves to its site:
+// "/sites/marketing/Shared Documents/Forms/AllItems.aspx" → "/sites/marketing".
+// The well known collections are /sites, /teams and /personal (OneDrive); any
+// other path is returned untouched.
+func siteRootPath(path string) string {
+	segments := strings.Split(strings.Trim(path, "/"), "/")
+	if len(segments) >= 2 {
+		switch strings.ToLower(segments[0]) {
+		case "sites", "teams", "personal":
+			return "/" + segments[0] + "/" + segments[1]
+		}
+	}
+	return path
 }

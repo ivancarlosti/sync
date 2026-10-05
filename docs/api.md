@@ -106,7 +106,8 @@ not empty).
 | `DELETE` | `/api/accounts/:id` | `{id, deleted_jobs}` — the jobs using the account are deleted too |
 | `GET` | `/api/accounts/:id/drives` | `{drives:[{id,name,kind,owner}]}` |
 | `GET` | `/api/accounts/:id/drives/:drive/items?folder_id=` | `{drive_id, folder_id, items:[{id,name,is_dir,size,modified_at,mime_type,hash,unsupported}]}` — folders first, then files, both alphabetical; `folder_id` defaults to the drive root |
-| `GET` | `/api/accounts/:id/sites?q=` | `{sites:[{id,name,kind,owner}]}` — SharePoint libraries (empty list for providers without the capability) |
+| `GET` | `/api/accounts/:id/sites?q=` | `{sites:[{id,name,kind,owner}]}` — SharePoint libraries (empty list for providers without the capability). `q` is a keyword; omitted (or empty) it lists every site the account can reach, and a value the server cannot search falls back to the tenant root site |
+| `POST` | `/api/accounts/:id/sites/resolve` | body `{"url": "https://tenant.sharepoint.com/sites/marketing"}` → `{sites:[{id,name,kind,owner}]}` — the default library of that site, the manual fallback of the folder picker. `400` when the value is not a SharePoint URL/site id, `404` when the account cannot reach it, `424` for a provider without the capability |
 
 ## 6. Jobs
 

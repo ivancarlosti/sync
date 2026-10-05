@@ -2,8 +2,11 @@ package microsoft
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -256,11 +259,13 @@ func TestGraphRewritesTheMeSentinel(t *testing.T) {
 }
 
 // recordingTransport answers every request from a canned body per path while
-// recording the URLs, so a test never reaches Microsoft Graph.
+// recording the URLs, so a test never reaches Microsoft Graph. `statuses` makes a
+// path fail with a chosen status, which is what the wildcard fallback needs.
 type recordingTransport struct {
-	urls    []string
-	headers []http.Header
-	bodies  map[string]string
+	urls     []string
+	headers  []http.Header
+	bodies   map[string]string
+	statuses map[string]int
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -271,14 +276,131 @@ func (t *recordingTransport) RoundTrip(request *http.Request) (*http.Response, e
 	if body == "" {
 		body = "{}"
 	}
+	status := http.StatusOK
+	if code, ok := t.statuses[request.URL.Path]; ok {
+		status = code
+	}
 	header := http.Header{}
 	header.Set("Content-Type", "application/json")
 	return &http.Response{
-		StatusCode:    http.StatusOK,
-		Status:        "200 OK",
+		StatusCode:    status,
+		Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),
 		Header:        header,
 		Body:          io.NopCloser(strings.NewReader(body)),
 		ContentLength: int64(len(body)),
 		Request:       request,
 	}, nil
+}
+
+// TestSearchSitesSearchesForTheWildcard pins the fix of the empty SharePoint
+// picker: with no keyword the search must reach the delegated `$search=*`
+// listing, which returns the sites of the tenant, instead of the application-only
+// plain collection that returns at most the root site.
+func TestSearchSitesSearchesForTheWildcard(t *testing.T) {
+	transport := &recordingTransport{bodies: map[string]string{"/v1.0/sites": `{"value":[]}`}}
+	provider := New()
+	provider.httpClient.Transport = transport
+
+	if _, err := provider.SearchSites(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "search-token"}, ""); err != nil {
+		t.Fatalf("SearchSites = %v", err)
+	}
+	if len(transport.urls) != 1 {
+		t.Fatalf("issued %d requests (%v), want a single listing", len(transport.urls), transport.urls)
+	}
+	query := transport.urls[0]
+	if !strings.Contains(query, "/sites?") || !strings.Contains(query, "search=") {
+		t.Errorf("request went to %q, want a $search listing", query)
+	}
+	if !strings.Contains(query, "%2A") && !strings.Contains(query, "*") {
+		t.Errorf("request went to %q, want the wildcard query", query)
+	}
+}
+
+// TestSearchSitesFallsBackToTheCollection covers the tenant that refuses the
+// wildcard: the listing is retried without $search (the tenant root site) instead
+// of emptying the picker, and only a double failure surfaces an error.
+func TestSearchSitesFallsBackToTheCollection(t *testing.T) {
+	transport := &recordingTransport{statuses: map[string]int{"/v1.0/sites": http.StatusBadRequest}}
+	provider := New()
+	provider.httpClient.Transport = transport
+
+	if _, err := provider.SearchSites(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "search-token"}, ""); err == nil {
+		t.Fatal("expected the double failure to surface")
+	}
+	if len(transport.urls) != 2 {
+		t.Fatalf("issued %d requests (%v), want the wildcard then the plain listing", len(transport.urls), transport.urls)
+	}
+	if strings.Contains(transport.urls[0], "search=") && strings.Contains(transport.urls[1], "search=") {
+		t.Errorf("requests %v, want the fallback to drop $search", transport.urls)
+	}
+}
+
+// TestSiteIDFromLocation pins the normalisation behind the manual SharePoint URL
+// field: every form an operator may paste becomes the composite site id of
+// GET /sites/{id}, and anything that is not a location is refused as an invalid
+// identifier (which the API answers as 400).
+func TestSiteIDFromLocation(t *testing.T) {
+	valid := map[string]string{
+		"https://contoso.sharepoint.com/sites/marketing":                                  "contoso.sharepoint.com:/sites/marketing",
+		"https://contoso.sharepoint.com/sites/marketing/":                                 "contoso.sharepoint.com:/sites/marketing",
+		"https://contoso.sharepoint.com/sites/Marketing%20Team/Docs":                      "contoso.sharepoint.com:/sites/Marketing%20Team",
+		"https://contoso.sharepoint.com/teams/eng/Shared%20Documents/Forms/AllItems.aspx": "contoso.sharepoint.com:/teams/eng",
+		"https://contoso.sharepoint.com":                                                  "contoso.sharepoint.com",
+		"contoso.sharepoint.com:/sites/marketing":                                         "contoso.sharepoint.com:/sites/marketing",
+		"contoso.sharepoint.com,g1,g2":                                                    "contoso.sharepoint.com,g1,g2",
+		"contoso.sharepoint.com":                                                          "contoso.sharepoint.com",
+	}
+	for raw, want := range valid {
+		got, err := siteIDFromLocation(raw)
+		if err != nil || got != want {
+			t.Errorf("siteIDFromLocation(%q) = %q, %v, want %q", raw, got, err, want)
+		}
+	}
+	for _, raw := range []string{"", "marketing", "not a url", "https://"} {
+		if _, err := siteIDFromLocation(raw); !errors.Is(err, providers.ErrInvalidIdentifier) {
+			t.Errorf("siteIDFromLocation(%q) error = %v, want ErrInvalidIdentifier", raw, err)
+		}
+	}
+}
+
+// TestResolveSiteReadsTheDefaultLibrary drives the manual fallback through the
+// real Graph request builders behind a canned transport: the pasted URL becomes
+// the composite site id of GET /sites/{id}, and the default library of that site
+// is what comes back, labelled for the picker.
+func TestResolveSiteReadsTheDefaultLibrary(t *testing.T) {
+	const siteID = "contoso.sharepoint.com,aaa-111,bbb-222"
+	transport := &recordingTransport{bodies: map[string]string{
+		"/v1.0/sites/contoso.sharepoint.com:/sites/marketing": `{"id":"` + siteID + `","displayName":"Marketing","webUrl":"https://contoso.sharepoint.com/sites/marketing"}`,
+		"/v1.0/sites/" + siteID + "/drive":                    `{"id":"b!library","name":"Documents","driveType":"documentLibrary"}`,
+	}}
+	provider := New()
+	provider.httpClient.Transport = transport
+
+	drive, err := provider.ResolveSite(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "resolve-token"}, "https://contoso.sharepoint.com/sites/marketing/Documents")
+	if err != nil {
+		t.Fatalf("ResolveSite = %v", err)
+	}
+	if drive.ID != "b!library" || drive.Kind != "site" || drive.Name != "Marketing" ||
+		drive.Owner != "https://contoso.sharepoint.com/sites/marketing" {
+		t.Errorf("drive = %+v, want the site's default library", drive)
+	}
+	want := "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/marketing"
+	if len(transport.urls) != 2 {
+		t.Fatalf("issued %d requests (%v), want the site then its library", len(transport.urls), transport.urls)
+	}
+	// Kiota percent-encodes the composite site id and Graph decodes it back, so
+	// the decoded path is what has to name the site.
+	target, err := url.Parse(transport.urls[0])
+	if err != nil {
+		t.Fatalf("parsing the first request URL: %v", err)
+	}
+	if got := "https://graph.microsoft.com" + target.Path; got != want {
+		t.Errorf("first request went to %q, want %q", transport.urls[0], want)
+	}
+	if !strings.Contains(target.RawQuery, "select") {
+		t.Errorf("first request carried %q, want the site projection", target.RawQuery)
+	}
 }

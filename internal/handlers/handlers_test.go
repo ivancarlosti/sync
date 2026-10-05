@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -424,6 +425,23 @@ func (p *stubProvider) SearchSites(ctx context.Context, creds providers.Credenti
 		}
 	}
 	return matches, nil
+}
+
+// ResolveSite is the SiteResolver capability: a location naming one of the canned
+// libraries (a URL containing its name, or its id) resolves to it; anything else
+// is "not found".
+func (p *stubProvider) ResolveSite(ctx context.Context, creds providers.Credentials, tokens *providers.Tokens, location string) (providers.Drive, error) {
+	if p.failure != nil {
+		return providers.Drive{}, p.failure
+	}
+	needle := strings.ToLower(strings.TrimSpace(location))
+	for _, site := range p.sites {
+		if needle != "" && (strings.EqualFold(site.ID, needle) ||
+			strings.Contains(needle, strings.ToLower(site.Name))) {
+			return site, nil
+		}
+	}
+	return providers.Drive{}, fmt.Errorf("%w: %s", providers.ErrNotFound, location)
 }
 
 // -----------------------------------------------------------------------------
@@ -1964,6 +1982,25 @@ func TestAccountScreensThroughProvider(t *testing.T) {
 	}](t, recorder); len(none.Sites) != 0 {
 		t.Errorf("sites = %+v, want none for an unmatched query", none.Sites)
 	}
+
+	// The manual fallback: a pasted SharePoint URL resolves to the library of
+	// that site, for the libraries the keyword search does not surface.
+	recorder = call(t, server, http.MethodPost, "/api/accounts/"+id+"/sites/resolve",
+		map[string]string{"url": "https://contoso.sharepoint.com/sites/marketing/Shared%20Documents"})
+	requireStatus(t, recorder, http.StatusOK)
+	resolved := decodeJSON[struct {
+		Sites []driveView `json:"sites"`
+	}](t, recorder)
+	if len(resolved.Sites) != 1 || resolved.Sites[0].ID != "site-1" || resolved.Sites[0].Owner != "Ada" {
+		t.Errorf("resolved = %+v, want the library behind the pasted URL", resolved.Sites)
+	}
+
+	// A URL that names no site the account can reach is a 404 the operator can
+	// act on, not a 500 from an opaque provider failure.
+	recorder = call(t, server, http.MethodPost, "/api/accounts/"+id+"/sites/resolve",
+		map[string]string{"url": "https://contoso.sharepoint.com/sites/payroll"})
+	requireStatus(t, recorder, http.StatusNotFound)
+	requireErrorCode(t, recorder, codeNotFound)
 }
 
 // TestAccountScreensRefreshAndFailures covers the paths that decide whether the

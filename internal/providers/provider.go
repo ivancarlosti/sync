@@ -465,3 +465,13 @@ const NativeMimePrefix = "application/vnd.google-apps."
 type SiteBrowser interface {
 	SearchSites(ctx context.Context, creds Credentials, tokens *Tokens, query string) ([]Drive, error)
 }
+
+// SiteResolver is implemented by providers able to turn an operator supplied
+// location — a provider URL, a server-relative path or a remote id — into a
+// browsable drive. It backs the manual fallback of the folder picker, for the
+// roots a keyword search does not surface (see SiteBrowser). A malformed
+// location is refused with ErrInvalidIdentifier, and one that names no drive the
+// account can reach with ErrNotFound.
+type SiteResolver interface {
+	ResolveSite(ctx context.Context, creds Credentials, tokens *Tokens, location string) (Drive, error)
+}

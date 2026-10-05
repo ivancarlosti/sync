@@ -6,13 +6,20 @@
 // and shows the operator the same drives the engine will see. A file that cannot
 // be synchronised is listed but marked, because hiding it would make a folder
 // look incomplete (see the `unsupported` flag of FolderItem).
-import { ArrowUp, Folder, FolderOpen, HardDrive, RefreshCw } from '@lucide/vue';
-import { computed, ref, watch } from 'vue';
+//
+// A Microsoft account also owns SharePoint libraries, which are not part of
+// `/me/drives`. They are listed through `/accounts/:id/sites`: the search field
+// above the drive selects one of the two delegated calls — a keyword searches
+// the tenant (`$search`), a pasted SharePoint URL resolves that exact site
+// (`/sites/resolve`) — so a library the search does not surface stays reachable.
+import { ArrowUp, Folder, FolderOpen, HardDrive, RefreshCw, Search } from '@lucide/vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import Alert from '@/components/ui/Alert.vue';
 import Button from '@/components/ui/Button.vue';
 import Dialog from '@/components/ui/Dialog.vue';
+import Input from '@/components/ui/Input.vue';
 import Label from '@/components/ui/Label.vue';
 import Select, { type SelectOption } from '@/components/ui/Select.vue';
 import Spinner from '@/components/ui/Spinner.vue';
@@ -46,6 +53,13 @@ const folderId = ref('');
 const trail = ref<Array<{ id: string; name: string }>>([]);
 const items = ref<FolderItem[]>([]);
 
+/** siteQuery holds the keyword or the SharePoint URL the operator typed. */
+const siteQuery = ref('');
+const searchingSites = ref(false);
+const siteFailure = ref('');
+/** siteTimer debounces the site field so typing issues one request per pause. */
+let siteTimer: ReturnType<typeof setTimeout> | undefined;
+
 const loadingDrives = ref(false);
 const loadingItems = ref(false);
 const failure = ref('');
@@ -54,14 +68,24 @@ const title = computed(() =>
   props.purpose === 'destination' ? t('browser.destination') : t('browser.source'),
 );
 
-/** driveOptions merges the drives of the account with its SharePoint sites. */
+/**
+ * driveOptions merges the drives of the account with its SharePoint sites,
+ * deduped by id: `/me/drives` already returns the libraries the user was given
+ * access to, and a search adds the rest, so the picker never lists one root
+ * twice.
+ */
 const driveOptions = computed<SelectOption[]>(() => {
-  const options: SelectOption[] = drives.value.map((drive) => ({
-    value: drive.id,
-    label: drive.name,
-  }));
-  for (const site of sites.value) {
-    options.push({ value: site.id, label: site.kind ? `${site.name} · ${site.kind}` : site.name });
+  const seen = new Set<string>();
+  const options: SelectOption[] = [];
+  for (const drive of [...drives.value, ...sites.value]) {
+    if (drive.id === '' || seen.has(drive.id)) {
+      continue;
+    }
+    seen.add(drive.id);
+    options.push({
+      value: drive.id,
+      label: drive.kind ? `${drive.name} · ${drive.kind}` : drive.name,
+    });
   }
   return options;
 });
@@ -74,6 +98,12 @@ const currentPath = computed(() => pathFrom(trail.value.slice(1).map((step) => s
 /** reset clears the browsing state left over from a previous account. */
 function reset(): void {
   failure.value = '';
+  siteFailure.value = '';
+  siteQuery.value = '';
+  if (siteTimer !== undefined) {
+    clearTimeout(siteTimer);
+    siteTimer = undefined;
+  }
   items.value = [];
   trail.value = [];
   folderId.value = '';
@@ -82,15 +112,81 @@ function reset(): void {
   sites.value = [];
 }
 
-/** loadSites lists the SharePoint sites of a Microsoft account, best effort. */
+/**
+ * looksLikeSiteUrl tells the two uses of the site field apart: a full SharePoint
+ * URL (or a Graph site id) is resolved as-is, anything else is a search keyword.
+ */
+function looksLikeSiteUrl(value: string): boolean {
+  const raw = value.trim();
+  if (raw === '') {
+    return false;
+  }
+  if (/^https?:\/\//i.test(raw) || /(?:sharepoint|onmicrosoft)\.com/i.test(raw)) {
+    return true;
+  }
+  // A Graph site id (host,g1,g2) or the "host:/path" form SharePoint shows.
+  return /^[a-z0-9.-]+,[a-z0-9-]+/i.test(raw) || /^[a-z0-9.-]+:\//i.test(raw);
+}
+
+/**
+ * loadSites lists every library the account can reach (`$search=*` on the
+ * server), so the picker is complete before the operator types anything. A
+ * personal account legitimately has none; a real failure is reported instead of
+ * being swallowed, which is what made a missing library look like a missing
+ * feature.
+ */
 async function loadSites(): Promise<void> {
   try {
     const answer = await accounts.sites(props.accountId);
     sites.value = answer.sites ?? [];
-  } catch {
-    // A personal account has no sites; the drives are the whole story.
+    siteFailure.value = '';
+  } catch (error) {
     sites.value = [];
+    siteFailure.value = messageOf(error);
   }
+}
+
+/**
+ * runSiteQuery runs the site field: a keyword searches the sites of the tenant
+ * and replaces the list, a pasted SharePoint URL is resolved and added to it, so
+ * a library the search does not know about stays selectable next to the results.
+ */
+async function runSiteQuery(): Promise<void> {
+  const value = siteQuery.value.trim();
+  const byUrl = looksLikeSiteUrl(value);
+  searchingSites.value = true;
+  siteFailure.value = '';
+  try {
+    const answer = byUrl
+      ? await accounts.resolveSite(props.accountId, value)
+      : await accounts.sites(props.accountId, value);
+    const found = answer.sites ?? [];
+    sites.value = byUrl ? [...found, ...sites.value] : found;
+  } catch (error) {
+    siteFailure.value = messageOf(error);
+  } finally {
+    searchingSites.value = false;
+  }
+}
+
+/** submitSiteQuery runs the field now, cancelling the pending debounce. */
+function submitSiteQuery(): void {
+  if (siteTimer !== undefined) {
+    clearTimeout(siteTimer);
+    siteTimer = undefined;
+  }
+  void runSiteQuery();
+}
+
+/** runSiteQuerySoon debounces typing, so a search issues one request per pause. */
+function runSiteQuerySoon(): void {
+  if (siteTimer !== undefined) {
+    clearTimeout(siteTimer);
+  }
+  siteTimer = setTimeout(() => {
+    siteTimer = undefined;
+    void runSiteQuery();
+  }, 300);
 }
 
 /** listItems loads the folder the breadcrumb points at. */
@@ -199,12 +295,52 @@ watch(open, (value) => {
     void start();
   }
 });
+
+// Typing searches after a pause; the button and Enter run the field at once.
+watch(siteQuery, runSiteQuerySoon);
+
+onBeforeUnmount(() => {
+  if (siteTimer !== undefined) {
+    clearTimeout(siteTimer);
+  }
+});
 </script>
 
 <template>
   <Dialog v-model:open="open" :title="title" size="lg" :close-label="t('common.closeDialog')">
     <div class="space-y-4">
       <Alert v-if="failure" tone="destructive" :title="t('browser.loadError')" :message="failure" />
+
+      <!-- One field, two calls: a keyword searches the sites of the tenant, a
+           pasted SharePoint URL resolves that exact library. -->
+      <div class="space-y-1.5">
+        <Label for="browser-sites">{{ t('browser.siteSearch') }}</Label>
+        <div class="flex flex-wrap items-center gap-2">
+          <Input
+            id="browser-sites"
+            v-model="siteQuery"
+            type="search"
+            class="min-w-56 flex-1"
+            :placeholder="t('browser.sitePlaceholder')"
+            :disabled="loadingDrives"
+            @keydown.enter="submitSiteQuery"
+          />
+          <Button variant="outline" :loading="searchingSites" @click="submitSiteQuery">
+            <Search v-if="!searchingSites" class="h-4 w-4" aria-hidden="true" />
+            {{ t('browser.siteFind') }}
+          </Button>
+        </div>
+        <p class="text-xs text-muted-foreground">{{ t('browser.siteHint') }}</p>
+        <Alert
+          v-if="siteFailure"
+          tone="destructive"
+          :title="t('browser.siteError')"
+          :message="siteFailure"
+        />
+        <p v-else-if="sites.length > 0" class="text-xs text-muted-foreground">
+          {{ t('browser.siteResults', { count: sites.length }) }}
+        </p>
+      </div>
 
       <div class="flex flex-wrap items-end gap-2">
         <div class="min-w-56 flex-1 space-y-1.5">

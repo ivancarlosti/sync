@@ -64,3 +64,15 @@ func (r *Registry) SiteBrowserFor(name models.ProviderName) (SiteBrowser, bool) 
 	browser, ok := provider.(SiteBrowser)
 	return browser, ok
 }
+
+// SiteResolverFor returns the SiteResolver implementation of a provider, if any.
+// It is the manual fallback of the folder picker, for the roots SiteBrowserFor
+// does not surface.
+func (r *Registry) SiteResolverFor(name models.ProviderName) (SiteResolver, bool) {
+	provider, err := r.Get(name)
+	if err != nil {
+		return nil, false
+	}
+	resolver, ok := provider.(SiteResolver)
+	return resolver, ok
+}
