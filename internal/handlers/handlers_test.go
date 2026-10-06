@@ -408,6 +408,10 @@ func (p *stubProvider) Delete(ctx context.Context, creds providers.Credentials, 
 // IsNotFound recognizes the provider's "gone" error.
 func (p *stubProvider) IsNotFound(err error) bool { return errors.Is(err, providers.ErrNotFound) }
 
+// IsUnauthorized reports whether err is a rejected-access-token error. The stub
+// never issues one, so this is always false.
+func (p *stubProvider) IsUnauthorized(error) bool { return false }
+
 // SearchSites is the SiteBrowser capability: it filters the canned library list
 // by name, which is what the SharePoint picker asks for.
 func (p *stubProvider) SearchSites(ctx context.Context, creds providers.Credentials, tokens *providers.Tokens, query string) ([]providers.Drive, error) {

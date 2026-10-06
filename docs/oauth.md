@@ -99,7 +99,7 @@ statement that reads it, so a replayed callback is rejected.
 | Situation | Result |
 |---|---|
 | refresh token rejected or missing | the account is marked `status=error` with `last_error`, the call returns `ErrReconnect` → HTTP **412** with `code=reconnect`; the SPA shows "reconnect this account" |
-| provider answered 401 mid-run | same as above (the run records the file as `failed`) |
+| provider answered 401 mid-run | `IsUnauthorized` → the engine renews the token once and retries the call (an access token lasts ~1 h, a run may last longer); if the renewal is refused too, the account is marked `status=error` with `last_error` and the run stops with `ErrReconnect` (message "reconnect this account") instead of failing every remaining file |
 | provider answered 404 for an item | `providers.ErrNotFound` → the engine treats it as a deletion, never an error |
 | authorization server refused the permissions (`access_denied`, `invalid_scope`, `consent_required`) | `providers.AuthError` → `services.ErrConsent` → HTTP **412** with `code=consent_required`; the SPA offers the setup guide |
 
@@ -107,6 +107,13 @@ A background loop (`Scheduler.RefreshTokens`, every 60 s, `DefaultRefreshWindow`
 = 5 min) refreshes tokens proactively, which is why a scheduled run at 3 AM
 usually starts with a valid access token. `POST /api/maintenance/tokens/refresh`
 forces the same pass and answers `{"refreshed": n}`.
+
+A run holds its own token snapshot for its whole life, so a token that expires
+mid-run would otherwise 401 every remaining call. The engine therefore refreshes
+mid-run too: it renews a side whose token is about to expire before each call
+(`freshen`) and, when a provider still answers 401, calls `TokenManager.Reissue`,
+swaps the snapshot and retries the call once. A renewal the provider refuses ends
+the run (`ErrReconnect`) instead of repeating the same failure per file.
 
 ## 3. Scopes
 

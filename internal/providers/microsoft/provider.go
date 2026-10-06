@@ -371,6 +371,32 @@ func (p *Provider) IsNotFound(err error) bool {
 	return false
 }
 
+// IsUnauthorized reports whether err is a rejected-access-token answer (HTTP
+// 401), so the engine can renew the token of a run that outlived the snapshot it
+// loaded at its start. The raw transfer requests keep the status; the SDK wraps
+// it in an *odataerrors.ODataError, which exposes the Graph error code instead
+// (`InvalidAuthenticationToken` and friends are what Graph answers an expired or
+// revoked token with). A 403 (missing permission) is not classified here.
+func (p *Provider) IsUnauthorized(err error) bool {
+	if err == nil {
+		return false
+	}
+	var apiErr *graphError
+	if errors.As(err, &apiErr) {
+		return apiErr.Status == http.StatusUnauthorized
+	}
+	var odata *odataerrors.ODataError
+	if errors.As(err, &odata) {
+		if main := odata.GetErrorEscaped(); main != nil && main.GetCode() != nil {
+			switch strings.ToLower(*main.GetCode()) {
+			case "invalidauthenticationtoken", "unauthenticated", "authenticationrequired":
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Account implements providers.Provider through the Graph /me endpoint.
 func (p *Provider) Account(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens) (*providers.Account, error) {
 	client, err := p.graphClient(tokens)

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	graphmodels "github.com/microsoftgraph/msgraph-sdk-go/models"
+	"github.com/microsoftgraph/msgraph-sdk-go/models/odataerrors"
 	"golang.org/x/oauth2"
 
 	"github.com/ivancarlosti/sync/internal/providers"
@@ -402,5 +403,37 @@ func TestResolveSiteReadsTheDefaultLibrary(t *testing.T) {
 	}
 	if !strings.Contains(target.RawQuery, "select") {
 		t.Errorf("first request carried %q, want the site projection", target.RawQuery)
+	}
+}
+
+// TestIsUnauthorized pins the detection of a rejected access token: the raw
+// transfer path keeps the 401 status, the SDK path exposes it through the Graph
+// error code, and a permission failure is never mistaken for a dead token.
+func TestIsUnauthorized(t *testing.T) {
+	provider := New()
+	if !provider.IsUnauthorized(&graphError{Status: http.StatusUnauthorized}) {
+		t.Error("IsUnauthorized must accept the raw 401")
+	}
+	if provider.IsUnauthorized(&graphError{Status: http.StatusForbidden}) {
+		t.Error("IsUnauthorized must not treat a 403 as a dead token")
+	}
+
+	odata := odataerrors.NewODataError()
+	main := odataerrors.NewMainError()
+	main.SetCode(ptr("InvalidAuthenticationToken"))
+	odata.SetErrorEscaped(main)
+	if !provider.IsUnauthorized(odata) {
+		t.Error("IsUnauthorized must accept the SDK InvalidAuthenticationToken")
+	}
+
+	denied := odataerrors.NewODataError()
+	deniedMain := odataerrors.NewMainError()
+	deniedMain.SetCode(ptr("accessDenied"))
+	denied.SetErrorEscaped(deniedMain)
+	if provider.IsUnauthorized(denied) {
+		t.Error("IsUnauthorized must not treat accessDenied as a dead token")
+	}
+	if provider.IsUnauthorized(nil) {
+		t.Error("IsUnauthorized(nil) = true, want false")
 	}
 }

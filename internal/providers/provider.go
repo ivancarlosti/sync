@@ -199,6 +199,12 @@ type Provider interface {
 	// IsNotFound reports whether err is the provider's "gone" error, so the
 	// engine can treat a vanished file as a deletion.
 	IsNotFound(err error) bool
+
+	// IsUnauthorized reports whether err is a rejected-access-token error (HTTP
+	// 401), so a run that outlived the token snapshot it loaded at its start can
+	// renew it and retry instead of failing every remaining call. A genuine
+	// permission problem (403 and friends) must not be classified here.
+	IsUnauthorized(err error) bool
 }
 
 // Capability names a class of provider operations the operator can recognise in

@@ -91,6 +91,37 @@ func (m *TokenManager) Resolve(ctx context.Context, accountID uint) (ProviderSes
 	return ProviderSession{Account: account, Provider: provider, Credentials: creds, Tokens: tokens}, nil
 }
 
+// Reissue forces a renewal of the access token of an account and persists it.
+//
+// Resolve only refreshes when the stored token is already expired, which is
+// enough for a short call but not for a long sync run: the engine holds its own
+// token snapshot for the whole run (an access token lives about an hour, a run
+// may last up to the configured timeout). When a provider answers 401 mid-run the
+// engine calls Reissue to swap that snapshot, so the run recovers instead of
+// failing every remaining file with the same opaque error. A failure here means
+// the account really has to be connected again, so it is wrapped in ErrReconnect
+// (and marked on the account) exactly like the proactive refresh path.
+func (m *TokenManager) Reissue(ctx context.Context, accountID uint) (*providers.Tokens, error) {
+	account, err := m.store.GetAccount(ctx, accountID)
+	if err != nil {
+		return nil, err
+	}
+	provider, err := m.registry.Get(models.ProviderName(account.Provider))
+	if err != nil {
+		return nil, err
+	}
+	creds, err := m.creds.Credentials(ctx, models.ProviderName(account.Provider))
+	if err != nil {
+		return nil, err
+	}
+	tokens, err := m.tokens(account)
+	if err != nil {
+		_ = m.store.MarkAccountError(ctx, account.ID, err.Error())
+		return nil, err
+	}
+	return m.refresh(ctx, provider, creds, account, tokens)
+}
+
 // tokens decrypts the stored token pair of an account.
 func (m *TokenManager) tokens(account *models.ConnectedAccount) (*providers.Tokens, error) {
 	access, err := m.box.Decrypt(account.AccessToken)

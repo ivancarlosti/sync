@@ -3,6 +3,7 @@ package google
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -110,6 +111,32 @@ func TestRateLimitedErrorClassification(t *testing.T) {
 	// The classification must not have replaced the apiError in the chain.
 	if !provider.IsNotFound(&apiError{Status: http.StatusNotFound}) {
 		t.Error("IsNotFound no longer recognises a 404 after the throttle classification")
+	}
+}
+
+// TestUnauthorizedErrorClassification pins the 401 detection the engine relies on
+// to renew a token mid-run: only a rejected-access-token answer counts, and a
+// genuine permission problem (403, quota included) stays out so it is never
+// mistaken for an expired token.
+func TestUnauthorizedErrorClassification(t *testing.T) {
+	provider := testProvider(&recordingTransport{})
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "401", err: &apiError{Status: http.StatusUnauthorized, Reason: "authError"}, want: true},
+		{name: "401 wrapped", err: fmt.Errorf("uploading a file: %w", &apiError{Status: http.StatusUnauthorized}), want: true},
+		{name: "403 permission", err: &apiError{Status: http.StatusForbidden, Reason: "insufficientFilePermissions"}},
+		{name: "403 quota", err: &apiError{Status: http.StatusForbidden, Reason: "quotaExceeded"}},
+		{name: "404", err: &apiError{Status: http.StatusNotFound}},
+		{name: "other", err: errors.New("boom")},
+		{name: "nil", err: nil},
+	}
+	for _, testCase := range cases {
+		if got := provider.IsUnauthorized(testCase.err); got != testCase.want {
+			t.Errorf("IsUnauthorized(%s) = %v, want %v", testCase.name, got, testCase.want)
+		}
 	}
 }
 

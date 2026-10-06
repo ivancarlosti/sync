@@ -30,6 +30,7 @@ type Provider interface {
     CreateFolder(ctx, creds, tokens, driveID, parentID, name string) (*Item, error)
     Delete(ctx, creds, tokens, driveID, itemID string) error
     IsNotFound(err error) bool
+    IsUnauthorized(err error) bool
 }
 
 // Optional capability: providers able to discover extra drives.
@@ -218,6 +219,10 @@ prefix stripped (`copy: "permissions"` — `User.Read`, `Files.ReadWrite.All`, �
 
 Both providers answer `IsNotFound(err) == true` for a remote item that vanished,
 which is how a deletion detected during a run is distinguished from a failure.
+Both also answer `IsUnauthorized(err) == true` for a rejected access token (HTTP
+401 — Google's `authError`, Graph's `InvalidAuthenticationToken`), which is how
+the engine tells an expired token it can renew mid-run from a genuine permission
+problem (403), and never confuses the two.
 
 ## 5. What the UI shows
 

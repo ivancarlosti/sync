@@ -63,6 +63,13 @@ type fakeProvider struct {
 	counter int
 	calls   []string
 	failing error
+	// denied, when set, makes the write operations (upload, folder creation and
+	// deletion) answer a 401 until the next Refresh. It models a token that died
+	// or was revoked while a run was already in flight.
+	denied bool
+	// refreshes counts the Refresh calls, so a test can assert the engine renewed
+	// a token mid-run without depending on how many files it copied.
+	refreshes int
 	// block, when set, holds every listing until it is closed or the context of
 	// the run is cancelled: it is how a test keeps a run in flight on purpose.
 	block chan struct{}
@@ -201,6 +208,26 @@ func id(name models.ProviderName, counter int) string {
 	return fmt.Sprintf("%s-%d", name, counter)
 }
 
+// fakeAuthError is the 401 a fakeProvider answers with while `denied` is set. It
+// carries the provider name so the engine's "which side rejected this?" check
+// resolves to the side that actually refused the call.
+type fakeAuthError struct {
+	provider models.ProviderName
+}
+
+// Error renders the shape of a real rejected-token answer.
+func (e fakeAuthError) Error() string {
+	return string(e.provider) + ": http 401 (authError): Invalid Credentials"
+}
+
+// auth returns the rejected-token error while the provider is denying writes.
+func (p *fakeProvider) auth() error {
+	if p.denied {
+		return fakeAuthError{provider: p.name}
+	}
+	return nil
+}
+
 // wait is the optional blocking hook of the fake provider: with block set, a
 // listing waits until the channel is closed or the context of the run ends.
 func (p *fakeProvider) wait(ctx context.Context) error {
@@ -232,9 +259,13 @@ func (p *fakeProvider) Exchange(ctx context.Context, creds providers.Credentials
 }
 
 func (p *fakeProvider) Refresh(ctx context.Context, creds providers.Credentials, refreshToken string) (*providers.Tokens, error) {
+	p.refreshes++
 	if p.failing != nil {
 		return nil, p.failing
 	}
+	// A successful renewal clears the rejection, exactly like a real provider
+	// starts accepting a fresh access token.
+	p.denied = false
 	return p.tokens(), nil
 }
 
@@ -299,6 +330,9 @@ func (p *fakeProvider) Download(ctx context.Context, creds providers.Credentials
 }
 
 func (p *fakeProvider) Upload(ctx context.Context, creds providers.Credentials, tokens *providers.Tokens, req providers.UploadRequest) (*providers.Item, error) {
+	if err := p.auth(); err != nil {
+		return nil, err
+	}
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
 		return nil, err
@@ -328,6 +362,9 @@ func (p *fakeProvider) Upload(ctx context.Context, creds providers.Credentials, 
 }
 
 func (p *fakeProvider) CreateFolder(ctx context.Context, creds providers.Credentials, tokens *providers.Tokens, driveID, parentID, name string) (*providers.Item, error) {
+	if err := p.auth(); err != nil {
+		return nil, err
+	}
 	p.calls = append(p.calls, "create_folder:"+name)
 	if p.items[parentID] == nil {
 		return nil, fmt.Errorf("folder %s: %w", parentID, providers.ErrNotFound)
@@ -337,6 +374,9 @@ func (p *fakeProvider) CreateFolder(ctx context.Context, creds providers.Credent
 }
 
 func (p *fakeProvider) Delete(ctx context.Context, creds providers.Credentials, tokens *providers.Tokens, driveID, itemID string) error {
+	if err := p.auth(); err != nil {
+		return err
+	}
 	p.calls = append(p.calls, "delete:"+itemID)
 	item, ok := p.items[itemID]
 	if !ok {
@@ -347,6 +387,12 @@ func (p *fakeProvider) Delete(ctx context.Context, creds providers.Credentials, 
 }
 
 func (p *fakeProvider) IsNotFound(err error) bool { return errors.Is(err, providers.ErrNotFound) }
+
+// IsUnauthorized reports whether err is this provider's rejected-token error.
+func (p *fakeProvider) IsUnauthorized(err error) bool {
+	var authErr fakeAuthError
+	return errors.As(err, &authErr) && authErr.provider == p.name
+}
 
 // -----------------------------------------------------------------------------
 // Engine fixture
@@ -1006,6 +1052,73 @@ func TestEngineFirstRunCopiesTree(t *testing.T) {
 	}
 	if row.LastDirection != "source_to_destination" || row.Status != string(models.RunSuccess) {
 		t.Errorf("unexpected state row: %+v", row)
+	}
+}
+
+// TestEngineRecoversFromMidRun401 covers the fix for a long run outliving the
+// access token it loaded at its start: when a side answers 401, the engine renews
+// the token once and retries, so the files after the expiry still transfer
+// instead of failing with an opaque error.
+func TestEngineRecoversFromMidRun401(t *testing.T) {
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
+	env.google.add("report.txt", "hello world", base)
+	env.google.add("docs/notes.md", "# notes", base)
+
+	// The destination token dies at the start of the run: every write is
+	// rejected with a 401 until the engine renews the token.
+	env.msft.denied = true
+
+	run := env.run(t)
+	if run.Errors != 0 {
+		t.Fatalf("the run recorded %d errors, want 0: the 401 must be recovered (%s)", run.Errors, run.Message)
+	}
+	if env.msft.refreshes == 0 {
+		t.Fatal("the engine never renewed the rejected token")
+	}
+	if run.FilesCreated != 2 {
+		t.Errorf("FilesCreated = %d, want 2", run.FilesCreated)
+	}
+	assertTree(t, env.tree(), map[string]string{
+		"report.txt":    "hello world",
+		"docs/notes.md": "# notes",
+	})
+}
+
+// TestEngineStopsWhenReconnectIsNeeded covers the fail-fast side of the fix: a 401
+// that a renewal cannot clear (the account really has to be reconnected) ends the
+// run after the first file, instead of recording the same error for every
+// remaining file the way the unpatched engine did.
+func TestEngineStopsWhenReconnectIsNeeded(t *testing.T) {
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
+	for _, name := range []string{"a.txt", "b.txt", "c.txt", "d.txt", "e.txt"} {
+		env.google.add(name, "body "+name, base)
+	}
+
+	// The destination rejects every write and refuses to renew the token: the
+	// account needs to be connected again.
+	env.msft.denied = true
+	env.msft.failing = errors.New("invalid_grant: the token has been revoked")
+
+	run, err := env.sync.Run(context.Background(), env.job, models.TriggerManual)
+	if err != nil {
+		t.Fatalf("running the job: %v", err)
+	}
+	if run.Status != string(models.RunFailed) {
+		t.Fatalf("run status = %q (%s), want failed", run.Status, run.Message)
+	}
+	if run.Errors != 1 {
+		t.Errorf("run recorded %d errors, want 1: the run must stop once the account needs reconnecting", run.Errors)
+	}
+	if run.FilesScanned > 1 {
+		t.Errorf("FilesScanned = %d, want at most 1", run.FilesScanned)
+	}
+	if !strings.Contains(run.Message, "reconnect") {
+		t.Errorf("run message %q does not mention the needed reconnection", run.Message)
+	}
+	if env.msft.resolve("a.txt") != nil {
+		t.Error("no file must be copied once the token could not be renewed")
 	}
 }
 

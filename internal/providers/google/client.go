@@ -77,6 +77,19 @@ func (p *Provider) IsNotFound(err error) bool {
 	return apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusGone
 }
 
+// IsUnauthorized reports whether err is the 401 the Drive API answers an expired
+// or revoked access token with (reason `authError`). The engine uses it to renew
+// the token of a run that has outlived the snapshot it loaded at its start. A
+// `403 insufficientFilePermissions` is a genuine permission problem, not a dead
+// token, so it is deliberately left out.
+func (p *Provider) IsUnauthorized(err error) bool {
+	var apiErr *apiError
+	if !asAPIError(err, &apiErr) {
+		return false
+	}
+	return apiErr.Status == http.StatusUnauthorized
+}
+
 // Is lets errors.Is recognise the throttles Drive answers with, so the layers
 // above report "try again later" instead of a server fault when the retries of
 // providers.DoWithRetry did not clear one. The classification does not wrap the

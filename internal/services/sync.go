@@ -480,6 +480,42 @@ func (e *engine) resolveEndpoint(ctx context.Context, accountID uint, driveID, f
 	}, nil
 }
 
+// freshen renews the access token of a side whose snapshot has expired (or is
+// about to) before a call is issued. The engine loaded that snapshot once, when
+// the run started; a run longer than the token lifetime (Google tokens last about
+// an hour) would otherwise present a dead token on every call, turning the tail
+// of the run into a 401 storm. A renewal that fails is the token manager's
+// ErrReconnect, which ends the run.
+func (e *engine) freshen(ctx context.Context, side *endpoint) error {
+	if side == nil || side.tokens == nil || !side.tokens.Expired(e.service.now()) {
+		return nil
+	}
+	return e.reissue(ctx, side)
+}
+
+// reissue forces a token renewal regardless of the stored expiry and swaps the
+// endpoint snapshot in place. It is the fallback of freshen for the case the
+// clock cannot see: a token revoked or invalidated while it still looked valid.
+func (e *engine) reissue(ctx context.Context, side *endpoint) error {
+	renewed, err := e.service.tokens.Reissue(ctx, side.account.ID)
+	if err != nil {
+		return err
+	}
+	side.tokens = renewed
+	return nil
+}
+
+// unauthorized returns the side whose provider rejected err with a 401 (a dead
+// access token), or nil when neither provider classifies it that way.
+func (e *engine) unauthorized(err error) *endpoint {
+	for _, side := range []*endpoint{e.source, e.target} {
+		if side != nil && side.provider.IsUnauthorized(err) {
+			return side
+		}
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Tree listing
 // ---------------------------------------------------------------------------
@@ -510,7 +546,18 @@ func (e *engine) walk(ctx context.Context, side *endpoint) error {
 		}
 		seen[current.id] = true
 
+		if err := e.freshen(ctx, side); err != nil {
+			return err
+		}
 		children, err := side.provider.Children(ctx, side.creds, side.tokens, side.drive, current.id)
+		if err != nil && side.provider.IsUnauthorized(err) {
+			// The listing token died mid-run: renew it and retry once.
+			if renewErr := e.reissue(ctx, side); renewErr == nil {
+				children, err = side.provider.Children(ctx, side.creds, side.tokens, side.drive, current.id)
+			} else {
+				err = renewErr
+			}
+		}
 		if err != nil {
 			if side.provider.IsNotFound(err) {
 				// The folder was removed between two listings: nothing to do.
@@ -649,6 +696,12 @@ func (e *engine) reconcilePaths(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("the run was cancelled: %w", err)
 		}
+		if e.fatal != nil {
+			// A fatal problem (an account that must be reconnected) already
+			// ended the run: stop instead of recording the same failure for
+			// every remaining path.
+			return nil
+		}
 		e.run.FilesScanned++
 		e.one(ctx, relative)
 	}
@@ -694,10 +747,28 @@ func (e *engine) one(ctx context.Context, relative string) {
 
 	e.record(plan.action, relative, plan.size, plan.evidence)
 	if err := e.apply(ctx, relative, plan, srcPtr, dstPtr); err != nil {
-		e.run.Errors++
-		e.record(models.ActionFailed, relative, plan.size, err.Error())
-		slog.Warn("synchronising a file failed",
-			"job", e.job.ID, "path", relative, "action", plan.action, "error", err)
+		if side := e.unauthorized(err); side != nil {
+			// An access token died since the run started (or was revoked): swap
+			// it for a fresh one and retry the operation once, so a long run
+			// recovers instead of failing every remaining file with the same
+			// opaque 401.
+			if renewErr := e.reissue(ctx, side); renewErr == nil {
+				err = e.apply(ctx, relative, plan, srcPtr, dstPtr)
+			} else {
+				err = renewErr
+			}
+		}
+		if err != nil {
+			e.run.Errors++
+			e.record(models.ActionFailed, relative, plan.size, err.Error())
+			slog.Warn("synchronising a file failed",
+				"job", e.job.ID, "path", relative, "action", plan.action, "error", err)
+			if errors.Is(err, ErrReconnect) {
+				// The account must be connected again: end the run rather than
+				// record the same failure for every remaining path.
+				e.fail(err)
+			}
+		}
 	}
 }
 
@@ -910,6 +981,12 @@ func (e *engine) apply(ctx context.Context, relative string, plan decision, src,
 // copy transfers one file from one side to the other. `item` is the copy being
 // read, `existing` the copy being overwritten (nil when the file is new).
 func (e *engine) copy(ctx context.Context, relative string, from, to *endpoint, item, existing *providers.Item) error {
+	if err := e.freshen(ctx, from); err != nil {
+		return err
+	}
+	if err := e.freshen(ctx, to); err != nil {
+		return err
+	}
 	if item == nil || item.ID == "" {
 		return fmt.Errorf("the file %q has no remote id on %s", relative, from.label())
 	}
@@ -968,6 +1045,9 @@ func (e *engine) copy(ctx context.Context, relative string, from, to *endpoint, 
 
 // remove deletes one remote file and forgets its state row.
 func (e *engine) remove(ctx context.Context, relative string, side *endpoint, item *providers.Item) error {
+	if err := e.freshen(ctx, side); err != nil {
+		return err
+	}
 	if item == nil || item.ID == "" {
 		return e.forget(ctx, relative)
 	}
@@ -1035,6 +1115,9 @@ func (e *engine) remember(ctx context.Context, relative string, from *endpoint, 
 // missing ancestors one level at a time (providers only create one folder per
 // call) and remembering them so a second file in the same folder is free.
 func (e *engine) ensureFolder(ctx context.Context, side *endpoint, dir string) (string, error) {
+	if err := e.freshen(ctx, side); err != nil {
+		return "", err
+	}
 	if dir == "" {
 		return side.root, nil
 	}
