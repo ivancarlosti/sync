@@ -17,6 +17,13 @@ export interface FolderSelection {
 /** ROOT_PATH is how the API path of a drive root is displayed. */
 export const ROOT_PATH = '/';
 
+/**
+ * ROOT_ID is the folder id of the root of a drive, mirroring `providers.DriveRoot`
+ * on the server: the picker sends an empty id for the root, and both sides turn it
+ * into this placeholder before comparing two locations.
+ */
+export const ROOT_ID = 'root';
+
 /** pathFrom renders the display path of a breadcrumb built from the root. */
 export function pathFrom(names: string[]): string {
   const parts = names.filter((name) => name !== '');

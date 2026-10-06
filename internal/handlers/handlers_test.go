@@ -775,7 +775,28 @@ func TestCreateJobValidation(t *testing.T) {
 			patch: map[string]any{"source_account_id": uint(999)}, wantStatus: http.StatusNotFound, wantCode: codeNotFound},
 		{name: "an unknown destination account is not found",
 			patch: map[string]any{"destination_account_id": uint(999)}, wantStatus: http.StatusNotFound, wantCode: codeNotFound},
-		{name: "one account cannot be both ends", patch: map[string]any{"destination_account_id": google.ID}},
+		{name: "one account cannot use the same folder on both ends", patch: map[string]any{"destination_account_id": google.ID}},
+		{name: "a destination folder inside the source folder is refused",
+			patch: map[string]any{
+				"destination_account_id":  google.ID,
+				"source_drive_id":         "drive-1",
+				"source_folder_id":        "folder-1",
+				"source_folder_path":      "/Documents",
+				"destination_drive_id":    "drive-1",
+				"destination_folder_id":   "folder-2",
+				"destination_folder_path": "/Documents/Old",
+			}},
+		{name: "a source folder inside the destination folder is refused when the copy runs backwards",
+			patch: map[string]any{
+				"destination_account_id":  google.ID,
+				"source_drive_id":         "drive-1",
+				"source_folder_id":        "folder-1",
+				"source_folder_path":      "/Documents/Old",
+				"destination_drive_id":    "drive-1",
+				"destination_folder_id":   "folder-2",
+				"destination_folder_path": "/Documents",
+				"direction":               string(models.DirectionMicrosoftToGoogle),
+			}},
 		{name: "the interval is bounded", patch: map[string]any{"interval_minutes": maxIntervalMinutes + 1}},
 		{name: "a negative interval is refused", patch: map[string]any{"interval_minutes": -5}},
 		{name: "exclude patterns must be valid globs", patch: map[string]any{"exclude_patterns": []string{"[unclosed"}}},
@@ -812,6 +833,114 @@ func TestCreateJobValidation(t *testing.T) {
 	}
 	if len(jobs) != 0 {
 		t.Fatalf("jobs = %d, want none after rejected payloads", len(jobs))
+	}
+}
+
+// TestCreateJobAllowsOneAccountOnBothEnds pins the relaxation of the old
+// "two different accounts" rule: an operator may keep two folders of one account
+// aligned (OneDrive → OneDrive), and may copy an OneDrive folder into a
+// SharePoint library of the same work account. Only the location of the two ends
+// is still checked, and the engine already runs an intra-provider job through the
+// same code path as any other (see services.applyDirections).
+func TestCreateJobAllowsOneAccountOnBothEnds(t *testing.T) {
+	server, store := newTestServer(t, models.AuthModeNone)
+	microsoft := saveAccount(t, store, models.ProviderMicrosoft, "ms-1", "m@example.com")
+
+	cases := []struct {
+		name         string
+		sourceDrive  string
+		sourceFolder string
+		sourcePath   string
+		destDrive    string
+		destFolder   string
+		destPath     string
+	}{
+		{
+			name:        "two folders of the same OneDrive",
+			sourceDrive: "b!onedrive", sourceFolder: "folder-1", sourcePath: "/Documents",
+			destDrive: "b!onedrive", destFolder: "folder-2", destPath: "/Backup",
+		},
+		{
+			name:        "an OneDrive folder into a SharePoint library of the same account",
+			sourceDrive: "b!onedrive", sourceFolder: "folder-1", sourcePath: "/Documents",
+			destDrive: "b!library", destFolder: "folder-3", destPath: "/Documents",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			payload := map[string]any{
+				"name":                    testCase.name,
+				"source_account_id":       microsoft.ID,
+				"destination_account_id":  microsoft.ID,
+				"source_drive_id":         testCase.sourceDrive,
+				"source_folder_id":        testCase.sourceFolder,
+				"source_folder_path":      testCase.sourcePath,
+				"destination_drive_id":    testCase.destDrive,
+				"destination_folder_id":   testCase.destFolder,
+				"destination_folder_path": testCase.destPath,
+				"interval_minutes":        0,
+			}
+
+			recorder := call(t, server, http.MethodPost, "/api/jobs", payload)
+			requireStatus(t, recorder, http.StatusCreated)
+			job := decodeJSON[jobView](t, recorder)
+			if job.SourceAccountID != microsoft.ID || job.DestinationAccountID != microsoft.ID {
+				t.Errorf("accounts = %d/%d, want the one account on both ends",
+					job.SourceAccountID, job.DestinationAccountID)
+			}
+			if job.SourceFolderID != testCase.sourceFolder || job.DestinationFolderID != testCase.destFolder {
+				t.Errorf("folder ids = %q/%q, want %q/%q", job.SourceFolderID, job.DestinationFolderID,
+					testCase.sourceFolder, testCase.destFolder)
+			}
+			if job.SourceFolderPath != testCase.sourcePath || job.DestinationFolderPath != testCase.destPath {
+				t.Errorf("folder paths = %q/%q, want %q/%q", job.SourceFolderPath, job.DestinationFolderPath,
+					testCase.sourcePath, testCase.destPath)
+			}
+			// An intra-provider job still carries a direction, and the default of
+			// any pair that is not Microsoft → Google is the forward one.
+			if job.Direction != string(models.DirectionGoogleToMicrosoft) {
+				t.Errorf("direction = %q, want the default of a Microsoft → Microsoft pair", job.Direction)
+			}
+		})
+	}
+
+	// Every accepted payload reached the store.
+	jobs, err := store.ListJobs(context.Background())
+	if err != nil {
+		t.Fatalf("listing the jobs: %v", err)
+	}
+	if len(jobs) != len(cases) {
+		t.Fatalf("jobs = %d, want the %d accepted payloads", len(jobs), len(cases))
+	}
+}
+
+// TestPathWithin pins the comparison behind the nesting guard: the display paths
+// of the picker, normalised so a trailing slash and a missing leading one do not
+// matter, and an empty path answering false because it cannot be placed in the
+// tree (see applyJobInput).
+func TestPathWithin(t *testing.T) {
+	cases := []struct {
+		inner string
+		outer string
+		want  bool
+	}{
+		{inner: "/Documents/Old", outer: "/Documents", want: true},
+		{inner: "/Documents", outer: "/Documents", want: true},
+		{inner: "Documents/Old/", outer: "Documents", want: true},
+		{inner: "/Documents/Old/2026", outer: "/Documents", want: true},
+		{inner: "/DocumentsX", outer: "/Documents", want: false},
+		{inner: "/Documents", outer: "/Documents/Old", want: false},
+		{inner: "/Other", outer: "/Documents", want: false},
+		{inner: "/Documents", outer: "", want: false},
+		{inner: "/Documents", outer: "/", want: false},
+		{inner: "", outer: "/Documents", want: false},
+	}
+	for _, testCase := range cases {
+		if got := pathWithin(testCase.inner, testCase.outer); got != testCase.want {
+			t.Errorf("pathWithin(%q, %q) = %v, want %v",
+				testCase.inner, testCase.outer, got, testCase.want)
+		}
 	}
 }
 

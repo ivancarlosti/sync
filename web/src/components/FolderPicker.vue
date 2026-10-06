@@ -170,6 +170,17 @@ const sharePointOptions = computed<SelectOption[]>(() =>
 );
 
 /**
+ * hasSharePoint reports whether this account can reach SharePoint at all. Only a
+ * work or school account owns site collections: a personal Microsoft account
+ * (MSA) has a "personal" drive and no libraries, and Graph refuses /sites for it.
+ * The search field and the library select are left out when there is no library
+ * to offer, and the hint below says so instead of leaving the field missing.
+ */
+const hasSharePoint = computed(
+  () => isMicrosoft.value && drives.value.some((drive) => !isOneDriveKind(drive.kind)),
+);
+
+/**
  * driveModel, oneDriveModel and sharePointModel drive the selects from the one
  * state that matters, `driveId`: the two Microsoft selects each answer in the
  * group the current root belongs to and fall back to their placeholder
@@ -366,9 +377,10 @@ async function start(): Promise<void> {
   try {
     const answer = await accounts.drives(props.accountId);
     drives.value = answer.drives ?? [];
-    if (isMicrosoft.value) {
-      // Only Microsoft owns libraries; the call answers 424 for a provider
-      // without the capability, so it is not worth making.
+    if (hasSharePoint.value) {
+      // Only a work or school account owns libraries: a personal Microsoft
+      // account has none, and Graph refuses /sites for it, so the request is not
+      // made at all (the API would answer with an empty list anyway).
       void loadSites();
     }
     if (drives.value.length === 0) {
@@ -434,8 +446,9 @@ onBeforeUnmount(() => {
       <Alert v-if="failure" tone="destructive" :title="t('browser.loadError')" :message="failure" />
 
       <!-- Microsoft only: one field, two calls — a keyword searches the sites of
-           the tenant, a pasted SharePoint URL resolves that exact library. -->
-      <div v-if="isMicrosoft" class="space-y-1.5">
+           the tenant, a pasted SharePoint URL resolves that exact library. A
+           personal account has no sites at all, so the field is left out. -->
+      <div v-if="hasSharePoint" class="space-y-1.5">
         <Label for="browser-sites">{{ t('browser.siteSearch') }}</Label>
         <div class="flex flex-wrap items-center gap-2">
           <Input
@@ -492,7 +505,7 @@ onBeforeUnmount(() => {
               :disabled="loadingDrives || oneDriveOptions.length === 0"
             />
           </div>
-          <div class="min-w-56 flex-1 space-y-1.5">
+          <div v-if="hasSharePoint" class="min-w-56 flex-1 space-y-1.5">
             <Label for="browser-sharepoint">{{ t('browser.sharePointLibrary') }}</Label>
             <Select
               id="browser-sharepoint"
@@ -522,6 +535,13 @@ onBeforeUnmount(() => {
           <RefreshCw class="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
+
+      <!-- No library to offer, which is always the case on a personal account:
+           saying so is the difference between "SharePoint is missing" and "this
+           account has no SharePoint". -->
+      <p v-if="isMicrosoft && !hasSharePoint" class="text-xs text-muted-foreground">
+        {{ t('browser.noLibraryHint') }}
+      </p>
 
       <div class="space-y-1">
         <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">

@@ -2,6 +2,7 @@ package microsoft
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	graphmodels "github.com/microsoftgraph/msgraph-sdk-go/models"
@@ -50,6 +51,8 @@ func TestDriveFromGraphKeepsTheTwoFamiliesApart(t *testing.T) {
 // URL it tells two "Documents" apart with — is asserted end to end.
 func TestDrivesCarryTheKindAndUrlOfEachRoot(t *testing.T) {
 	transport := &recordingTransport{bodies: map[string]string{
+		"/v1.0/me/drive": `{"id":"b!onedrive","name":"Ivan","driveType":"business",` +
+			`"webUrl":"https://contoso-my.sharepoint.com/personal/ivan_contoso_com/Documents"}`,
 		"/v1.0/me/drives": `{"value":[` +
 			`{"id":"b!onedrive","name":"Ivan","driveType":"business",` +
 			`"webUrl":"https://contoso-my.sharepoint.com/personal/ivan_contoso_com/Documents"},` +
@@ -77,5 +80,46 @@ func TestDrivesCarryTheKindAndUrlOfEachRoot(t *testing.T) {
 	library := drives[1]
 	if library.Kind != "document_library" || library.Owner == "" {
 		t.Errorf("drives[1] = %+v, want the library tagged and carrying its URL", library)
+	}
+}
+
+// TestDrivesDropTheBookkeepingDrivesOfAPersonalAccount pins the broken personal
+// account: `GET /me/drives` of a recent MSA also lists internal drives — an
+// archive named ODCMetadataArchive and the Bundle drives — that Microsoft tags
+// with the very same driveType "personal" as the real OneDrive, while their roots
+// answer HTTP 400 "ObjectHandle is Invalid". The picker may only be offered the
+// drive `GET /me/drive` names, and only once.
+func TestDrivesDropTheBookkeepingDrivesOfAPersonalAccount(t *testing.T) {
+	const ownID = "b!O_eMCHPCf0ysXS41VjTHz3ZuxvLQtANPkPKYvKefdK3fcT2ZuoImT54ODtNZQRub"
+	transport := &recordingTransport{bodies: map[string]string{
+		"/v1.0/me/drive": `{"id":"` + ownID + `","name":"OneDrive","driveType":"personal",` +
+			`"webUrl":"https://onedrive.live.com/?id=root"}`,
+		"/v1.0/me/drives": `{"value":[` +
+			`{"id":"b!VZHvx3CtANPk","name":"ODCMetadataArchive","driveType":"personal"},` +
+			`{"id":"BE77C2C82D9EC8EB","name":"Bundles_b896e2bb","driveType":"personal"},` +
+			`{"id":"` + ownID + `","name":"OneDrive","driveType":"personal"},` +
+			`{"id":"b!library","name":"Documents","driveType":"documentLibrary",` +
+			`"webUrl":"https://contoso.sharepoint.com/sites/marketing/Documents"}]}`,
+	}}
+	provider := New()
+	provider.httpClient.Transport = transport
+
+	drives, err := provider.Drives(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "personal-token"})
+	if err != nil {
+		t.Fatalf("Drives = %v", err)
+	}
+	if len(drives) != 2 {
+		t.Fatalf("Drives = %+v, want the own OneDrive and the library only", drives)
+	}
+	own := drives[0]
+	if own.ID != ownID || own.Kind != "personal" || own.Name != "OneDrive" {
+		t.Errorf("drives[0] = %+v, want the drive served for /me/drive", own)
+	}
+	if !strings.HasPrefix(transport.urls[0], "https://graph.microsoft.com/v1.0/me/drive?") {
+		t.Errorf("the first request went to %q, want /me/drive", transport.urls[0])
+	}
+	if library := drives[1]; library.ID != "b!library" || library.Kind != "document_library" {
+		t.Errorf("drives[1] = %+v, want the SharePoint library", library)
 	}
 }

@@ -118,8 +118,16 @@ func (s *Server) applyJobInput(c *gin.Context, input jobInput, job *models.SyncJ
 	if err != nil {
 		return err
 	}
-	if source.ID == destination.ID {
-		return fmt.Errorf("%w: the source and the destination must be different accounts", services.ErrValidation)
+	// One account may hold both ends of a job — a folder of OneDrive into another
+	// folder of the same OneDrive, or an OneDrive folder into a SharePoint library
+	// of the same work account — so the two ends are compared by location instead
+	// of by account. Two ends that collapse to the same drive and folder would
+	// copy a folder into itself.
+	sourceDrive, sourceFolder := driveOrRoot(input.SourceDriveID), driveOrRoot(input.SourceFolderID)
+	destDrive, destFolder := driveOrRoot(input.DestinationDriveID), driveOrRoot(input.DestinationFolderID)
+	sourcePath, destPath := strings.TrimSpace(input.SourceFolderPath), strings.TrimSpace(input.DestinationFolderPath)
+	if source.ID == destination.ID && sourceDrive == destDrive && sourceFolder == destFolder {
+		return fmt.Errorf("%w: the source and the destination cannot be the same folder", services.ErrValidation)
 	}
 
 	direction := models.SyncDirection(strings.ToLower(strings.TrimSpace(input.Direction)))
@@ -130,6 +138,23 @@ func (s *Server) applyJobInput(c *gin.Context, input jobInput, job *models.SyncJ
 	}
 	if !direction.Valid() {
 		return fmt.Errorf("%w: unknown direction %q", services.ErrValidation, input.Direction)
+	}
+
+	// With both ends on one account, one folder can now sit inside the other,
+	// which the different-account rule used to make impossible. A folder copied
+	// into a folder below itself grows on every run (the copy becomes part of the
+	// source of the next one), so the direction that would do it is refused. The
+	// paths are the display values of the picker, not identifiers, so this is the
+	// best effort available here.
+	if source.ID == destination.ID && sourceDrive == destDrive {
+		forward := direction != models.DirectionMicrosoftToGoogle
+		backward := direction != models.DirectionGoogleToMicrosoft
+		if forward && pathWithin(destPath, sourcePath) {
+			return fmt.Errorf("%w: the destination folder is inside the source folder", services.ErrValidation)
+		}
+		if backward && pathWithin(sourcePath, destPath) {
+			return fmt.Errorf("%w: the source folder is inside the destination folder", services.ErrValidation)
+		}
 	}
 
 	policy := models.ConflictPolicy(strings.ToLower(strings.TrimSpace(input.ConflictPolicy)))
@@ -157,12 +182,12 @@ func (s *Server) applyJobInput(c *gin.Context, input jobInput, job *models.SyncJ
 	job.Name = name
 	job.SourceAccountID = source.ID
 	job.DestinationAccountID = destination.ID
-	job.SourceDriveID = driveOrRoot(input.SourceDriveID)
-	job.SourceFolderID = driveOrRoot(input.SourceFolderID)
-	job.SourceFolderPath = strings.TrimSpace(input.SourceFolderPath)
-	job.DestinationDriveID = driveOrRoot(input.DestinationDriveID)
-	job.DestinationFolderID = driveOrRoot(input.DestinationFolderID)
-	job.DestinationFolderPath = strings.TrimSpace(input.DestinationFolderPath)
+	job.SourceDriveID = sourceDrive
+	job.SourceFolderID = sourceFolder
+	job.SourceFolderPath = sourcePath
+	job.DestinationDriveID = destDrive
+	job.DestinationFolderID = destFolder
+	job.DestinationFolderPath = destPath
 	job.Direction = string(direction)
 	job.ConflictPolicy = string(policy)
 	job.ExcludePatterns = patterns
@@ -187,6 +212,32 @@ func driveOrRoot(value string) string {
 		return trimmed
 	}
 	return providers.DriveRoot
+}
+
+// pathWithin reports whether inner is outer or a folder below it, which is how a
+// job that would copy a folder into itself is told apart from a legitimate one.
+// The paths come from the folder picker as display values ("/Documents/2026"),
+// not as identifiers, so the comparison is best effort: a path left empty cannot
+// be placed in the tree and reports false, which keeps the check out of the way
+// instead of refusing a job whose paths the editor did not fill in.
+func pathWithin(inner, outer string) bool {
+	outer = folderPath(outer)
+	if outer == "" {
+		return false
+	}
+	inner = folderPath(inner)
+	return inner == outer || strings.HasPrefix(inner, outer+"/")
+}
+
+// folderPath normalises a display path for comparison: "/Documents/2026/",
+// "Documents/2026" and "/Documents/2026" are the same folder, and the root of a
+// drive is the empty path.
+func folderPath(raw string) string {
+	trimmed := strings.Trim(strings.TrimSpace(raw), "/")
+	if trimmed == "" {
+		return ""
+	}
+	return "/" + trimmed
 }
 
 // handleListJobs answers GET /api/jobs.

@@ -210,7 +210,7 @@ prefix stripped (`copy: "permissions"` — `User.Read`, `Files.ReadWrite.All`, �
 | Topic | Google | Microsoft |
 |---|---|---|
 | API | `google.golang.org/api/drive/v3` + `oauth2` | `msgraph-sdk-go` v1.103 with a custom kiota token provider fed by our encrypted tokens |
-| Drive list | My Drive + shared drives (`drives.list`) | personal OneDrive from `/me/drives` plus SharePoint libraries: `GET /api/accounts/:id/sites` (`$search=*` when no keyword, so every reachable site is listed) and the manual fallback `POST /api/accounts/:id/sites/resolve` for a pasted SharePoint URL |
+| Drive list | My Drive + shared drives (`drives.list`) | the account's own OneDrive first — read from `GET /me/drive`, because `/me/drives` of a personal account (MSA) also lists internal bookkeeping drives whose root Graph refuses (`ObjectHandle is Invalid`) — then the roots `/me/drives` adds, plus the SharePoint libraries of `GET /api/accounts/:id/sites` (`$search=*` when no keyword, so every reachable site is listed) and the manual fallback `POST /api/accounts/:id/sites/resolve` for a pasted SharePoint URL |
 | Checksum | `md5Checksum` (only for binary files) | `quickXorHash` |
 | Native documents (`application/vnd.google-apps.*`) | exposed but marked `unsupported` — V1 never exports them | n/a |
 | Shortcuts / links | marked `unsupported`, never followed | links are skipped the same way |
@@ -247,7 +247,15 @@ problem (403), and never confuses the two.
   `POST /api/accounts/:id/sites/resolve` when the search does not surface a
   library. Every library is labelled with the site it lives in, because each site
   names its default library `Documents`; it is only rendered for Microsoft, which
-  is the only provider with the capability.
+  is the only provider with the capability. A **personal** Microsoft account owns
+  no site collection, so the site field and the library select are left out
+  entirely (a short hint says the account exposes no SharePoint libraries) instead
+  of being offered empty: Graph rejects `/sites` for an MSA.
+* **Intra-provider jobs** — the editor lets both ends name the same account, so an
+  OneDrive folder can be kept aligned with another folder of the same OneDrive, or
+  with a SharePoint library of the same work account. The API refuses only the two
+  locations collapsing into one folder, and a folder nested inside the other in the
+  direction the job copies (`400 validation`, see `docs/api.md` §6).
 * **Admin > Providers** — client id, client secret, redirect URI, tenant
   (Microsoft), the current `source`, the exact redirect URI to paste into the
   provider console and the tenant-wide consent state (Microsoft).
@@ -269,4 +277,6 @@ problem (403), and never confuses the two.
 | capability badges marked in red on an account | the account was connected before those permissions were requested | reconnect the account |
 | Microsoft: the *files* badge is red right after connecting, and reconnecting changes nothing | the grant is missing a **Graph** permission — `User.Read`, `Files.ReadWrite.All` or `Sites.ReadWrite.All`. The four OpenID Connect scopes are `informational` and never gate the badge (Entra does not report them back) | grant the missing Graph permission (admin consent for the tenant), then reconnect |
 | SharePoint libraries missing | `Sites.ReadWrite.All` not granted, no admin consent, or the library belongs to a site the signed-in user cannot reach | grant the scope and reconnect; the picker also accepts a pasted SharePoint URL (the manual fallback of the site field) |
+| SharePoint missing on a **personal** Microsoft account, with the "only one OneDrive" hint | an MSA has no site collection at all: its directory holds no `Microsoft.FileServices` address and Graph answers `/sites` with *This API is not supported for MSA accounts* | nothing to fix — the API answers an empty list instead of an error, and an intra-account job (OneDrive → OneDrive) covers what the account does have |
+| `ObjectHandle is Invalid` (`400 invalidRequest`) when browsing the destination | the picker opened a **bookkeeping** drive of a personal account (`ODCMetadataArchive`, `Bundles_*`), which Microsoft tags `driveType: personal` like the real OneDrive, but whose root cannot be listed | update to a release that resolves the own drive through `/me/drive`; a job stored against such a drive must be re-pointed at the OneDrive with the folder picker |
 | Google native docs never copied | by design in V1 (`unsupported`) | export them manually, or keep them out of the source folder |

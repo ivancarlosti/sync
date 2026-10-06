@@ -101,8 +101,8 @@ func modifiedAt(driveItem graphmodels.DriveItemable) time.Time {
 	return time.Time{}
 }
 
-// Drives implements providers.Provider. /me/drives returns the personal OneDrive
-// plus every document library shared with the signed in user, which is exactly
+// Drives implements providers.Provider. The account's own OneDrive comes first,
+// then every document library shared with the signed in user, which is exactly
 // the set of roots a job may synchronise.
 func (p *Provider) Drives(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens) ([]providers.Drive, error) {
 	client, err := p.graphClient(tokens)
@@ -112,17 +112,67 @@ func (p *Provider) Drives(ctx context.Context, _ providers.Credentials, tokens *
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
+	// The own drive is read on its own endpoint rather than picked out of the
+	// collection: on a personal account it is the only entry the picker may
+	// open (see ownDrive). It is also listed first, so the root a fresh job
+	// falls back to is the one that answers.
+	own, err := p.ownDrive(ctx, client)
+	if err != nil {
+		return nil, err
+	}
+	ownID := deref(own.GetId())
+
 	page, err := client.Me().Drives().Get(ctx, &users.ItemDrivesRequestBuilderGetRequestConfiguration{
 		QueryParameters: &users.ItemDrivesRequestBuilderGetQueryParameters{Select: driveSelect},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("microsoft graph: cannot list the drives of the account: %w", err)
 	}
-	list := make([]providers.Drive, 0, len(page.GetValue()))
+	list := make([]providers.Drive, 0, len(page.GetValue())+1)
+	if ownID != "" {
+		list = append(list, driveFromGraph(own))
+	}
 	for _, drive := range page.GetValue() {
+		if ownID != "" {
+			if deref(drive.GetId()) == ownID {
+				continue
+			}
+			if isPersonalDrive(drive) {
+				// A second personal drive of a personal account is never a
+				// folder tree: see ownDrive.
+				continue
+			}
+		}
 		list = append(list, driveFromGraph(drive))
 	}
 	return list, nil
+}
+
+// ownDrive reads GET /me/drive, the drive the account actually stores files in.
+//
+// The collection endpoint cannot be used to find it: `GET /me/drives` lists every
+// drive the account can see, and a recently created personal account (MSA) also
+// exposes internal bookkeeping drives there — an archive named ODCMetadataArchive
+// and the Bundle drives — which Microsoft tags with the very same driveType
+// "personal". Their roots answer HTTP 400 `invalidRequest` with the message
+// "ObjectHandle is Invalid", so a picker that takes the first personal drive of
+// the collection lists a root that can never be opened. The singular endpoint
+// always names the one drive that answers.
+func (p *Provider) ownDrive(ctx context.Context, client *msgraphsdk.GraphServiceClient) (graphmodels.Driveable, error) {
+	drive, err := client.Me().Drive().Get(ctx, &users.ItemDriveRequestBuilderGetRequestConfiguration{
+		QueryParameters: &users.ItemDriveRequestBuilderGetQueryParameters{Select: driveSelect},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("microsoft graph: cannot read the OneDrive of the account: %w", err)
+	}
+	return drive, nil
+}
+
+// isPersonalDrive tells a personal account's own OneDrive from everything else.
+// It reuses the mapping the folder picker groups by, so "personal", "Personal"
+// and "PERSONAL" are recognised the same way here and there.
+func isPersonalDrive(drive graphmodels.Driveable) bool {
+	return driveFromGraph(drive).Kind == "personal"
 }
 
 // driveFromGraph converts a Graph drive into the provider neutral root.
@@ -317,6 +367,16 @@ func (p *Provider) SearchSites(ctx context.Context, _ providers.Credentials, tok
 	}
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
+
+	// A personal Microsoft account owns no site collection: its directory has no
+	// `Microsoft.FileServices` address, and Graph answers /sites with "This API is
+	// not supported for MSA accounts". Asking anyway would turn an empty picker
+	// into a 502, so the account is recognised by its own drive (see ownDrive) and
+	// answered with no libraries at all. The probe is best effort on purpose: a
+	// failure to read it must not block a SharePoint search.
+	if own, err := p.ownDrive(ctx, client); err == nil && isPersonalDrive(own) {
+		return []providers.Drive{}, nil
+	}
 
 	query = strings.TrimSpace(query)
 	if query == "" {

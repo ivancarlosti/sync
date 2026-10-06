@@ -217,6 +217,7 @@ func TestGraphClientNeedsAToken(t *testing.T) {
 func TestGraphRewritesTheMeSentinel(t *testing.T) {
 	transport := &recordingTransport{bodies: map[string]string{
 		"/v1.0/me":        `{"id":"user-1","displayName":"Ada Lovelace","userPrincipalName":"ada@contoso.com"}`,
+		"/v1.0/me/drive":  `{"id":"drive-1","name":"OneDrive","driveType":"personal"}`,
 		"/v1.0/me/drives": `{"value":[{"id":"drive-1","name":"OneDrive","driveType":"personal"}]}`,
 	}}
 	provider := New()
@@ -236,11 +237,12 @@ func TestGraphRewritesTheMeSentinel(t *testing.T) {
 		t.Fatalf("Drives = %v", err)
 	}
 	if len(drives) != 1 || drives[0].ID != "drive-1" || drives[0].Kind != "personal" {
-		t.Errorf("Drives = %+v, want the document served for /me/drives", drives)
+		t.Errorf("Drives = %+v, want the own drive served for /me/drive and its duplicate dropped from /me/drives", drives)
 	}
 
 	want := []string{
 		"https://graph.microsoft.com/v1.0/me",
+		"https://graph.microsoft.com/v1.0/me/drive",
 		"https://graph.microsoft.com/v1.0/me/drives",
 	}
 	if len(transport.urls) != len(want) {
@@ -298,7 +300,10 @@ func (t *recordingTransport) RoundTrip(request *http.Request) (*http.Response, e
 // listing, which returns the sites of the tenant, instead of the application-only
 // plain collection that returns at most the root site.
 func TestSearchSitesSearchesForTheWildcard(t *testing.T) {
-	transport := &recordingTransport{bodies: map[string]string{"/v1.0/sites": `{"value":[]}`}}
+	transport := &recordingTransport{bodies: map[string]string{
+		"/v1.0/me/drive": `{"id":"b!onedrive","name":"Ivan","driveType":"business"}`,
+		"/v1.0/sites":    `{"value":[]}`,
+	}}
 	provider := New()
 	provider.httpClient.Transport = transport
 
@@ -306,10 +311,15 @@ func TestSearchSitesSearchesForTheWildcard(t *testing.T) {
 		&providers.Tokens{AccessToken: "search-token"}, ""); err != nil {
 		t.Fatalf("SearchSites = %v", err)
 	}
-	if len(transport.urls) != 1 {
-		t.Fatalf("issued %d requests (%v), want a single listing", len(transport.urls), transport.urls)
+	// The own drive is read first: it is what tells a personal account (which has
+	// no sites at all) from a work one (see TestSearchSitesIsEmptyForAPersonalAccount).
+	if len(transport.urls) != 2 {
+		t.Fatalf("issued %d requests (%v), want the own drive then a single listing", len(transport.urls), transport.urls)
 	}
-	query := transport.urls[0]
+	if !strings.HasPrefix(transport.urls[0], "https://graph.microsoft.com/v1.0/me/drive?") {
+		t.Errorf("first request went to %q, want /me/drive", transport.urls[0])
+	}
+	query := transport.urls[1]
 	if !strings.Contains(query, "/sites?") || !strings.Contains(query, "search=") {
 		t.Errorf("request went to %q, want a $search listing", query)
 	}
@@ -318,11 +328,40 @@ func TestSearchSitesSearchesForTheWildcard(t *testing.T) {
 	}
 }
 
+// TestSearchSitesIsEmptyForAPersonalAccount pins the personal account path: an
+// MSA owns no site collection and Graph refuses /sites for it ("This API is not
+// supported for MSA accounts"), so the account is recognised by its own drive and
+// answered with no libraries at all. The site listing must not even be attempted,
+// because its rejection is what turned an empty picker into a 502.
+func TestSearchSitesIsEmptyForAPersonalAccount(t *testing.T) {
+	transport := &recordingTransport{bodies: map[string]string{
+		"/v1.0/me/drive": `{"id":"b!onedrive","name":"Ivan","driveType":"personal"}`,
+		"/v1.0/sites":    `{"error":{"code":"invalidRequest","message":"This API is not supported for MSA accounts"}}`,
+	}}
+	provider := New()
+	provider.httpClient.Transport = transport
+
+	sites, err := provider.SearchSites(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "search-token"}, "marketing")
+	if err != nil {
+		t.Fatalf("SearchSites = %v, want no error for a personal account", err)
+	}
+	if len(sites) != 0 {
+		t.Errorf("sites = %+v, want none for a personal account", sites)
+	}
+	if len(transport.urls) != 1 || !strings.HasPrefix(transport.urls[0], "https://graph.microsoft.com/v1.0/me/drive?") {
+		t.Fatalf("issued %v, want only the probe on /me/drive", transport.urls)
+	}
+}
+
 // TestSearchSitesFallsBackToTheCollection covers the tenant that refuses the
 // wildcard: the listing is retried without $search (the tenant root site) instead
 // of emptying the picker, and only a double failure surfaces an error.
 func TestSearchSitesFallsBackToTheCollection(t *testing.T) {
-	transport := &recordingTransport{statuses: map[string]int{"/v1.0/sites": http.StatusBadRequest}}
+	transport := &recordingTransport{
+		bodies:   map[string]string{"/v1.0/me/drive": `{"id":"b!onedrive","driveType":"business"}`},
+		statuses: map[string]int{"/v1.0/sites": http.StatusBadRequest},
+	}
 	provider := New()
 	provider.httpClient.Transport = transport
 
@@ -330,10 +369,11 @@ func TestSearchSitesFallsBackToTheCollection(t *testing.T) {
 		&providers.Tokens{AccessToken: "search-token"}, ""); err == nil {
 		t.Fatal("expected the double failure to surface")
 	}
-	if len(transport.urls) != 2 {
-		t.Fatalf("issued %d requests (%v), want the wildcard then the plain listing", len(transport.urls), transport.urls)
+	if len(transport.urls) != 3 {
+		t.Fatalf("issued %d requests (%v), want the own drive, the wildcard then the plain listing", len(transport.urls), transport.urls)
 	}
-	if strings.Contains(transport.urls[0], "search=") && strings.Contains(transport.urls[1], "search=") {
+	first, second := transport.urls[1], transport.urls[2]
+	if strings.Contains(first, "search=") && strings.Contains(second, "search=") {
 		t.Errorf("requests %v, want the fallback to drop $search", transport.urls)
 	}
 }

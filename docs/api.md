@@ -105,9 +105,9 @@ this release, not granted yet) and `needs_reconnect` (true when the second list 
 not empty).
 | `POST` | `/api/accounts/:id/verify` | validates the token against the provider → updated `accountView` |
 | `DELETE` | `/api/accounts/:id` | `{id, deleted_jobs}` — the jobs using the account are deleted too |
-| `GET` | `/api/accounts/:id/drives` | `{drives:[{id,name,kind,owner}]}` |
+| `GET` | `/api/accounts/:id/drives` | `{drives:[{id,name,kind,owner}]}` — the account's own drive first (the one `GET /me/drive` names), then the roots shared with it. A Microsoft personal account (MSA) also exposes internal bookkeeping drives in `/me/drives` for which Graph refuses the root (`400 ObjectHandle is Invalid`), so those are dropped |
 | `GET` | `/api/accounts/:id/drives/:drive/items?folder_id=` | `{drive_id, folder_id, items:[{id,name,is_dir,size,modified_at,mime_type,hash,unsupported}]}` — folders first, then files, both alphabetical; `folder_id` defaults to the drive root |
-| `GET` | `/api/accounts/:id/sites?q=` | `{sites:[{id,name,kind,owner}]}` — SharePoint libraries (empty list for providers without the capability). `q` is a keyword; omitted (or empty) it lists every site the account can reach, and a value the server cannot search falls back to the tenant root site |
+| `GET` | `/api/accounts/:id/sites?q=` | `{sites:[{id,name,kind,owner}]}` — SharePoint libraries (empty list for providers without the capability). `q` is a keyword; omitted (or empty) it lists every site the account can reach, and a value the server cannot search falls back to the tenant root site. A Microsoft **personal** account owns no site collection and Graph refuses `/sites` for it, so the answer is an empty list instead of an error |
 | `POST` | `/api/accounts/:id/sites/resolve` | body `{"url": "https://tenant.sharepoint.com/sites/marketing"}` → `{sites:[{id,name,kind,owner}]}` — the default library of that site, the manual fallback of the folder picker. `400` when the value is not a SharePoint URL/site id, `404` when the account cannot reach it, `424` for a provider without the capability |
 
 ## 6. Jobs
@@ -152,12 +152,19 @@ Create/update payload:
 }
 ```
 
-Validation performed by the service: name required, both accounts must exist and
-differ, folders must be selected, source and destination must differ,
-`direction` ∈ `google_to_microsoft|microsoft_to_google|bidirectional`,
-`conflict_policy` ∈ `newest_wins|source_wins|destination_wins|skip`,
-`interval_minutes` `0–10080`, every glob must compile (`path.Match`), blanks and
-duplicates are dropped.
+Validation performed by the service: name required, both accounts must exist,
+folders must be selected, `direction` ∈
+`google_to_microsoft|microsoft_to_google|bidirectional`, `conflict_policy` ∈
+`newest_wins|source_wins|destination_wins|skip`, `interval_minutes` `0–10080`,
+every glob must compile (`path.Match`), blanks and duplicates are dropped.
+
+Both ends may name the **same account** (OneDrive → OneDrive, OneDrive →
+SharePoint of one work account); only the two locations are checked:
+`400 validation` when they collapse to the same drive *and* folder, and when one
+folder sits inside the other in the direction the job copies (which would copy the
+tree into itself on every run). The nesting check compares the display
+`*_folder_path` values, so a job whose paths the editor left empty is accepted and
+only ever caught by the identical-location rule.
 
 ## 7. Runs
 

@@ -32,8 +32,9 @@
 ## Features
 
 * **Two providers, any direction** — Google Drive → OneDrive/SharePoint,
-  Microsoft → Google, or bidirectional; intra-provider jobs (Google → Google) work
-  too.
+  Microsoft → Google, or bidirectional; intra-provider jobs work too
+  (Google → Google, OneDrive → OneDrive, or OneDrive → SharePoint of the same
+  work account).
 * **Per-job control** — source and destination folders picked in a browser,
   conflict policy (`newest_wins`, `source_wins`, `destination_wins`, `skip`),
   exclude globs (`*.tmp`, `cache/**`), optional deletion propagation and a

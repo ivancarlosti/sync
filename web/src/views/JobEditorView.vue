@@ -32,7 +32,7 @@ import {
   type ConnectedAccount,
   type JobPayload,
 } from '@/lib/api';
-import { ROOT_PATH, type FolderSelection } from '@/lib/folders';
+import { ROOT_ID, ROOT_PATH, type FolderSelection } from '@/lib/folders';
 import { asNumber, asText, joinLines, splitLines } from '@/lib/forms';
 import { formatDateTime } from '@/lib/format';
 import {
@@ -201,13 +201,33 @@ function collectErrors(): Record<string, string> {
   }
   if (draft.value.destination_account_id <= 0) {
     found.destinationAccount = 'validation.selectDestinationAccount';
-  } else if (draft.value.destination_account_id === draft.value.source_account_id) {
-    found.destinationAccount = 'validation.differentAccounts';
   }
   if (draft.value.destination_drive_id.trim() === '') {
     found.destination = 'validation.selectFolder';
+  } else if (sameLocation()) {
+    // One account may hold both ends of a job (OneDrive → OneDrive, OneDrive →
+    // SharePoint); only the two ends being the same folder is refused by the
+    // server, so that is the only message about the account pair left to show.
+    found.destination = 'validation.differentFolders';
   }
   return found;
+}
+
+/**
+ * sameLocation reports whether both ends name the same folder, which the server
+ * refuses because it would copy a folder into itself. The ids are what the picker
+ * sends, so an empty one means the root of the drive — the same fallback the
+ * server applies.
+ */
+function sameLocation(): boolean {
+  if (draft.value.source_account_id !== draft.value.destination_account_id) {
+    return false;
+  }
+  const rooted = (id: string) => id.trim() || ROOT_ID;
+  return (
+    rooted(draft.value.source_drive_id) === rooted(draft.value.destination_drive_id) &&
+    rooted(draft.value.source_folder_id) === rooted(draft.value.destination_folder_id)
+  );
 }
 
 /** complete reports whether every required field of the whole form is filled in. */
@@ -348,6 +368,10 @@ watch(
   () => {
     delete errors.value.sourceAccount;
     delete errors.value.destinationAccount;
+    // The message about the two ends being the same folder is keyed on the
+    // folder fields, and picking a different account is one way to fix it.
+    delete errors.value.source;
+    delete errors.value.destination;
   },
 );
 
