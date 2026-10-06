@@ -12,9 +12,10 @@
 // above the SharePoint select chooses one of the two delegated calls — a keyword
 // searches the tenant (`$search`), a pasted SharePoint URL resolves that exact
 // site (`/sites/resolve`) — so a library the search does not surface stays
-// reachable. The select itself lists the libraries, while the personal OneDrive
-// gets its own select next to it: the `provider` prop tells the picker which of
-// the two layouts the account needs.
+// reachable. The select itself lists the libraries, while the account's own
+// OneDrive (personal, or OneDrive for Business on a work account) gets its own
+// select next to it: the `provider` prop tells the picker which of the two
+// layouts the account needs.
 import { ArrowUp, Folder, FolderOpen, HardDrive, RefreshCw, Search } from '@lucide/vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -80,11 +81,41 @@ const title = computed(() =>
  */
 const isMicrosoft = computed(() => props.provider === 'microsoft');
 
-/** optionOf renders one root; the kind is the suffix that tells two apart. */
+/**
+ * locationOf names the place a library lives in, which is what tells two of them
+ * apart: every SharePoint site ships a default library literally called
+ * "Documents", so the name alone would show one indistinguishable row per site.
+ * The place is the site segment of the drive URL (/sites/marketing,
+ * /teams/hr); a URL that carries none — the account's own OneDrive under
+ * /personal — contributes nothing, because that drive is already unique. The
+ * site name is skipped when it merely repeats the library name, so a searched
+ * site does not end up labelled twice.
+ */
+function locationOf(drive: Drive): string {
+  if (!drive.owner) {
+    return '';
+  }
+  try {
+    const segments = new URL(drive.owner).pathname.split('/').filter((part) => part !== '');
+    const marker = segments.findIndex((part) => ['sites', 'teams'].includes(part.toLowerCase()));
+    const place = marker >= 0 ? segments[marker + 1] : undefined;
+    if (!place || place.toLowerCase() === drive.name.toLowerCase()) {
+      return '';
+    }
+    return place;
+  } catch {
+    return '';
+  }
+}
+
+/** optionOf renders one root; the kind (or the library's site) tells two apart. */
 function optionOf(drive: Drive, withKind: boolean): SelectOption {
+  const suffix = [withKind && drive.kind ? drive.kind : '', locationOf(drive)]
+    .filter((part) => part !== '')
+    .join(' · ');
   return {
     value: drive.id,
-    label: withKind && drive.kind ? `${drive.name} · ${drive.kind}` : drive.name,
+    label: suffix ? `${drive.name} · ${suffix}` : drive.name,
   };
 }
 
@@ -107,15 +138,25 @@ function dedupe(candidates: Drive[], withKind: boolean): SelectOption[] {
 }
 
 /**
+ * isOneDriveKind marks the account's own drive: "personal" on a personal
+ * account, "business" on a work/school one. Every other kind is a SharePoint
+ * library (document_library, site), which is what keeps the work OneDrive out of
+ * the library select.
+ */
+function isOneDriveKind(kind: string | undefined): boolean {
+  return kind === 'personal' || kind === 'business';
+}
+
+/**
  * driveOptions is the single select of every other provider: a Google account
  * lists My Drive and its Shared Drives together, told apart by their kind.
  */
 const driveOptions = computed<SelectOption[]>(() => dedupe([...drives.value, ...sites.value], true));
 
-/** oneDriveOptions is the personal root Microsoft accounts always have. */
+/** oneDriveOptions is the account's own OneDrive, personal or for Business. */
 const oneDriveOptions = computed<SelectOption[]>(() =>
   dedupe(
-    drives.value.filter((drive) => drive.kind === 'personal'),
+    drives.value.filter((drive) => isOneDriveKind(drive.kind)),
     false,
   ),
 );
@@ -125,7 +166,7 @@ const oneDriveOptions = computed<SelectOption[]>(() =>
  * ones the search above found, deduped so the two collections do not repeat.
  */
 const sharePointOptions = computed<SelectOption[]>(() =>
-  dedupe([...drives.value.filter((drive) => drive.kind !== 'personal'), ...sites.value], false),
+  dedupe([...drives.value.filter((drive) => !isOneDriveKind(drive.kind)), ...sites.value], false),
 );
 
 /**
@@ -336,9 +377,9 @@ async function start(): Promise<void> {
     }
     const requested = drives.value.find((drive) => drive.id === props.startDriveId);
     // A Microsoft account opens on its OneDrive: that root always exists, while
-    // a library only shows up once a search found it.
+    // a library only shows up once `/me/drives` or a search returned it.
     const fallback = isMicrosoft.value
-      ? (drives.value.find((drive) => drive.kind === 'personal') ?? drives.value[0])
+      ? (drives.value.find((drive) => isOneDriveKind(drive.kind)) ?? drives.value[0])
       : drives.value[0];
     const selected = requested ?? fallback;
     driveId.value = selected.id;
@@ -436,9 +477,10 @@ onBeforeUnmount(() => {
           />
         </div>
 
-        <!-- Microsoft 365 keeps its two kinds of root apart — the personal
-             OneDrive and the SharePoint libraries — so the libraries sit in
-             their own select, under the search field that fills it. -->
+        <!-- Microsoft 365 keeps its two kinds of root apart — the account's own
+             OneDrive (personal or for Business) and the SharePoint libraries —
+             so the libraries sit in their own select, under the search field
+             that fills it. -->
         <template v-else>
           <div class="min-w-56 flex-1 space-y-1.5">
             <Label for="browser-onedrive">{{ t('browser.oneDrive') }}</Label>

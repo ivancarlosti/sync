@@ -64,11 +64,19 @@ const folderMimeType = "application/vnd.google-apps.folder"
 // withDriveScope adds the corpora parameters selecting the drive to browse. The
 // synthetic MyDrive id (and an empty one) means "the user's own drive", which is
 // the Drive default and needs no driveId.
+//
+// A shared drive is selected with corpora=drive plus driveId, and Drive requires
+// includeItemsFromAllDrives=true alongside a driveId: without it the listing is
+// refused with HTTP 403 (reason includeTeamDriveItemsRequired). The flag is
+// additive metadata, not a widening of the corpus — corpora=drive still scopes
+// the answer to the one drive — which is why the My Drive branch (corpora=user)
+// does not carry it.
 func withDriveScope(raw, driveID string) string {
 	if driveID == "" || driveID == providers.DriveRoot || driveID == MyDrive {
 		return withParam(raw, "corpora", "user")
 	}
-	return withParam(withParam(raw, "corpora", "drive"), "driveId", driveID)
+	return withParam(withParam(withParam(raw, "corpora", "drive"),
+		"driveId", driveID), "includeItemsFromAllDrives", "true")
 }
 
 // rootParent maps the root folder of a drive onto the folder id the Drive API
@@ -235,7 +243,14 @@ func (p *Provider) Download(ctx context.Context, _ providers.Credentials, tokens
 	}
 	req.Header.Set("Accept", "*/*")
 
-	resp, err := p.client(tokens).Do(req)
+	// A throttled download is retried with a backoff (see
+	// providers.DoWithRetry). A GET has no body to replay, and the whole body is
+	// streamed to the caller afterwards, so a discarded attempt is simply
+	// drained and closed by the helper.
+	resp, err := providers.DoWithRetry(ctx, retryPolicy,
+		func(ctx context.Context) (*http.Response, error) {
+			return p.client(tokens).Do(req.Clone(ctx))
+		})
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("google drive: downloading %s failed: %w", itemID, err)

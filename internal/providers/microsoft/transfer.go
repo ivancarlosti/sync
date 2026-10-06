@@ -48,7 +48,14 @@ func (p *Provider) Download(ctx context.Context, _ providers.Credentials, tokens
 	}
 	request.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
 
-	response, err := p.streaming.Do(request)
+	// Graph answers a throttle with 429 and a Retry-After, which the default
+	// retry policy understands (see providers.DoWithRetry). The metadata calls
+	// already retry through Kiota's middleware; this is the byte transfer, which
+	// the streaming client issues itself.
+	response, err := providers.DoWithRetry(ctx, providers.RetryPolicy{},
+		func(ctx context.Context) (*http.Response, error) {
+			return p.streaming.Do(request.Clone(ctx))
+		})
 	if err != nil {
 		return nil, fmt.Errorf("microsoft graph: downloading item %s failed: %w", id, err)
 	}

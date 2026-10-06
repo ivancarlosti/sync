@@ -77,6 +77,80 @@ func (p *Provider) IsNotFound(err error) bool {
 	return apiErr.Status == http.StatusNotFound || apiErr.Status == http.StatusGone
 }
 
+// Is lets errors.Is recognise the throttles Drive answers with, so the layers
+// above report "try again later" instead of a server fault when the retries of
+// providers.DoWithRetry did not clear one. The classification does not wrap the
+// error, which is what keeps asAPIError (and therefore IsNotFound) working.
+func (e *apiError) Is(target error) bool {
+	return target == providers.ErrRateLimited && e.rateLimited()
+}
+
+// rateLimited reports whether the error is one of the shapes Drive uses to ask a
+// client to slow down: HTTP 429, or the HTTP 403 the API answers a quota or rate
+// excess with (`errors[].reason` is the only thing that tells it apart from a
+// genuine permission error).
+func (e *apiError) rateLimited() bool {
+	if e.Status == http.StatusTooManyRequests {
+		return true
+	}
+	return e.Status == http.StatusForbidden && throttleReasons[e.Reason]
+}
+
+// throttleReasons are the Drive error reasons that mean "too many requests".
+var throttleReasons = map[string]bool{
+	"rateLimitExceeded":        true,
+	"userRateLimitExceeded":    true,
+	"quotaExceeded":            true,
+	"sharingRateLimitExceeded": true,
+	"dailyLimitExceeded":       true,
+}
+
+// retryPolicy is the policy every request this package issues with its own HTTP
+// client is sent through (metadata, downloads, session initiation). It is a
+// variable so a test can shrink the backoff.
+var retryPolicy = providers.RetryPolicy{Retryable: retryableGoogle}
+
+// retryableGoogle widens the default retry rule with the HTTP 403 above: the
+// plain throttle arrives as 429, but a quota excess arrives as 403, which the
+// default rule treats as a decision rather than a transient refusal. The body is
+// read to see the reason and put back, so a response that is *not* retried still
+// reaches the caller intact (decodeError reads it).
+func retryableGoogle(response *http.Response) bool {
+	if providers.DefaultRetryable(response) {
+		return true
+	}
+	if response == nil || response.StatusCode != http.StatusForbidden || response.Body == nil {
+		return false
+	}
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 8<<10))
+	if err != nil {
+		return false
+	}
+	response.Body = io.NopCloser(bytes.NewReader(raw))
+	return throttleReasons[errorReason(raw)]
+}
+
+// errorReason extracts the `reason` of the first entry of a Drive error
+// document, which is where the API says why it refused the call.
+func errorReason(raw []byte) string {
+	var envelope struct {
+		Error struct {
+			Errors []struct {
+				Reason string `json:"reason"`
+			} `json:"errors"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return ""
+	}
+	for _, entry := range envelope.Error.Errors {
+		if entry.Reason != "" {
+			return entry.Reason
+		}
+	}
+	return ""
+}
+
 // asAPIError unwraps an *apiError out of err.
 func asAPIError(err error, target **apiError) bool {
 	for err != nil {
@@ -147,7 +221,21 @@ func (p *Provider) doJSON(ctx context.Context, client *http.Client, method, targ
 	}
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := client.Do(req)
+	// A throttled call is retried with a backoff (see providers.DoWithRetry).
+	// req.GetBody replays the marshalled payload — net/http records one for a
+	// bytes.Reader — so a retried attempt never sends a half consumed body.
+	resp, err := providers.DoWithRetry(ctx, retryPolicy,
+		func(ctx context.Context) (*http.Response, error) {
+			attempt := req.Clone(ctx)
+			if req.GetBody != nil {
+				replay, err := req.GetBody()
+				if err != nil {
+					return nil, err
+				}
+				attempt.Body = replay
+			}
+			return client.Do(attempt)
+		})
 	if err != nil {
 		return fmt.Errorf("google drive: %s %s failed: %w", method, safeURL(target), err)
 	}
@@ -221,12 +309,12 @@ func withParam(raw, key, value string) string {
 }
 
 // listURL builds a paginated list URL carrying the shared listing options
-// (shared drive support plus the requested projection). It deliberately does not
-// set includeItemsFromAllDrives: that legacy flag widens a listing to both My
-// Drive and the shared drives, which contradicts the single corpus every caller
-// selects through withDriveScope (corpora=user, or corpora=drive&driveId=…). Used
-// against a shared drive it made the query answer the My Drive root instead of
-// that drive, which is why the folder picker kept showing My Drive contents.
+// (shared drive support plus the requested projection). It does not select a
+// corpus: every caller narrows the answer through withDriveScope (corpora=user,
+// or corpora=drive&driveId=…&includeItemsFromAllDrives=true). The Drive API
+// rejects a listing that carries a driveId without includeItemsFromAllDrives, so
+// that flag is added by withDriveScope on the shared-drive branch — never here,
+// which would also widen the My Drive (corpora=user) branch.
 func listURL(path, fields string) string {
 	target := apiBase + path
 	target = withParam(target, "fields", fields)

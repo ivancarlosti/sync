@@ -103,7 +103,22 @@ func (p *Provider) upload(ctx context.Context, tokens *providers.Tokens, driveID
 		initRequest.Header.Set("X-Upload-Content-Length", strconv.FormatInt(size, 10))
 	}
 
-	response, err := client.Do(initRequest)
+	// The session is opened through a retried call (see providers.DoWithRetry):
+	// the initiation is a metadata POST whose payload is replayable, so a
+	// throttle here costs nothing. The bytes below are a stream and are
+	// therefore sent exactly once — see the comment on the PUT.
+	response, err := providers.DoWithRetry(ctx, retryPolicy,
+		func(ctx context.Context) (*http.Response, error) {
+			attempt := initRequest.Clone(ctx)
+			if initRequest.GetBody != nil {
+				replay, err := initRequest.GetBody()
+				if err != nil {
+					return nil, err
+				}
+				attempt.Body = replay
+			}
+			return client.Do(attempt)
+		})
 	if err != nil {
 		return nil, fmt.Errorf("google drive: starting the upload of %q failed: %w", name, err)
 	}
@@ -134,6 +149,9 @@ func (p *Provider) upload(ctx context.Context, tokens *providers.Tokens, driveID
 	if size > 0 {
 		putRequest.ContentLength = size
 	}
+	// The bytes are NOT retried here: request.Body is the caller's stream, which
+	// cannot be replayed, and re-sending a partially consumed one would corrupt
+	// the file. A throttle on this PUT fails the upload, which the run records.
 	uploadResponse, err := client.Do(putRequest)
 	if err != nil {
 		return nil, fmt.Errorf("google drive: uploading %q failed: %w", name, err)

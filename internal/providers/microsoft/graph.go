@@ -126,15 +126,28 @@ func (p *Provider) Drives(ctx context.Context, _ providers.Credentials, tokens *
 }
 
 // driveFromGraph converts a Graph drive into the provider neutral root.
+//
+// The driveType tells the two families apart. The account's own OneDrive is
+// "personal" on a personal account and "business" on a work/school one; every
+// SharePoint library is "documentLibrary". Folding the work OneDrive into
+// document_library is exactly what made the picker show an empty "OneDrive"
+// select and list the account's own drive under "SharePoint library" (see
+// web/src/components/FolderPicker.vue).
 func driveFromGraph(drive graphmodels.Driveable) providers.Drive {
 	kind := "document_library"
-	if strings.EqualFold(deref(drive.GetDriveType()), "personal") {
-		kind = "personal"
+	switch driveType := strings.ToLower(deref(drive.GetDriveType())); driveType {
+	case "personal", "business":
+		kind = driveType
 	}
 	return providers.Drive{
 		ID:   deref(drive.GetId()),
 		Name: deref(drive.GetName()),
 		Kind: kind,
+		// Owner carries the drive URL. Every SharePoint site calls its default
+		// library "Documents", so the name alone cannot tell two of them apart;
+		// the URL is what the picker labels them with (a searched site already
+		// overwrites both fields with its own name and webUrl, see siteDrive).
+		Owner: deref(drive.GetWebUrl()),
 	}
 }
 

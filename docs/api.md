@@ -27,6 +27,7 @@ and protected by the signed `state` parameter instead.
   | `forbidden` | 403 | throttled login, captcha refused, account not on the allow-list |
   | `not_found` | 404 | unknown id, unknown endpoint under `/api` |
   | `busy` | 409 | a run for this job is already in flight |
+  | `rate_limited` | 429 | the provider throttled the call and the automatic retries did not clear it (wait and try again) |
   | `reconnect` | 412 | the provider token cannot be used any more (reconnect the account) |
   | `consent_required` | 412 | the provider permissions were refused or the tenant-wide admin consent is missing: the setup guide is the fix, not a retry |
   | `not_configured` | 424 | missing provider client, or a build without the SPA |

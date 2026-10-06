@@ -26,8 +26,12 @@ const (
 	// the tenant-wide admin consent is missing). The UI answers with the setup
 	// guide link instead of a retry button.
 	codeConsentRequired = "consent_required"
-	codeNotConfigured   = "not_configured"
-	codeInternal        = "internal"
+	// codeRateLimited means the provider throttled the call and the retries did
+	// not clear it: the fix is to wait, which the UI says instead of showing a
+	// server fault.
+	codeRateLimited   = "rate_limited"
+	codeNotConfigured = "not_configured"
+	codeInternal      = "internal"
 	// codeDeliveryFailed is specific to the notification test endpoint: the
 	// channel is valid but the remote end refused it, so the operator needs the
 	// reason (codeInternal would hide it behind "check the server logs").
@@ -77,6 +81,11 @@ func statusFor(err error) int {
 		// Same family as ErrReconnect: the request is understood, and the fix
 		// is an action in the provider console, not a retry of the request.
 		return http.StatusPreconditionFailed
+	case errors.Is(err, providers.ErrRateLimited):
+		// The provider throttled the call and the retries did not clear it.
+		// The request is understood and waiting is the fix, which 429 says
+		// better than a 500.
+		return http.StatusTooManyRequests
 	case errors.Is(err, services.ErrNotConfigured):
 		return http.StatusFailedDependency
 	case errors.Is(err, http.ErrHandlerTimeout):
@@ -109,6 +118,8 @@ func codeFor(err error) string {
 		return codeReconnect
 	case errors.Is(err, services.ErrConsent):
 		return codeConsentRequired
+	case errors.Is(err, providers.ErrRateLimited):
+		return codeRateLimited
 	case errors.Is(err, services.ErrNotConfigured):
 		return codeNotConfigured
 	default:

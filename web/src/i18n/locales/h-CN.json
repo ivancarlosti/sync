@@ -215,7 +215,8 @@
     "missingCapabilities": "此账号在这些权限存在之前已连接：重新连接即可授予。",
     "reconnect": "重新连接",
     "reconnectHint": "重新连接账号会应用此版本所申请的权限。",
-    "error_consent_required": "提供方拒绝了这些权限。请在设置指南中授予管理员同意，然后重新连接账号。"
+    "error_consent_required": "提供方拒绝了这些权限。请在设置指南中授予管理员同意，然后重新连接账号。",
+    "error_rate_limited": "提供方正对此账号限流。Sync 会自动重试；若持续出现，请等待几分钟后再次运行任务。"
   },
   "browser": {
     "title": "文件夹浏览器",

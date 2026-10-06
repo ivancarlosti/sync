@@ -201,7 +201,8 @@
     "missingCapabilities": "Esta conta foi conectada antes destas permissões existirem: reconecte-a para concedê-las.",
     "reconnect": "Reconectar",
     "reconnectHint": "Conectar a conta novamente aplica as permissões que esta versão solicita.",
-    "error_consent_required": "O provedor recusou as permissões. Conceda o consentimento de administrador pelo guia de configuração e conecte a conta novamente."
+    "error_consent_required": "O provedor recusou as permissões. Conceda o consentimento de administrador pelo guia de configuração e conecte a conta novamente.",
+    "error_rate_limited": "O provedor está limitando as solicitações desta conta. O Sync tenta novamente por conta própria; se persistir, aguarde alguns minutos e execute a tarefa de novo."
   },
   "browser": {
     "title": "Navegador de pastas",

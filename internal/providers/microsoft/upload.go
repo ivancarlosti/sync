@@ -166,7 +166,21 @@ func (p *Provider) putChunk(ctx context.Context, session string, chunk []byte, o
 	httpRequest.Header.Set("Content-Range",
 		fmt.Sprintf("bytes %d-%d/%d", offset, offset+int64(len(chunk))-1, total))
 
-	response, err := p.streaming.Do(httpRequest)
+	// A throttled chunk is retried with the same Content-Range and the same
+	// bytes: the upload protocol expects an unacknowledged range to be re-PUT,
+	// so the default policy applies (see providers.DoWithRetry).
+	response, err := providers.DoWithRetry(ctx, providers.RetryPolicy{},
+		func(ctx context.Context) (*http.Response, error) {
+			attempt := httpRequest.Clone(ctx)
+			if httpRequest.GetBody != nil {
+				replay, err := httpRequest.GetBody()
+				if err != nil {
+					return nil, err
+				}
+				attempt.Body = replay
+			}
+			return p.streaming.Do(attempt)
+		})
 	if err != nil {
 		return nil, fmt.Errorf("microsoft graph: sending bytes %d-%d failed: %w",
 			offset, offset+int64(len(chunk))-1, err)

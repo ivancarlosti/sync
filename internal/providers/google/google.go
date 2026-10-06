@@ -52,7 +52,9 @@ func (p *Provider) Name() models.ProviderName { return models.ProviderGoogle }
 // admin.directory.rolemanagement.readonly scopes need a Google Workspace domain
 // and an administrator identity; they are requested up front so a connection
 // made today is already ready for the directory features (see
-// docs/app-registration.md).
+// docs/app-registration.md). A personal Google account has no domain to
+// administer, so it cannot grant them: only a Workspace account can be
+// connected.
 func (p *Provider) Scopes() []string {
 	return providers.ScopesOf(p.Permissions())
 }

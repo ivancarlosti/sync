@@ -35,6 +35,12 @@ var ErrUnsupported = errors.New("operation not supported by this provider")
 // docs/providers.md — identifiers).
 var ErrInvalidIdentifier = errors.New("invalid provider identifier")
 
+// ErrRateLimited marks a provider refusal that means "too many requests": the
+// provider throttled the call and the retries (DoWithRetry) did not clear it
+// within their budget. Waiting is the fix, which is why the layers above answer
+// "try again later" instead of a server fault.
+var ErrRateLimited = errors.New("provider is rate limiting the account")
+
 // Credentials is the OAuth client used against one provider. Values come from
 // the environment or from Admin > Providers (database override wins).
 type Credentials struct {
@@ -92,7 +98,11 @@ type Account struct {
 type Drive struct {
 	ID   string
 	Name string
-	// Kind is one of: personal, shared, document_library, site.
+	// Kind is one of: personal, business, shared, document_library, site.
+	// personal and business are the two flavours of the account's own OneDrive
+	// (a personal account vs a work/school one) and are grouped together by
+	// the folder picker; document_library and site are SharePoint libraries;
+	// shared is a Google Shared Drive.
 	Kind string
 	// Owner is an optional human readable owner (Microsoft shared drives).
 	Owner string

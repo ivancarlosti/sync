@@ -73,8 +73,10 @@ Key types:
   Microsoft only. `Configured()` requires all three of id/secret/redirect.
 * `Tokens{AccessToken, RefreshToken, TokenType, Expiry, Scopes}`; `Expired(now)`
   applies a two minute safety margin.
-* `Drive{ID, Name, Kind, Owner}` with `Kind` one of `personal`, `shared`,
-  `document_library`, `site`.
+* `Drive{ID, Name, Kind, Owner}` with `Kind` one of `personal`, `business`,
+  `shared`, `document_library`, `site` (`personal` and `business` are the two
+  flavours of the account's own OneDrive, a personal account vs a work/school
+  one; the picker groups them together).
 * `Item{ID, Name, Path, ParentID, IsDir, Size, ModifiedAt, MimeType, Hash,
   NativeDoc, Shortcut}` — `Path` is filled in by the engine (relative to the
   synchronised root), `Hash` is the provider checksum (Google `md5Checksum`,
@@ -118,6 +120,27 @@ Sentinel errors: `providers.ErrNotFound` (the engine records a deletion),
 `providers.ErrUnsupported` (a provider cannot express the operation) and
 `providers.ErrInvalidIdentifier` (a caller handed the provider an identifier it
 refuses to put into a request → `400`/`validation`).
+
+**Throttling is retried before it becomes an error.** Every call a provider
+issues with its own HTTP client — Google metadata, downloads and session
+initiation, and the two Microsoft byte transfers (`Download`, and each chunk of
+an upload session) — goes through `providers.DoWithRetry`
+(`internal/providers/retry.go`): a `429`, a `5xx`, and (Google only) the `403`
+the Drive API answers a quota or rate excess with (`errors[].reason` ∈
+`rateLimitExceeded`, `userRateLimitExceeded`, `quotaExceeded`,
+`sharingRateLimitExceeded`, `dailyLimitExceeded`) are retried up to
+`DefaultMaxAttempts` (5) times, waiting for the `Retry-After` the server asked
+for when it sent one and an exponential backoff with equal jitter otherwise
+(`DefaultBaseDelay` 500 ms, capped at `DefaultMaxDelay` 30 s). The waiting is
+context aware, so a cancelled run stops at once. Two things are deliberately
+**not** retried: a transport error (the helper cannot know whether a request
+that may have reached the server is safe to repeat) and a body that cannot be
+replayed — the bytes of an upload, which are the caller's stream. Microsoft
+metadata does not need this: Kiota's pipeline already retries it. When the
+budget is spent on a throttle the caller receives the provider's last answer,
+which `errors.Is(err, providers.ErrRateLimited)` recognises → `429`/
+`rate_limited` in the API, which the SPA translates with
+`accounts.error_rate_limited`.
 
 ## 2. Credential resolution (environment vs Admin > Providers)
 
@@ -211,13 +234,15 @@ which is how a deletion detected during a run is distinguished from a failure.
   `provider` of the account): a Google account gets one *Drive* select holding
   My Drive and its Shared Drives, and the top level of a Shared Drive is listed
   by the drive id — the `root` alias names the My Drive root only. A Microsoft
-  365 account instead gets a *OneDrive* select plus, under the site field, a
-  separate *SharePoint library* select. That field lists the SharePoint
-  libraries of the tenant (`$search=*` on open, `$search=<q>` while typing) and
-  resolves a pasted SharePoint URL through
+  365 account instead gets a *OneDrive* select — the account's own drive, tagged
+  `personal` on a personal account and `business` on a work/school one — plus,
+  under the site field, a separate *SharePoint library* select. That field lists
+  the SharePoint libraries of the tenant (`$search=*` on open, `$search=<q>`
+  while typing) and resolves a pasted SharePoint URL through
   `POST /api/accounts/:id/sites/resolve` when the search does not surface a
-  library; it is only rendered for Microsoft, which is the only provider with the
-  capability.
+  library. Every library is labelled with the site it lives in, because each site
+  names its default library `Documents`; it is only rendered for Microsoft, which
+  is the only provider with the capability.
 * **Admin > Providers** — client id, client secret, redirect URI, tenant
   (Microsoft), the current `source`, the exact redirect URI to paste into the
   provider console and the tenant-wide consent state (Microsoft).

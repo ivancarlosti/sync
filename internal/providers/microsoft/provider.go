@@ -319,6 +319,17 @@ func (e *graphError) Error() string {
 	return fmt.Sprintf("microsoft graph api: http %d: %s", e.Status, e.Message)
 }
 
+// Is lets errors.Is recognise a throttle Graph kept refusing after the retries
+// (HTTP 429, or 503 with a Retry-After), so the layers above can answer "try
+// again later" instead of a server fault. The classification does not wrap the
+// error, which keeps IsNotFound working.
+func (e *graphError) Is(target error) bool {
+	if target != providers.ErrRateLimited {
+		return false
+	}
+	return e.Status == http.StatusTooManyRequests || e.Status == http.StatusServiceUnavailable
+}
+
 // decodeGraphError turns a non-2xx response into a *graphError, unwrapping the
 // standard {"error":{"code":...,"message":...}} envelope when present.
 func decodeGraphError(resp *http.Response) error {

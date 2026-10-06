@@ -98,6 +98,16 @@ Two things a permission does **not** buy:
   with a narrower set once (an old release, a manual URL), the union of both
   grants is what Google reports back — and Sync reports the capabilities of that
   union.
+* **A personal Google account (`@gmail.com`) cannot be connected.** The
+  always-on scope set asks for `admin.directory.*` and `apps.licensing`, which
+  only exist for a Workspace domain, so Google refuses the authorization request
+  of an account that has no domain to administer (`invalid_scope` /
+  `admin_consent_required` in the authorization answer). This is a consequence of
+  the always-on scope set, not a limitation of the flow — the Drive capability
+  alone would work, but a stored grant that cannot satisfy the directory
+  capabilities would have to be reconnected as soon as one is used. Use a
+  Workspace account instead (a dedicated administrator account, see the note
+  above).
 
 ## 3. Microsoft 365
 

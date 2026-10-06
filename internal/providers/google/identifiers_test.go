@@ -213,11 +213,13 @@ func TestProviderAcceptsDriveIdentifiers(t *testing.T) {
 	}
 }
 
-// TestChildrenOfASharedDriveRootAddressesTheDrive pins the fix for the folder
-// picker of a Shared Drive: the "root" alias names the My Drive root (Drive
-// documents parents.isRoot as true for that folder alone), so the top level of a
-// shared drive has to be filtered by the drive id — which is the id of its root
-// folder — and the listing must not be widened to My Drive.
+// TestChildrenOfASharedDriveRootAddressesTheDrive pins the folder picker of a
+// Shared Drive: the "root" alias names the My Drive root (Drive documents
+// parents.isRoot as true for that folder alone), so the top level of a shared
+// drive has to be filtered by the drive id — which is the id of its root folder
+// — and the listing must be scoped to that one drive (corpora=drive). Drive
+// refuses a listing that carries a driveId without includeItemsFromAllDrives
+// (HTTP 403, includeTeamDriveItemsRequired), so that flag must be present.
 func TestChildrenOfASharedDriveRootAddressesTheDrive(t *testing.T) {
 	ctx := context.Background()
 	creds := providers.Credentials{}
@@ -239,15 +241,48 @@ func TestChildrenOfASharedDriveRootAddressesTheDrive(t *testing.T) {
 		for _, want := range []string{
 			"corpora=drive",
 			"driveId=" + shared,
+			"includeItemsFromAllDrives=true",
 			"'" + shared + "' in parents",
 		} {
 			if !strings.Contains(target, want) {
 				t.Errorf("Children(%q, %q) requested %q, want it to carry %q", shared, folderID, transport.targets[0], want)
 			}
 		}
-		for _, unwanted := range []string{"'root' in parents", "includeItemsFromAllDrives"} {
+		for _, unwanted := range []string{"'root' in parents", "corpora=user"} {
 			if strings.Contains(target, unwanted) {
 				t.Errorf("Children(%q, %q) requested %q, want no %q", shared, folderID, transport.targets[0], unwanted)
+			}
+		}
+	}
+}
+
+// TestChildrenOfMyDriveDoesNotWidenToSharedDrives is the other half of the same
+// contract: the My Drive listing selects the user corpus and must not carry the
+// shared-drive flags (includeItemsFromAllDrives widens an unscoped listing to the
+// shared drives, which is exactly the leak the shared-drive fix removed).
+func TestChildrenOfMyDriveDoesNotWidenToSharedDrives(t *testing.T) {
+	ctx := context.Background()
+	creds := providers.Credentials{}
+	tokens := &providers.Tokens{AccessToken: "test-token"}
+
+	for _, driveID := range []string{"", providers.DriveRoot, MyDrive} {
+		transport := &recordingTransport{}
+		if _, err := testProvider(transport).Children(ctx, creds, tokens, driveID, providers.DriveRoot); err != nil {
+			t.Fatalf("Children(%q, root) = %v, want no error", driveID, err)
+		}
+		if len(transport.targets) != 1 {
+			t.Fatalf("Children(%q, root) issued %d requests, want 1", driveID, len(transport.targets))
+		}
+		target, err := url.QueryUnescape(transport.targets[0])
+		if err != nil {
+			t.Fatalf("cannot decode %q: %v", transport.targets[0], err)
+		}
+		if !strings.Contains(target, "corpora=user") {
+			t.Errorf("Children(%q, root) requested %q, want it to carry corpora=user", driveID, transport.targets[0])
+		}
+		for _, unwanted := range []string{"includeItemsFromAllDrives", "driveId="} {
+			if strings.Contains(target, unwanted) {
+				t.Errorf("Children(%q, root) requested %q, want no %q", driveID, transport.targets[0], unwanted)
 			}
 		}
 	}
