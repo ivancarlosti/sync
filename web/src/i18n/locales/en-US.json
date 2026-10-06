@@ -14,6 +14,8 @@
     "close": "Close",
     "confirm": "Confirm",
     "back": "Back",
+    "next": "Next",
+    "previous": "Previous",
     "search": "Search",
     "refresh": "Refresh",
     "yes": "Yes",
@@ -122,7 +124,8 @@
     "range": "{min} to {max}",
     "differentAccounts": "The source and the destination must be different accounts.",
     "differentFolders": "Pick a different destination folder.",
-    "selectAccount": "Select an account",
+    "selectSourceAccount": "Select a source account",
+    "selectDestinationAccount": "Select a destination account",
     "selectFolder": "Select a folder"
   },
   "dashboard": {
@@ -288,6 +291,7 @@
     "history": "History",
     "editTitle": "Edit job",
     "createTitle": "New job",
+    "stepOf": "Step {current} of {total}",
     "steps": {
       "details": "Details",
       "source": "Source",

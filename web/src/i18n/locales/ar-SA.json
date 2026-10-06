@@ -14,6 +14,8 @@
     "close": "إغلاق",
     "confirm": "تأكيد",
     "back": "رجوع",
+    "next": "التالي",
+    "previous": "السابق",
     "search": "بحث",
     "refresh": "تحديث",
     "yes": "نعم",
@@ -136,7 +138,8 @@
     "range": "من {min} إلى {max}",
     "differentAccounts": "يجب أن يكون المصدر والهدف حسابين مختلفين.",
     "differentFolders": "اختر مجلد هدف مختلفًا.",
-    "selectAccount": "اختر حسابًا",
+    "selectSourceAccount": "اختر حساب المصدر",
+    "selectDestinationAccount": "اختر حساب الوجهة",
     "selectFolder": "اختر مجلدًا"
   },
   "dashboard": {
@@ -302,6 +305,7 @@
     "history": "السجل",
     "editTitle": "تعديل المهمة",
     "createTitle": "مهمة جديدة",
+    "stepOf": "الخطوة {current} من {total}",
     "steps": {
       "details": "التفاصيل",
       "source": "المصدر",

@@ -14,6 +14,8 @@
     "close": "Fermer",
     "confirm": "Confirmer",
     "back": "Retour",
+    "next": "Suivant",
+    "previous": "Précédent",
     "search": "Rechercher",
     "refresh": "Actualiser",
     "yes": "Oui",
@@ -122,7 +124,8 @@
     "range": "{min} à {max}",
     "differentAccounts": "La source et la destination doivent être des comptes différents.",
     "differentFolders": "Choisissez un dossier de destination différent.",
-    "selectAccount": "Sélectionnez un compte",
+    "selectSourceAccount": "Sélectionnez un compte source",
+    "selectDestinationAccount": "Sélectionnez un compte de destination",
     "selectFolder": "Sélectionnez un dossier"
   },
   "dashboard": {
@@ -288,6 +291,7 @@
     "history": "Historique",
     "editTitle": "Modifier la tâche",
     "createTitle": "Nouvelle tâche",
+    "stepOf": "Étape {current} sur {total}",
     "steps": {
       "details": "Détails",
       "source": "Source",

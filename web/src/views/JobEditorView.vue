@@ -7,7 +7,7 @@
 // is a dialog instead of a screen: changing the destination must not throw away a
 // half-filled form. Saving always leaves for the list, which is where the result
 // of the change (last status, next run) is visible.
-import { ArrowLeft, FolderInput, FolderOutput, Info, Save, Settings2 } from '@lucide/vue';
+import { ArrowLeft, ArrowRight, FolderInput, FolderOutput, Info, Save, Settings2 } from '@lucide/vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
@@ -88,6 +88,24 @@ const tabs = computed<TabItem[]>(() => [
   { value: 'options', label: t('jobs.steps.options'), icon: Settings2 },
 ]);
 
+/** STEP_ORDER is the four tabs in the order the operator walks them. */
+const STEP_ORDER = ['details', 'source', 'destination', 'options'] as const;
+
+/**
+ * STEP_ERROR_KEYS maps a step to the errors it owns: a message is shown only on
+ * the step that can fix it, so the source account error never appears under the
+ * destination select.
+ */
+const STEP_ERROR_KEYS: Record<string, string[]> = {
+  details: ['name'],
+  source: ['sourceAccount', 'source'],
+  destination: ['destinationAccount', 'destination'],
+  options: [],
+};
+
+/** stepIndex is the position of the current tab, 0-based. */
+const stepIndex = computed(() => Math.max(0, (STEP_ORDER as readonly string[]).indexOf(tab.value)));
+
 /** accountOptions are the accounts a side of the job can point at. */
 const accountOptions = computed<SelectOption[]>(() =>
   accounts.value.map((account) => ({
@@ -166,25 +184,55 @@ async function load(): Promise<void> {
 }
 
 /**
- * validate mirrors the contract of `applyJobInput` for the cases the operator can
- * fix on this screen. The server validates again; this only avoids a round trip.
+ * collectErrors mirrors the contract of `applyJobInput` for the cases the
+ * operator can fix on this screen, keyed by the field they belong to. The server
+ * validates again; this only avoids a round trip.
  */
-function validate(): boolean {
+function collectErrors(): Record<string, string> {
   const found: Record<string, string> = {};
   if (draft.value.name.trim() === '') {
     found.name = 'common.requiredField';
   }
-  if (draft.value.source_account_id <= 0 || draft.value.destination_account_id <= 0) {
-    found.accounts = 'validation.selectAccount';
-  } else if (draft.value.source_account_id === draft.value.destination_account_id) {
-    found.accounts = 'validation.differentAccounts';
+  if (draft.value.source_account_id <= 0) {
+    found.sourceAccount = 'validation.selectSourceAccount';
   }
   if (draft.value.source_drive_id.trim() === '') {
     found.source = 'validation.selectFolder';
   }
+  if (draft.value.destination_account_id <= 0) {
+    found.destinationAccount = 'validation.selectDestinationAccount';
+  } else if (draft.value.destination_account_id === draft.value.source_account_id) {
+    found.destinationAccount = 'validation.differentAccounts';
+  }
   if (draft.value.destination_drive_id.trim() === '') {
     found.destination = 'validation.selectFolder';
   }
+  return found;
+}
+
+/** complete reports whether every required field of the whole form is filled in. */
+const complete = computed(() => Object.keys(collectErrors()).length === 0);
+
+/** validateStep checks one step alone, so "Next" only blames the current tab. */
+function validateStep(step: string): boolean {
+  const found = collectErrors();
+  const keys = STEP_ERROR_KEYS[step] ?? [];
+  for (const key of keys) {
+    delete errors.value[key];
+  }
+  let ok = true;
+  for (const key of keys) {
+    if (found[key]) {
+      errors.value[key] = found[key];
+      ok = false;
+    }
+  }
+  return ok;
+}
+
+/** validate checks the whole form and points the operator at the first problem. */
+function validate(): boolean {
+  const found = collectErrors();
   errors.value = found;
   if (Object.keys(found).length === 0) {
     return true;
@@ -192,12 +240,54 @@ function validate(): boolean {
   // Send the operator to the tab that holds the first problem.
   if (found.name) {
     tab.value = 'details';
-  } else if (found.accounts || found.source) {
+  } else if (found.sourceAccount || found.source) {
     tab.value = 'source';
-  } else if (found.destination) {
+  } else if (found.destinationAccount || found.destination) {
     tab.value = 'destination';
   }
   return false;
+}
+
+/**
+ * nextStep advances one step after checking it. On the last step there is nowhere
+ * to go, so it falls back to the full check, which surfaces the first problem the
+ * operator skipped past by clicking a tab directly.
+ */
+function nextStep(): void {
+  if (stepIndex.value < STEP_ORDER.length - 1) {
+    if (!validateStep(tab.value)) {
+      return;
+    }
+    tab.value = STEP_ORDER[stepIndex.value + 1];
+    return;
+  }
+  validate();
+}
+
+/** previousStep moves one step back. */
+function previousStep(): void {
+  if (stepIndex.value > 0) {
+    tab.value = STEP_ORDER[stepIndex.value - 1];
+  }
+}
+
+/** primaryLabel reads "Next" while the form is incomplete and Create/Save once it is. */
+const primaryLabel = computed(() =>
+  complete.value ? (editing.value ? t('common.save') : t('common.create')) : t('common.next'),
+);
+
+/** stepLabel is the "Step x of N" counter of the footer. */
+const stepLabel = computed(() =>
+  t('jobs.stepOf', { current: stepIndex.value + 1, total: STEP_ORDER.length }),
+);
+
+/** primaryAction advances while the form is incomplete and saves once it is complete. */
+function primaryAction(): void {
+  if (complete.value) {
+    void submit();
+    return;
+  }
+  nextStep();
 }
 
 /** submit creates or updates the job and returns to the list. */
@@ -242,6 +332,22 @@ watch(
       account('source')?.provider,
       account('destination')?.provider,
     );
+  },
+);
+
+// A message about a field goes away as soon as the operator fixes that field, the
+// same way `applyFolders` clears the folder messages when a folder is picked.
+watch(
+  () => draft.value.name,
+  () => {
+    delete errors.value.name;
+  },
+);
+watch(
+  () => [draft.value.source_account_id, draft.value.destination_account_id],
+  () => {
+    delete errors.value.sourceAccount;
+    delete errors.value.destinationAccount;
   },
 );
 
@@ -357,11 +463,11 @@ onMounted(load);
                 id="job-source-account"
                 v-model="sourceAccountId"
                 :options="accountOptions"
-                :placeholder="t('validation.selectAccount')"
+                :placeholder="t('validation.selectSourceAccount')"
                 :disabled="saving"
               />
-              <p v-if="errors.accounts" class="text-xs text-destructive">
-                {{ t(errors.accounts) }}
+              <p v-if="errors.sourceAccount" class="text-xs text-destructive">
+                {{ t(errors.sourceAccount) }}
               </p>
             </div>
 
@@ -401,11 +507,11 @@ onMounted(load);
                 id="job-destination-account"
                 v-model="destinationAccountId"
                 :options="accountOptions"
-                :placeholder="t('validation.selectAccount')"
+                :placeholder="t('validation.selectDestinationAccount')"
                 :disabled="saving"
               />
-              <p v-if="errors.accounts" class="text-xs text-destructive">
-                {{ t(errors.accounts) }}
+              <p v-if="errors.destinationAccount" class="text-xs text-destructive">
+                {{ t(errors.destinationAccount) }}
               </p>
             </div>
 
@@ -496,16 +602,25 @@ onMounted(load);
       </template>
     </Tabs>
 
-    <!-- The footer sits outside the tabs: saving is possible from every step. -->
+    <!-- The footer sits outside the tabs: the operator walks them with Next and,
+         once every required field is filled in, saves from any step. -->
     <div
       v-if="!loading"
-      class="flex flex-wrap items-center justify-end gap-2 rounded-lg border border-border bg-card p-4"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-card p-4"
     >
-      <Button variant="ghost" :disabled="saving" @click="back">{{ t('common.cancel') }}</Button>
-      <Button :loading="saving" @click="submit">
-        <Save v-if="!saving" class="h-4 w-4" aria-hidden="true" />
-        {{ editing ? t('common.save') : t('common.create') }}
-      </Button>
+      <span class="text-xs text-muted-foreground">{{ stepLabel }}</span>
+      <div class="flex flex-wrap items-center gap-2">
+        <Button variant="ghost" :disabled="saving" @click="back">{{ t('common.cancel') }}</Button>
+        <Button variant="outline" :disabled="saving || stepIndex === 0" @click="previousStep">
+          <ArrowLeft class="h-4 w-4" aria-hidden="true" />
+          {{ t('common.previous') }}
+        </Button>
+        <Button :loading="saving" @click="primaryAction">
+          <Save v-if="!saving && complete" class="h-4 w-4" aria-hidden="true" />
+          <ArrowRight v-else-if="!saving" class="h-4 w-4" aria-hidden="true" />
+          {{ primaryLabel }}
+        </Button>
+      </div>
     </div>
 
     <FolderPicker

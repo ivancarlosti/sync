@@ -14,6 +14,8 @@
     "close": "बंद करें",
     "confirm": "पुष्टि करें",
     "back": "वापस",
+    "next": "आगे",
+    "previous": "पिछला",
     "search": "खोजें",
     "refresh": "ताज़ा करें",
     "yes": "हाँ",
@@ -136,7 +138,8 @@
     "range": "{min} से {max}",
     "differentAccounts": "स्रोत और गंतव्य अलग-अलग खाते होने चाहिए।",
     "differentFolders": "ऐसा गंतव्य फ़ोल्डर चुनें जो स्रोत से अलग हो।",
-    "selectAccount": "खाता चुनें",
+    "selectSourceAccount": "स्रोत खाता चुनें",
+    "selectDestinationAccount": "गंतव्य खाता चुनें",
     "selectFolder": "फ़ोल्डर चुनें"
   },
   "dashboard": {
@@ -302,6 +305,7 @@
     "history": "इतिहास",
     "editTitle": "कार्य संपादित करें",
     "createTitle": "नया कार्य",
+    "stepOf": "चरण {current} / {total}",
     "steps": {
       "details": "विवरण",
       "source": "स्रोत",
