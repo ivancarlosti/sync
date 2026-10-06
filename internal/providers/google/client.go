@@ -221,12 +221,16 @@ func withParam(raw, key, value string) string {
 }
 
 // listURL builds a paginated list URL carrying the shared listing options
-// (shared drive support plus the requested projection).
+// (shared drive support plus the requested projection). It deliberately does not
+// set includeItemsFromAllDrives: that legacy flag widens a listing to both My
+// Drive and the shared drives, which contradicts the single corpus every caller
+// selects through withDriveScope (corpora=user, or corpora=drive&driveId=…). Used
+// against a shared drive it made the query answer the My Drive root instead of
+// that drive, which is why the folder picker kept showing My Drive contents.
 func listURL(path, fields string) string {
 	target := apiBase + path
 	target = withParam(target, "fields", fields)
 	target = withParam(target, "supportsAllDrives", "true")
-	target = withParam(target, "includeItemsFromAllDrives", "true")
 	return target
 }
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -212,6 +213,99 @@ func TestProviderAcceptsDriveIdentifiers(t *testing.T) {
 	}
 }
 
+// TestChildrenOfASharedDriveRootAddressesTheDrive pins the fix for the folder
+// picker of a Shared Drive: the "root" alias names the My Drive root (Drive
+// documents parents.isRoot as true for that folder alone), so the top level of a
+// shared drive has to be filtered by the drive id — which is the id of its root
+// folder — and the listing must not be widened to My Drive.
+func TestChildrenOfASharedDriveRootAddressesTheDrive(t *testing.T) {
+	ctx := context.Background()
+	creds := providers.Credentials{}
+	tokens := &providers.Tokens{AccessToken: "test-token"}
+	const shared = "shared-drive-1"
+
+	for _, folderID := range []string{"", providers.DriveRoot} {
+		transport := &recordingTransport{}
+		if _, err := testProvider(transport).Children(ctx, creds, tokens, shared, folderID); err != nil {
+			t.Fatalf("Children(%q, %q) = %v, want no error", shared, folderID, err)
+		}
+		if len(transport.targets) != 1 {
+			t.Fatalf("Children(%q, %q) issued %d requests, want 1", shared, folderID, len(transport.targets))
+		}
+		target, err := url.QueryUnescape(transport.targets[0])
+		if err != nil {
+			t.Fatalf("cannot decode %q: %v", transport.targets[0], err)
+		}
+		for _, want := range []string{
+			"corpora=drive",
+			"driveId=" + shared,
+			"'" + shared + "' in parents",
+		} {
+			if !strings.Contains(target, want) {
+				t.Errorf("Children(%q, %q) requested %q, want it to carry %q", shared, folderID, transport.targets[0], want)
+			}
+		}
+		for _, unwanted := range []string{"'root' in parents", "includeItemsFromAllDrives"} {
+			if strings.Contains(target, unwanted) {
+				t.Errorf("Children(%q, %q) requested %q, want no %q", shared, folderID, transport.targets[0], unwanted)
+			}
+		}
+	}
+}
+
+// TestWritesParentTheSharedDriveRoot is the write half of the same fix: a job
+// that creates into the top level of a shared drive must parent the new item with
+// the drive id, because "root" would put it in My Drive.
+func TestWritesParentTheSharedDriveRoot(t *testing.T) {
+	ctx := context.Background()
+	creds := providers.Credentials{}
+	tokens := &providers.Tokens{AccessToken: "test-token"}
+	const shared = "shared-drive-1"
+	parents := `"parents":["` + shared + `"]`
+
+	transport := &recordingTransport{}
+	if _, err := testProvider(transport).CreateFolder(ctx, creds, tokens, shared, providers.DriveRoot, "sub"); err != nil {
+		t.Fatalf("CreateFolder(shared drive root) = %v, want no error", err)
+	}
+	if len(transport.bodies) != 1 || !strings.Contains(transport.bodies[0], parents) {
+		t.Errorf("CreateFolder(shared drive root) sent %v, want the drive id as the parent", transport.bodies)
+	}
+
+	transport = &recordingTransport{}
+	if _, err := testProvider(transport).Upload(ctx, creds, tokens, providers.UploadRequest{
+		DriveID: shared, ParentID: providers.DriveRoot, Name: "note.txt", Body: strings.NewReader("hi"),
+	}); err != nil {
+		t.Fatalf("Upload(shared drive root) = %v, want no error", err)
+	}
+	if len(transport.bodies) == 0 || !strings.Contains(transport.bodies[0], parents) {
+		t.Errorf("Upload(shared drive root) sent %v, want the drive id as the parent", transport.bodies)
+	}
+}
+
+// TestRootParentLeavesTheOtherRootsAlone is the guard rail of the helper: only a
+// real shared drive replaces the alias, so My Drive and a nested folder keep the
+// id they were given.
+func TestRootParentLeavesTheOtherRootsAlone(t *testing.T) {
+	cases := []struct {
+		name     string
+		driveID  string
+		folderID string
+		want     string
+	}{
+		{name: "shared drive root", driveID: "shared-drive-1", folderID: "root", want: "shared-drive-1"},
+		{name: "My Drive by token", driveID: MyDrive, folderID: "root", want: "root"},
+		{name: "My Drive by alias", driveID: providers.DriveRoot, folderID: "root", want: "root"},
+		{name: "no drive", driveID: "", folderID: "root", want: "root"},
+		{name: "nested folder of a shared drive", driveID: "shared-drive-1", folderID: "1AbCdEfGh_-2", want: "1AbCdEfGh_-2"},
+		{name: "no folder", driveID: "shared-drive-1", folderID: "", want: ""},
+	}
+	for _, testCase := range cases {
+		if got := rootParent(testCase.driveID, testCase.folderID); got != testCase.want {
+			t.Errorf("rootParent(%q, %q) = %q, want %q", testCase.driveID, testCase.folderID, got, testCase.want)
+		}
+	}
+}
+
 // forbiddenURLs are request URLs this provider must never send: another host,
 // a host that only ends in the same letters, plain http, a port, credentials in
 // the authority part, a relative URL, a backslash, and a value carrying a
@@ -277,17 +371,26 @@ func testProvider(transport http.RoundTripper) *Provider {
 // recordingTransport answers every request with an empty JSON document (and an
 // upload session URI, which is what the resumable upload needs next) while
 // recording the targets it was asked for: that is what proves whether a value
-// was refused before a request was built.
+// was refused before a request was built. The bodies are kept too, so a test can
+// assert what a write sent in its metadata document.
 type recordingTransport struct {
 	targets []string
+	bodies  []string
 }
 
 // RoundTrip implements http.RoundTripper.
 func (t *recordingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	t.targets = append(t.targets, request.URL.String())
+	body := ""
 	if request.Body != nil {
-		_, _ = io.Copy(io.Discard, request.Body)
+		payload, err := io.ReadAll(request.Body)
+		if err != nil {
+			return nil, err
+		}
+		_ = request.Body.Close()
+		body = string(payload)
 	}
+	t.bodies = append(t.bodies, body)
 	header := http.Header{}
 	header.Set("Content-Type", "application/json")
 	header.Set("Location", "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable&upload_id=session-1")

@@ -71,6 +71,24 @@ func withDriveScope(raw, driveID string) string {
 	return withParam(withParam(raw, "corpora", "drive"), "driveId", driveID)
 }
 
+// rootParent maps the root folder of a drive onto the folder id the Drive API
+// expects, either in a `parents` filter or in the `parents` list of new
+// metadata. The "root" alias names the My Drive root only — Drive documents
+// parents.isRoot as true for that folder alone — so the top level of a shared
+// drive has to be addressed by the drive id, which is the id of the shared
+// drive's root folder. Asking for "'root' in parents" of a shared drive
+// therefore answers the children of My Drive, which is the bug this helper
+// closes.
+func rootParent(driveID, folderID string) string {
+	if folderID != providers.DriveRoot {
+		return folderID
+	}
+	if driveID == "" || driveID == providers.DriveRoot || driveID == MyDrive {
+		return folderID
+	}
+	return driveID
+}
+
 // drivesFields is the projection requested when listing shared drives.
 const drivesFields = "nextPageToken,drives(id,name)"
 
@@ -117,11 +135,14 @@ func (p *Provider) Children(ctx context.Context, _ providers.Credentials, tokens
 	// the `q` filter, the drive into the corpus selection — so both are narrowed
 	// here, in the function that uses them (see identifierPattern). A stored job
 	// or a crafted explorer link cannot turn them into another path or host.
-	if !identifierPattern.MatchString(folderID) {
-		return nil, invalidIdentifierError("folder id", folderID)
-	}
 	if driveID != "" && !optionalIdentifierPattern.MatchString(driveID) {
 		return nil, invalidIdentifierError("drive id", driveID)
+	}
+	// The alias is resolved before the guard below so the id interpolated into
+	// the `q` filter is the one that is validated.
+	folderID = rootParent(driveID, folderID)
+	if !identifierPattern.MatchString(folderID) {
+		return nil, invalidIdentifierError("folder id", folderID)
 	}
 	client := p.client(tokens)
 	base := withDriveScope(listURL("/files", "nextPageToken,files("+itemFields+")"), driveID)

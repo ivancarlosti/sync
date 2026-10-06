@@ -207,11 +207,17 @@ which is how a deletion detected during a run is distinguished from a failure.
   `GET /api/accounts/:id/drives` then
   `GET /api/accounts/:id/drives/:drive/items?folder_id=…`; folders come first,
   then files, both alphabetically. Items with `unsupported: true` are greyed out
-  and cannot be selected. For Microsoft, the site field above the drive selector
-  lists the SharePoint libraries of the tenant (`$search=*` on open, `$search=<q>`
-  while typing) and resolves a pasted SharePoint URL through
+  and cannot be selected. The picker is provider-aware (the editor passes the
+  `provider` of the account): a Google account gets one *Drive* select holding
+  My Drive and its Shared Drives, and the top level of a Shared Drive is listed
+  by the drive id — the `root` alias names the My Drive root only. A Microsoft
+  365 account instead gets a *OneDrive* select plus, under the site field, a
+  separate *SharePoint library* select. That field lists the SharePoint
+  libraries of the tenant (`$search=*` on open, `$search=<q>` while typing) and
+  resolves a pasted SharePoint URL through
   `POST /api/accounts/:id/sites/resolve` when the search does not surface a
-  library.
+  library; it is only rendered for Microsoft, which is the only provider with the
+  capability.
 * **Admin > Providers** — client id, client secret, redirect URI, tenant
   (Microsoft), the current `source`, the exact redirect URI to paste into the
   provider console and the tenant-wide consent state (Microsoft).

@@ -9,9 +9,12 @@
 //
 // A Microsoft account also owns SharePoint libraries, which are not part of
 // `/me/drives`. They are listed through `/accounts/:id/sites`: the search field
-// above the drive selects one of the two delegated calls — a keyword searches
-// the tenant (`$search`), a pasted SharePoint URL resolves that exact site
-// (`/sites/resolve`) — so a library the search does not surface stays reachable.
+// above the SharePoint select chooses one of the two delegated calls — a keyword
+// searches the tenant (`$search`), a pasted SharePoint URL resolves that exact
+// site (`/sites/resolve`) — so a library the search does not surface stays
+// reachable. The select itself lists the libraries, while the personal OneDrive
+// gets its own select next to it: the `provider` prop tells the picker which of
+// the two layouts the account needs.
 import { ArrowUp, Folder, FolderOpen, HardDrive, RefreshCw, Search } from '@lucide/vue';
 import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -23,13 +26,15 @@ import Input from '@/components/ui/Input.vue';
 import Label from '@/components/ui/Label.vue';
 import Select, { type SelectOption } from '@/components/ui/Select.vue';
 import Spinner from '@/components/ui/Spinner.vue';
-import { accounts, type Drive, type FolderItem, messageOf } from '@/lib/api';
+import { accounts, type Drive, type FolderItem, type ProviderName, messageOf } from '@/lib/api';
 import { pathFrom, type FolderSelection } from '@/lib/folders';
 import { formatBytes, formatDateTime } from '@/lib/format';
 
 const props = withDefaults(
   defineProps<{
     accountId: number;
+    /** provider owns the roots: it decides which selects the picker shows. */
+    provider?: ProviderName | '';
     /** purpose titles the dialog: the source and the destination differ. */
     purpose?: 'source' | 'destination';
     /** start* reopens the browser where the job already points. */
@@ -37,7 +42,7 @@ const props = withDefaults(
     startFolderId?: string;
     startFolderPath?: string;
   }>(),
-  { purpose: 'source', startDriveId: '', startFolderId: '', startFolderPath: '' },
+  { provider: '', purpose: 'source', startDriveId: '', startFolderId: '', startFolderPath: '' },
 );
 
 const emit = defineEmits<{ select: [selection: FolderSelection] }>();
@@ -69,25 +74,86 @@ const title = computed(() =>
 );
 
 /**
- * driveOptions merges the drives of the account with its SharePoint sites,
- * deduped by id: `/me/drives` already returns the libraries the user was given
- * access to, and a search adds the rest, so the picker never lists one root
- * twice.
+ * isMicrosoft gates the SharePoint controls: only Microsoft 365 owns libraries,
+ * and only it answers the `/sites` calls, so a Google account must not show a
+ * dead search field.
  */
-const driveOptions = computed<SelectOption[]>(() => {
+const isMicrosoft = computed(() => props.provider === 'microsoft');
+
+/** optionOf renders one root; the kind is the suffix that tells two apart. */
+function optionOf(drive: Drive, withKind: boolean): SelectOption {
+  return {
+    value: drive.id,
+    label: withKind && drive.kind ? `${drive.name} · ${drive.kind}` : drive.name,
+  };
+}
+
+/**
+ * dedupe keeps the first entry of every root and drops an empty id: `/me/drives`
+ * already returns the libraries the user was given access to, and a search adds
+ * the rest, so the picker never lists one root twice.
+ */
+function dedupe(candidates: Drive[], withKind: boolean): SelectOption[] {
   const seen = new Set<string>();
   const options: SelectOption[] = [];
-  for (const drive of [...drives.value, ...sites.value]) {
+  for (const drive of candidates) {
     if (drive.id === '' || seen.has(drive.id)) {
       continue;
     }
     seen.add(drive.id);
-    options.push({
-      value: drive.id,
-      label: drive.kind ? `${drive.name} · ${drive.kind}` : drive.name,
-    });
+    options.push(optionOf(drive, withKind));
   }
   return options;
+}
+
+/**
+ * driveOptions is the single select of every other provider: a Google account
+ * lists My Drive and its Shared Drives together, told apart by their kind.
+ */
+const driveOptions = computed<SelectOption[]>(() => dedupe([...drives.value, ...sites.value], true));
+
+/** oneDriveOptions is the personal root Microsoft accounts always have. */
+const oneDriveOptions = computed<SelectOption[]>(() =>
+  dedupe(
+    drives.value.filter((drive) => drive.kind === 'personal'),
+    false,
+  ),
+);
+
+/**
+ * sharePointOptions holds the libraries: the ones `/me/drives` returned plus the
+ * ones the search above found, deduped so the two collections do not repeat.
+ */
+const sharePointOptions = computed<SelectOption[]>(() =>
+  dedupe([...drives.value.filter((drive) => drive.kind !== 'personal'), ...sites.value], false),
+);
+
+/**
+ * driveModel, oneDriveModel and sharePointModel drive the selects from the one
+ * state that matters, `driveId`: the two Microsoft selects each answer in the
+ * group the current root belongs to and fall back to their placeholder
+ * otherwise, so neither can disagree with the listing below.
+ */
+const driveModel = computed<string | number>({
+  get: () => driveId.value,
+  set: (value) => {
+    void openDrive(String(value));
+  },
+});
+
+const oneDriveModel = computed<string | number>({
+  get: () => (oneDriveOptions.value.some((option) => option.value === driveId.value) ? driveId.value : ''),
+  set: (value) => {
+    void openDrive(String(value));
+  },
+});
+
+const sharePointModel = computed<string | number>({
+  get: () =>
+    sharePointOptions.value.some((option) => option.value === driveId.value) ? driveId.value : '',
+  set: (value) => {
+    void openDrive(String(value));
+  },
 });
 
 const directories = computed(() => items.value.filter((item) => item.is_dir));
@@ -210,9 +276,13 @@ async function listItems(): Promise<void> {
   }
 }
 
-/** openDrive selects a drive (or a site) and lists its root. */
+/**
+ * openDrive selects a drive (or a site) and lists its root. An empty id is the
+ * placeholder of a Microsoft select, which only shows while the other select
+ * holds the selection: it is not a request.
+ */
 async function openDrive(id: string): Promise<void> {
-  if (id === driveId.value) {
+  if (id === '' || id === driveId.value) {
     return;
   }
   driveId.value = id;
@@ -246,20 +316,31 @@ async function goUp(): Promise<void> {
   await goTo(trail.value.length - 2);
 }
 
-/** start loads the drives and reopens the folder the job already points at. */
+/**
+ * start loads the drives and reopens the folder the job already points at.
+ */
 async function start(): Promise<void> {
   reset();
   loadingDrives.value = true;
   try {
     const answer = await accounts.drives(props.accountId);
     drives.value = answer.drives ?? [];
-    void loadSites();
+    if (isMicrosoft.value) {
+      // Only Microsoft owns libraries; the call answers 424 for a provider
+      // without the capability, so it is not worth making.
+      void loadSites();
+    }
     if (drives.value.length === 0) {
       failure.value = t('browser.drivesError');
       return;
     }
     const requested = drives.value.find((drive) => drive.id === props.startDriveId);
-    const selected = requested ?? drives.value[0];
+    // A Microsoft account opens on its OneDrive: that root always exists, while
+    // a library only shows up once a search found it.
+    const fallback = isMicrosoft.value
+      ? (drives.value.find((drive) => drive.kind === 'personal') ?? drives.value[0])
+      : drives.value[0];
+    const selected = requested ?? fallback;
     driveId.value = selected.id;
     trail.value = [{ id: '', name: '' }];
     folderId.value = '';
@@ -311,9 +392,9 @@ onBeforeUnmount(() => {
     <div class="space-y-4">
       <Alert v-if="failure" tone="destructive" :title="t('browser.loadError')" :message="failure" />
 
-      <!-- One field, two calls: a keyword searches the sites of the tenant, a
-           pasted SharePoint URL resolves that exact library. -->
-      <div class="space-y-1.5">
+      <!-- Microsoft only: one field, two calls — a keyword searches the sites of
+           the tenant, a pasted SharePoint URL resolves that exact library. -->
+      <div v-if="isMicrosoft" class="space-y-1.5">
         <Label for="browser-sites">{{ t('browser.siteSearch') }}</Label>
         <div class="flex flex-wrap items-center gap-2">
           <Input
@@ -343,15 +424,43 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="flex flex-wrap items-end gap-2">
-        <div class="min-w-56 flex-1 space-y-1.5">
+        <!-- Every other provider has a single kind of root: Google lists My
+             Drive and its Shared Drives in one select. -->
+        <div v-if="!isMicrosoft" class="min-w-56 flex-1 space-y-1.5">
           <Label for="browser-drive">{{ t('browser.drive') }}</Label>
           <Select
             id="browser-drive"
+            v-model="driveModel"
             :options="driveOptions"
             :disabled="loadingDrives || driveOptions.length === 0"
-            @update:model-value="openDrive(String($event))"
           />
         </div>
+
+        <!-- Microsoft 365 keeps its two kinds of root apart — the personal
+             OneDrive and the SharePoint libraries — so the libraries sit in
+             their own select, under the search field that fills it. -->
+        <template v-else>
+          <div class="min-w-56 flex-1 space-y-1.5">
+            <Label for="browser-onedrive">{{ t('browser.oneDrive') }}</Label>
+            <Select
+              id="browser-onedrive"
+              v-model="oneDriveModel"
+              :options="oneDriveOptions"
+              :placeholder="t('browser.selectRoot')"
+              :disabled="loadingDrives || oneDriveOptions.length === 0"
+            />
+          </div>
+          <div class="min-w-56 flex-1 space-y-1.5">
+            <Label for="browser-sharepoint">{{ t('browser.sharePointLibrary') }}</Label>
+            <Select
+              id="browser-sharepoint"
+              v-model="sharePointModel"
+              :options="sharePointOptions"
+              :placeholder="t('browser.selectRoot')"
+              :disabled="loadingDrives || sharePointOptions.length === 0"
+            />
+          </div>
+        </template>
         <Button
           variant="outline"
           size="icon"

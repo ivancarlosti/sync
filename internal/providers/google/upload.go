@@ -50,11 +50,15 @@ func (p *Provider) upload(ctx context.Context, tokens *providers.Tokens, driveID
 	if itemID != "" && !identifierPattern.MatchString(itemID) {
 		return nil, invalidIdentifierError("item id", itemID)
 	}
-	if parentID != "" && !identifierPattern.MatchString(parentID) {
-		return nil, invalidIdentifierError("parent folder id", parentID)
-	}
 	if driveID != "" && !optionalIdentifierPattern.MatchString(driveID) {
 		return nil, invalidIdentifierError("drive id", driveID)
+	}
+	// A file created in the top level of a shared drive is parented by the drive
+	// id, not by the "root" alias (see rootParent). Resolving the alias before
+	// the guard keeps the parent that is written to the metadata validated.
+	parentID = rootParent(driveID, parentID)
+	if parentID != "" && !identifierPattern.MatchString(parentID) {
+		return nil, invalidIdentifierError("parent folder id", parentID)
 	}
 	ctx, cancel := context.WithTimeout(ctx, uploadTimeout)
 	defer cancel()
@@ -154,11 +158,14 @@ func (p *Provider) CreateFolder(ctx context.Context, _ providers.Credentials, to
 	// The parent id lands in the metadata document of the request below and the
 	// drive id in its query, so both are narrowed here, in the function that
 	// builds it (see identifierPattern).
-	if !identifierPattern.MatchString(parentID) {
-		return nil, invalidIdentifierError("parent folder id", parentID)
-	}
 	if driveID != "" && !optionalIdentifierPattern.MatchString(driveID) {
 		return nil, invalidIdentifierError("drive id", driveID)
+	}
+	// A folder created in the top level of a shared drive is parented by the
+	// drive id, not by the "root" alias (see rootParent).
+	parentID = rootParent(driveID, parentID)
+	if !identifierPattern.MatchString(parentID) {
+		return nil, invalidIdentifierError("parent folder id", parentID)
 	}
 	target := listURL("/files", itemFields)
 	if driveID != "" && driveID != MyDrive {
