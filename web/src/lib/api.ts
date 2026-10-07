@@ -272,6 +272,58 @@ export interface RunItem {
   created_at: string;
 }
 
+/** AuditRun is one execution of a content audit. */
+export interface AuditRun {
+  id: number;
+  account_id: number;
+  account_email: string;
+  provider: ProviderName;
+  drive_id: string;
+  root_folder_id: string;
+  root_path: string;
+  /** max_depth is how many folder levels below the root are analysed; 0 is unlimited. */
+  max_depth: number;
+  status: 'running' | 'success' | 'failed' | 'cancelled' | 'timeout';
+  trigger: 'manual' | 'scheduled';
+  started_at: string;
+  finished_at?: string;
+  duration_ms: number;
+  files: number;
+  folders: number;
+  total_size: number;
+  max_depth_reached: number;
+  /** truncated is true when the report stopped at the node cap. */
+  truncated: boolean;
+  message?: string;
+  running?: boolean;
+  created_at: string;
+}
+
+/** AuditEntry is one node (folder or file) of a report. */
+export interface AuditEntry {
+  id: number;
+  kind: 'folder' | 'file';
+  path: string;
+  name: string;
+  depth: number;
+  size: number;
+  total_size: number;
+  files: number;
+  folders: number;
+  expanded: boolean;
+  modified_at?: string;
+  mime_type?: string;
+}
+
+/** AuditPayload is what POST /api/audits accepts. */
+export interface AuditPayload {
+  account_id: number;
+  drive_id: string;
+  folder_id: string;
+  folder_path: string;
+  depth: number;
+}
+
 /** Stats is the aggregate the dashboard displays. */
 export interface Stats {
   accounts: number;
@@ -523,6 +575,22 @@ export const runs = {
     request<{ run: SyncRun; items: RunItem[] }>({ url: `/runs/${id}`, method: 'GET' }),
   items: (id: number, limit = 200) =>
     request<{ items: RunItem[]; limit: number }>({ url: `/runs/${id}/items`, params: { limit } }),
+};
+
+export const audits = {
+  list: (limit = 50) => request<{ audits: AuditRun[] }>({ url: '/audits', params: { limit } }),
+  start: (payload: AuditPayload) =>
+    request<{ audit: AuditRun }>({ url: '/audits', method: 'POST', data: payload }),
+  get: (id: number) =>
+    request<{ audit: AuditRun; entries: AuditEntry[] }>({ url: `/audits/${id}`, method: 'GET' }),
+  cancel: (id: number) =>
+    request<{ id: number; cancelled: boolean }>({ url: `/audits/${id}/cancel`, method: 'POST' }),
+  /**
+   * exportHref is the browser URL of the CSV download. It is an absolute path
+   * (not a request through the JSON client) because the server answers a file
+   * body the browser saves directly.
+   */
+  exportHref: (id: number) => `/api/audits/${id}/export`,
 };
 
 export const dashboard = {

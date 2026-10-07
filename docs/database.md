@@ -104,6 +104,18 @@ ids of both sides, size, provider hash, both modification times, `last_synced_at
 `last_direction` and `status`. It is what makes deletions, renames and conflicts
 detectable without hashing the whole tree on every run.
 
+`audit_runs` — one row per content audit (see [api.md](api.md) §8): the audited
+root (`account_id`, `account_email`, `provider`, `drive_id`, `root_folder_id`,
+`root_path`), `max_depth`, `status`/`trigger`/timing like `sync_runs`, and the
+summary counters `files`, `folders`, `total_size`, `max_depth_reached`,
+`truncated`.
+
+`audit_entries` — the report of an audit: `audit_id` (indexed) + `kind`
+(`folder` \| `file`), `path`, `name`, `depth`, `size`, `total_size`, `files`,
+`folders` (the subtree totals of a folder), `expanded` (false for a folder at the
+depth boundary), `modified_at` and `mime_type`. The rows are batch-inserted after
+the walk, so their `id` order is the DFS preorder of the tree.
+
 `notification_channels` — see [notifications.md](notifications.md) for the
 `config` documents; the table itself keeps `name`, `type` (`smtp` \| `webhook` \|
 `shoutrrr`), `config` (JSON, secrets encrypted), `events` (JSON array),
@@ -115,6 +127,7 @@ detectable without hashing the whole tree on every run.
 connected_accounts ──1:N──► sync_jobs (source_account_id / destination_account_id)
 sync_jobs ──1:N──► sync_runs ──1:N──► sync_items
 sync_jobs ──1:N──► sync_files          (state, one row per path)
+connected_accounts ──1:N──► audit_runs ──1:N──► audit_entries
 notification_channels ──N:M──► events (JSON array inside the row, no join table)
 settings                              (independent key/value store)
 oauth_states ──► ephemeral (deleted after 10 minutes or on redemption)
@@ -122,8 +135,9 @@ oauth_states ──► ephemeral (deleted after 10 minutes or on redemption)
 
 There are deliberately **no foreign key constraints**
 (`DisableForeignKeyConstraintWhenMigrating`): deleting an account cascades in the
-service layer, where the jobs that use it are removed together with it (that is
-what the accounts screen warns about before confirming).
+service layer, where the jobs that use it (and that account's audits, with their
+report rows) are removed together with it (that is what the accounts screen warns
+about before confirming).
 
 ## 5. Upgrade path
 
@@ -144,6 +158,7 @@ it (an unknown `status` renders as-is in the UI).
 | `sync_runs` + `sync_items` | `runKeepCount = 50` newest runs per job | `Store.PruneRuns` — called on demand through `POST /api/maintenance/runs/prune` (default `keep: 200`, allowed 1…10000) |
 | `oauth_states` | 10 minutes | pruned at boot and through `POST /api/maintenance/oauth/states/prune` |
 | `sync_files` | one row per path, updated in place | nothing to prune; deleting a job deletes its state |
+| `audit_runs` + `audit_entries` | `auditKeepCount = 50` newest audits per account | `Store.PruneAudits` — called on demand through `POST /api/maintenance/audits/prune` (default `keep: 50`, allowed 1…10000) |
 
 ## 7. Backup and restore
 

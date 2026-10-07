@@ -26,7 +26,7 @@ and protected by the signed `state` parameter instead.
   | `unauthorized` | 401 | no/expired session, invalid credentials, redeemed OAuth link |
   | `forbidden` | 403 | throttled login, captcha refused, account not on the allow-list |
   | `not_found` | 404 | unknown id, unknown endpoint under `/api` |
-  | `busy` | 409 | a run for this job is already in flight |
+  | `busy` | 409 | a run for this job, or an audit for this account, is already in flight |
   | `rate_limited` | 429 | the provider throttled the call and the automatic retries did not clear it (wait and try again) |
   | `reconnect` | 412 | the provider token cannot be used any more (reconnect the account) |
   | `consent_required` | 412 | the provider permissions were refused or the tenant-wide admin consent is missing: the setup guide is the fix, not a retry |
@@ -45,9 +45,9 @@ and protected by the signed `state` parameter instead.
   answer covers the second guard, on the request URL itself: if an id ever
   reaches a URL without being narrowed, the provider refuses to send it instead
   of failing with a `500`.
-* **Lists are bounded** — `limit` is clamped (`runs` 50/200, run items 500/1000,
-  items 100/1000); `GET /api/runs` supports `job_id` and `status` filters, the
-  status filter applies to the returned page.
+* **Lists are bounded** — `limit` is clamped (`runs` and `audits` 50/200, run
+  items 500/1000, audit entries 10000, items 100/1000); `GET /api/runs` supports
+  `job_id` and `status` filters, the status filter applies to the returned page.
 * **Secrets** — no endpoint ever returns a token, a client secret, a channel
   secret (masked as `********`) or a SHA/HMAC. `/api/settings/raw` hides every
   `provider.*` key for the same reason.
@@ -177,7 +177,53 @@ only ever caught by the identical-location rule.
 `runView` = the `sync_runs` row plus `running`; `runItemView` =
 `{id, action, path, size, evidence?, created_at}`.
 
-## 8. Notifications
+## 8. Audits
+
+A content audit lists a provider folder tree to a chosen depth and stores the
+resulting report. It is an **async job** like a sync run: the start answers
+**202** and the report is persisted, so reading it (or exporting it) never
+scans the provider again.
+
+| Method | Path | Notes |
+|---|---|---|
+| `POST` | `/api/audits` | body below → **202** `{audit}`; **409 busy** while another audit of the same account is in flight |
+| `GET` | `/api/audits?limit=` | `{audits:[auditView]}` (`limit` default 50, max 200, newest first) |
+| `GET` | `/api/audits/:id` | `{audit, entries:[auditEntryView]}` (entries in DFS preorder, max 10000) |
+| `GET` | `/api/audits/:id/export` | `text/csv; charset=utf-8` download (`Content-Disposition: attachment; filename="audit-<id>.csv"`) |
+| `POST` | `/api/audits/:id/cancel` | `{id, cancelled}` — idempotent |
+
+```json
+{
+  "account_id": 1,
+  "drive_id": "b!xyz",
+  "folder_id": "01ABCD",
+  "folder_path": "SharePoint / Marketing",
+  "depth": 2
+}
+```
+
+`auditView` = the `audit_runs` row (`id, account_id, account_email, provider,
+drive_id, root_folder_id, root_path, max_depth, status, trigger, started_at,
+finished_at, duration_ms, files, folders, total_size, max_depth_reached,
+truncated, message, created_at`) plus `running`. `auditEntryView` = `{id, kind
+(folder|file), path, name, depth, size, total_size, files, folders, expanded,
+modified_at?, mime_type?}`.
+
+Semantics:
+
+* the **selected folder is depth 0**; `max_depth = 0` means **unlimited**, and
+  the requested depth is clamped to `25`;
+* a folder at `depth >= max_depth` is recorded but not expanded
+  (`expanded:false`, subtree sizes `0`);
+* `truncated` is set when the report stopped at the node cap (`10000`);
+* `path` is relative to the audited root (empty for the root itself); a folder
+  carries the aggregate of its subtree.
+
+The CSV columns are `kind,path,name,depth,size,total_size,files,folders,expanded,
+modified_at,mime_type`, prefixed with a UTF-8 BOM so a spreadsheet opens accented
+paths correctly.
+
+## 9. Notifications
 
 | Method | Path | Payload / answer |
 |---|---|---|
@@ -202,7 +248,7 @@ only ever caught by the identical-location rule.
 
 Field schemas, secrets and delivery semantics: [notifications.md](notifications.md).
 
-## 9. Maintenance
+## 10. Maintenance
 
 | Method | Path | Payload / answer |
 |---|---|---|
@@ -210,8 +256,9 @@ Field schemas, secrets and delivery semantics: [notifications.md](notifications.
 | `POST` | `/api/maintenance/tokens/refresh` | `{refreshed}` |
 | `POST` | `/api/maintenance/oauth/states/prune` | `{removed}` |
 | `POST` | `/api/maintenance/runs/prune` | `{keep}` (default 200, 1…10000) → `{keep, pruned:true}` |
+| `POST` | `/api/maintenance/audits/prune` | `{keep}` (default 50, 1…10000) → `{keep, pruned:true}` |
 
-## 10. Worked examples
+## 11. Worked examples
 
 ```bash
 # health (no session needed)
@@ -232,9 +279,15 @@ curl -s -b jar.txt -X POST https://sync.example.com/api/jobs/1/run
 
 # what happened to one path
 curl -s -b jar.txt 'https://sync.example.com/api/runs/42/items?limit=200'
+
+# audit a SharePoint library two levels deep, then download the report
+curl -s -b jar.txt -H 'Content-Type: application/json' \
+  -d '{"account_id":1,"folder_id":"01ABCD","folder_path":"SharePoint / Marketing","depth":2}' \
+  https://sync.example.com/api/audits
+curl -s -b jar.txt -o audit-1.csv https://sync.example.com/api/audits/1/export
 ```
 
-## 11. Contract with the SPA
+## 12. Contract with the SPA
 
 The SPA consumes exactly these shapes through `web/src/lib/api.ts`: typed
 wrappers per endpoint, `codeOf(error)`/`messageOf(error)` to read `code`/`error`

@@ -59,6 +59,13 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		runs.GET("/:id", s.handleGetRun)
 		runs.GET("/:id/items", s.handleListRunItems)
 
+		audits := secured.Group("/audits")
+		audits.GET("", s.handleListAudits)
+		audits.POST("", s.handleStartAudit)
+		audits.GET("/:id", s.handleGetAudit)
+		audits.POST("/:id/cancel", s.handleCancelAudit)
+		audits.GET("/:id/export", s.handleExportAudit)
+
 		settings := secured.Group("/settings")
 		settings.GET("", s.handleGetSettings)
 		settings.PUT("", s.handleUpdateSettings)
@@ -86,6 +93,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		maintenance.POST("/tokens/refresh", s.handleMaintenanceTokens)
 		maintenance.POST("/oauth/states/prune", s.handleMaintenanceOAuthStates)
 		maintenance.POST("/runs/prune", s.handleMaintenanceRuns)
+		maintenance.POST("/audits/prune", s.handleMaintenanceAudits)
 	}
 
 	router.NoRoute(s.spa())

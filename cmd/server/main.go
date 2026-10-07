@@ -143,6 +143,7 @@ func run() error {
 	// final state instead of leaving `running` rows behind for the next boot.
 	deps.Scheduler.Stop()
 	deps.Sync.Wait()
+	deps.Audit.Wait()
 	slog.Info("bye")
 	return nil
 }
@@ -163,6 +164,7 @@ func build(cfg *config.Config, settings *database.Settings) handlers.Deps {
 	}), box)
 	appSettings := services.NewSettingsService(cfg, settings)
 	syncService := services.NewSyncService(store, tokens, appSettings, notifier)
+	auditService := services.NewAuditService(store, tokens)
 
 	return handlers.Deps{
 		Config:      cfg,
@@ -176,6 +178,7 @@ func build(cfg *config.Config, settings *database.Settings) handlers.Deps {
 		Settings:    appSettings,
 		Notifier:    notifier,
 		Sync:        syncService,
+		Audit:       auditService,
 		Scheduler:   services.NewScheduler(store, syncService, tokens, notifier),
 		Assets:      web.Dist(),
 		Info:        version.Get(),

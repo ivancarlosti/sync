@@ -24,7 +24,8 @@ internal/database      GORM connection, DSN, AutoMigrate, settings repository
 internal/models        GORM entities + every enum vocabulary (also the API contract)
 internal/providers     Provider interface, registry, google/, microsoft/
 internal/services      Store, AuthService, OAuthService, TokenManager, SettingsService,
-                       SyncService (engine), Scheduler, Notifier, ProviderSettings, SecretBox
+                       SyncService (engine), AuditService, Scheduler, Notifier,
+                       ProviderSettings, SecretBox
 internal/notify        senders: smtp, webhook, shoutrrr (no storage knowledge)
 internal/handlers      routing, session, validation, error → HTTP mapping, SPA fallback
 web/                   Vue 3 SPA + embed.go (//go:embed all:dist)
@@ -106,7 +107,7 @@ review.
 
 1. add the key to `web/src/i18n/locales/en-US.json` (namespaced: `common`, `nav`,
    `auth`, `status`, `validation`, `dashboard`, `accounts`, `browser`, `jobs`,
-   `runs`, `notifications`, `admin`, `errors`, `theme`, `language`);
+   `runs`, `audit`, `notifications`, `admin`, `errors`, `theme`, `language`);
 2. translate it in the six other files;
 3. `node web/scripts/check-i18n.mjs` (also part of `npm run typecheck`);
 4. use `t('namespace.key')` in the component — never a literal string.

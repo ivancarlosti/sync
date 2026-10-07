@@ -17,7 +17,8 @@ database, one HTTP port.
 │                                                                                         │
 │  internal/handlers  ── routing, session, validation, error → HTTP status mapping          │
 │  internal/services  ── Store, AuthService, OAuthService, TokenManager, SettingsService,   │
-│                        SyncService (engine), Scheduler, Notifier, ProviderSettings        │
+│                        SyncService (engine), AuditService, Scheduler, Notifier,           │
+│                        ProviderSettings                                                   │
 │  internal/providers ── provider interface + google + microsoft implementations            │
 │  internal/notify    ── SMTP / webhook / shoutrrr senders                                  │
 │  internal/database  ── GORM connection, AutoMigrate, settings repository                  │
@@ -96,6 +97,29 @@ list source tree ──► list destination tree ──► plan per path ──�
 
 Cancellation is cooperative (`SyncService.Cancel`), and a restart closes runs that
 were left `running` (the audit history never shows a run that no longer exists).
+
+## 3b. Audit pipeline
+
+`AuditService.Start` (`internal/services/audit.go`) is the read-only sibling of the
+run pipeline: it claims a per-account lease, creates the `audit_runs` row
+(`status=running`) and walks one tree in the background.
+
+```text
+list folder tree to a depth ──► buffer entries (DFS preorder) ──► batch insert audit_entries ──► finalise run
+        (provider)                    (subtree totals)               (one InsertInBatches)          (status, prune)
+```
+
+* The walk reuses the engine's token handling: an expired access token is renewed
+  and a provider 401 mid-walk is retried once (`TokenManager.Reissue`).
+* The selected folder is **depth 0**; `max_depth = 0` is unlimited (clamped to
+  25). A folder at the depth boundary is recorded but not expanded.
+* The walk is bounded (`AuditNodeLimit = 10000` entries) and the live counters
+  reach the row every ~2s so the polling UI shows progress.
+* `GET /api/audits/:id/export` streams the stored report as CSV without touching
+  the provider again; `PruneAudits` keeps the newest audits per account.
+
+Cancellation is cooperative too (`AuditService.Cancel`), and the scheduler
+`Bootstrap` closes the audits a restart interrupted.
 
 ## 4. Invariants every change must keep
 

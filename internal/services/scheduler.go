@@ -73,6 +73,11 @@ func (s *Scheduler) Bootstrap(ctx context.Context) error {
 	} else if closed > 0 {
 		slog.Warn("closed the runs interrupted by a restart", "runs", closed)
 	}
+	if closed, err := s.store.FailInterruptedAudits(ctx, s.now()); err != nil {
+		return err
+	} else if closed > 0 {
+		slog.Warn("closed the audits interrupted by a restart", "audits", closed)
+	}
 
 	jobs, err := s.store.ListJobs(ctx)
 	if err != nil {

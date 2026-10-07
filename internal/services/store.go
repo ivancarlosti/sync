@@ -119,6 +119,20 @@ func (s *Store) DeleteAccount(ctx context.Context, id uint) (int64, error) {
 		if err := tx.Where("job_id NOT IN (?)", remaining).Delete(&models.SyncRun{}).Error; err != nil {
 			return err
 		}
+		// The audits of the account are reports about its data, so they follow
+		// it: keeping a report whose endpoint disappeared would only confuse.
+		var auditIDs []uint
+		if err := tx.Model(&models.AuditRun{}).Where("account_id = ?", id).Pluck("id", &auditIDs).Error; err != nil {
+			return err
+		}
+		if len(auditIDs) > 0 {
+			if err := tx.Where("audit_id IN ?", auditIDs).Delete(&models.AuditEntry{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("id IN ?", auditIDs).Delete(&models.AuditRun{}).Error; err != nil {
+				return err
+			}
+		}
 		return tx.Delete(&models.ConnectedAccount{}, id).Error
 	})
 	if err != nil {
@@ -461,6 +475,151 @@ func (s *Store) PruneRuns(ctx context.Context, keep int) error {
 	}
 	if err := s.db.WithContext(ctx).Where("id IN ?", ids).Delete(&models.SyncRun{}).Error; err != nil {
 		return fmt.Errorf("services: pruning runs: %w", err)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Audit runs and entries
+// ---------------------------------------------------------------------------
+
+// CreateAudit inserts an audit row in the running state.
+func (s *Store) CreateAudit(ctx context.Context, run *models.AuditRun) error {
+	if err := s.db.WithContext(ctx).Create(run).Error; err != nil {
+		return fmt.Errorf("services: creating audit: %w", err)
+	}
+	return nil
+}
+
+// UpdateAuditProgress mirrors the live counters of a running audit onto its row
+// (the walk itself is in memory; this is only what the polling UI reads).
+func (s *Store) UpdateAuditProgress(ctx context.Context, id uint, files, folders int, total int64, maxDepth int, truncated bool) error {
+	err := s.db.WithContext(ctx).Model(&models.AuditRun{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"files":             files,
+			"folders":           folders,
+			"total_size":        total,
+			"max_depth_reached": maxDepth,
+			"truncated":         truncated,
+		}).Error
+	if err != nil {
+		return fmt.Errorf("services: updating audit %d: %w", id, err)
+	}
+	return nil
+}
+
+// FinishAudit stores the final state of an audit run.
+func (s *Store) FinishAudit(ctx context.Context, run *models.AuditRun) error {
+	if err := s.db.WithContext(ctx).Save(run).Error; err != nil {
+		return fmt.Errorf("services: finishing audit %d: %w", run.ID, err)
+	}
+	return nil
+}
+
+// AddAuditEntries appends the report entries of an audit in one batch, so a run
+// over a large tree is a handful of inserts instead of one per node.
+func (s *Store) AddAuditEntries(ctx context.Context, entries []models.AuditEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+	if err := s.db.WithContext(ctx).CreateInBatches(&entries, 200).Error; err != nil {
+		return fmt.Errorf("services: storing the audit entries: %w", err)
+	}
+	return nil
+}
+
+// ListAudits returns the audits, newest first.
+func (s *Store) ListAudits(ctx context.Context, limit int) ([]models.AuditRun, error) {
+	query := s.db.WithContext(ctx).Order("id DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var rows []models.AuditRun
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("services: listing audits: %w", err)
+	}
+	return rows, nil
+}
+
+// GetAudit returns one audit by id.
+func (s *Store) GetAudit(ctx context.Context, id uint) (*models.AuditRun, error) {
+	var row models.AuditRun
+	if err := s.db.WithContext(ctx).First(&row, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("services: loading audit %d: %w", id, err)
+	}
+	return &row, nil
+}
+
+// ListAuditEntries returns the report entries of an audit in DFS preorder.
+func (s *Store) ListAuditEntries(ctx context.Context, auditID uint, limit int) ([]models.AuditEntry, error) {
+	query := s.db.WithContext(ctx).Where("audit_id = ?", auditID).Order("id ASC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var rows []models.AuditEntry
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("services: listing the audit entries: %w", err)
+	}
+	return rows, nil
+}
+
+// RunningAudit returns the audit of an account that is currently executing, if
+// any: it is what prevents the same account from being audited twice.
+func (s *Store) RunningAudit(ctx context.Context, accountID uint) (*models.AuditRun, error) {
+	var row models.AuditRun
+	err := s.db.WithContext(ctx).
+		Where("account_id = ? AND status = ?", accountID, string(models.RunRunning)).
+		Order("id DESC").First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("services: loading running audit: %w", err)
+	}
+	return &row, nil
+}
+
+// FailInterruptedAudits closes the audits a crash or a restart left behind, so
+// the history never shows an audit that stays "running" forever.
+func (s *Store) FailInterruptedAudits(ctx context.Context, now time.Time) (int64, error) {
+	result := s.db.WithContext(ctx).Model(&models.AuditRun{}).
+		Where("status = ?", string(models.RunRunning)).
+		Updates(map[string]any{
+			"status":      string(models.RunFailed),
+			"finished_at": &now,
+			"message":     "interrupted by a Sync restart",
+		})
+	if result.Error != nil {
+		return 0, fmt.Errorf("services: closing interrupted audits: %w", result.Error)
+	}
+	return result.RowsAffected, nil
+}
+
+// PruneAudits keeps the newest audits of every account and drops the older ones
+// with their entries, which bounds the growth of the report tables.
+func (s *Store) PruneAudits(ctx context.Context, keep int) error {
+	if keep <= 0 {
+		return nil
+	}
+	var ids []uint
+	err := s.db.WithContext(ctx).Raw(
+		"SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY id DESC) AS rn FROM audit_runs) AS ranked WHERE rn > ?",
+		keep).Scan(&ids).Error
+	if err != nil {
+		return fmt.Errorf("services: selecting prunable audits: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := s.db.WithContext(ctx).Where("audit_id IN ?", ids).Delete(&models.AuditEntry{}).Error; err != nil {
+		return fmt.Errorf("services: pruning the audit entries: %w", err)
+	}
+	if err := s.db.WithContext(ctx).Where("id IN ?", ids).Delete(&models.AuditRun{}).Error; err != nil {
+		return fmt.Errorf("services: pruning audits: %w", err)
 	}
 	return nil
 }

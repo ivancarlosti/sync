@@ -139,6 +139,16 @@ const (
 	ActionInSync        ItemAction = "in_sync"
 )
 
+// AuditKind is the type of one node of an audit report.
+type AuditKind string
+
+const (
+	// AuditKindFolder is a folder node; it carries subtree totals.
+	AuditKindFolder AuditKind = "folder"
+	// AuditKindFile is a file node.
+	AuditKindFile AuditKind = "file"
+)
+
 // TriggerSource explains what started a run.
 type TriggerSource string
 

@@ -17,6 +17,7 @@ export type RouteName =
   | 'job-new'
   | 'job-edit'
   | 'runs'
+  | 'audit'
   | 'notifications'
   | 'admin-providers'
   | 'admin-guide'
@@ -65,6 +66,11 @@ const routes: RouteRecordRaw[] = [
         path: 'runs',
         name: 'runs',
         component: () => import('@/views/RunsView.vue'),
+      },
+      {
+        path: 'audit',
+        name: 'audit',
+        component: () => import('@/views/AuditView.vue'),
       },
       {
         path: 'notifications',

@@ -61,8 +61,30 @@ func (s *Server) handleMaintenanceRuns(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"keep": input.Keep, "pruned": true})
 }
 
+// handleMaintenanceAudits answers POST /api/maintenance/audits/prune: it keeps
+// the newest audits of every account and deletes the older ones with their
+// report rows, bounding the size of the audit tables.
+func (s *Server) handleMaintenanceAudits(c *gin.Context) {
+	input := pruneInput{Keep: defaultKeepAudits}
+	if c.Request.ContentLength > 0 {
+		if !decode(c, &input) {
+			return
+		}
+	}
+	if input.Keep < 1 || input.Keep > maxKeepRuns {
+		abort(c, http.StatusBadRequest, "keep must be between 1 and 10000")
+		return
+	}
+	if err := s.deps.Store.PruneAudits(c.Request.Context(), input.Keep); err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"keep": input.Keep, "pruned": true})
+}
+
 // keepRuns bounds mirror the retention the scheduler applies on its own.
 const (
-	defaultKeepRuns = 200
-	maxKeepRuns     = 10000
+	defaultKeepRuns   = 200
+	defaultKeepAudits = 50
+	maxKeepRuns       = 10000
 )

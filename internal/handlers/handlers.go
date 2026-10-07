@@ -48,6 +48,8 @@ type Deps struct {
 	Notifier *services.Notifier
 	// Sync starts, cancels and reports sync runs.
 	Sync *services.SyncService
+	// Audit starts, cancels and reports content audits.
+	Audit *services.AuditService
 	// Scheduler is used to force a scheduling pass or a token refresh.
 	Scheduler *services.Scheduler
 	// Assets is the embedded SPA (`web.Dist()`).
@@ -118,6 +120,8 @@ func (d Deps) validate() error {
 		return errors.New("handlers: Notifier is required")
 	case d.Sync == nil:
 		return errors.New("handlers: Sync is required")
+	case d.Audit == nil:
+		return errors.New("handlers: Audit is required")
 	case d.Scheduler == nil:
 		return errors.New("handlers: Scheduler is required")
 	case d.Assets == nil:

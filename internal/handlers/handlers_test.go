@@ -144,6 +144,7 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 	notifier := services.NewNotifier(store, notify.NewDispatcher(time.Second, notify.Options{AllowPrivateTargets: true}), box)
 	notifier.SetLink(cfg.AppURL)
 	engine := services.NewSyncService(store, tokens, appSettings, notifier)
+	audit := services.NewAuditService(store, tokens)
 
 	deps := Deps{
 		Config:      cfg,
@@ -157,6 +158,7 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 		Settings:    appSettings,
 		Notifier:    notifier,
 		Sync:        engine,
+		Audit:       audit,
 		Scheduler:   services.NewScheduler(store, engine, tokens, notifier),
 		Assets:      testAssets(),
 		Info:        version.Get(),
@@ -2269,5 +2271,179 @@ func TestAccountScreensRefreshAndFailures(t *testing.T) {
 	}
 	if stored.Status != string(models.AccountError) || stored.LastError == "" {
 		t.Errorf("account = %+v, want the failed refresh flagged on the account", stored)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// Audits
+// -----------------------------------------------------------------------------
+
+// waitAuditRun polls the store until an audit leaves the running state. The
+// walk writes from its own goroutine, so a transient SQLite lock between the two
+// is retried instead of failing the test.
+func waitAuditRun(t *testing.T, store *services.Store, id uint) *models.AuditRun {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		run, err := store.GetAudit(context.Background(), id)
+		if err != nil {
+			if strings.Contains(err.Error(), "locked") && time.Now().Before(deadline) {
+				time.Sleep(5 * time.Millisecond)
+				continue
+			}
+			t.Fatalf("loading the audit: %v", err)
+		}
+		if run.Status != string(models.RunRunning) {
+			return run
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the audit did not finish: %+v", run)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestAuditLifecycle follows a content audit end to end: the start request is
+// accepted (202) and polled, the report reads in DFS preorder, the history lists
+// it, the CSV export carries the documented contract and the maintenance prune
+// uses the audit retention.
+func TestAuditLifecycle(t *testing.T) {
+	stub := &stubProvider{
+		name:    models.ProviderGoogle,
+		account: providers.Account{ID: "remote-1", Email: "operator@example.com", Name: "Operator"},
+		children: []providers.Item{
+			{ID: "file-2", Name: "zeta.txt", Size: 10, MimeType: "text/plain"},
+			{ID: "folder-2", Name: "Archive", IsDir: true},
+			{ID: "folder-1", Name: "albums", IsDir: true},
+			{ID: "file-1", Name: "Alpha.txt", Size: 20, ModifiedAt: fixedNow},
+		},
+	}
+	server, store := newTestServerWith(t, models.AuthModeNone, testOptions{
+		configure: func(cfg *config.Config) {
+			// The audit resolves the OAuth client of the account's provider
+			// before it lists anything, so the stub needs a configured pair.
+			cfg.Google = config.ProviderCredentials{
+				ClientID:     "stub-client",
+				ClientSecret: "stub-secret",
+				RedirectURI:  "https://sync.example.com/api/oauth/google/callback",
+			}
+		},
+		providers: []providers.Provider{stub},
+	})
+	account := saveAccount(t, store, models.ProviderGoogle, "remote-1", "operator@example.com")
+	if err := server.deps.Tokens.Persist(context.Background(), account, &providers.Tokens{
+		AccessToken:  "stub-access",
+		RefreshToken: "stub-refresh",
+		TokenType:    "Bearer",
+		Expiry:       time.Now().Add(time.Hour),
+		Scopes:       []string{"files.readwrite"},
+	}); err != nil {
+		t.Fatalf("storing the tokens: %v", err)
+	}
+
+	// A negative depth is refused before anything is written.
+	recorder := call(t, server, http.MethodPost, "/api/audits", map[string]any{
+		"account_id": account.ID,
+		"depth":      -1,
+	})
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
+
+	// Start the audit: the answer is the row to poll (202).
+	recorder = call(t, server, http.MethodPost, "/api/audits", map[string]any{
+		"account_id":  account.ID,
+		"folder_path": "/",
+		"depth":       1,
+	})
+	requireStatus(t, recorder, http.StatusAccepted)
+	started := decodeJSON[struct {
+		Audit auditView `json:"audit"`
+	}](t, recorder)
+	if started.Audit.ID == 0 || started.Audit.AccountID != account.ID {
+		t.Fatalf("started audit = %+v", started.Audit)
+	}
+
+	finished := waitAuditRun(t, store, started.Audit.ID)
+	if finished.Status != string(models.RunSuccess) {
+		t.Fatalf("status = %q (%s)", finished.Status, finished.Message)
+	}
+	if finished.Files != 2 || finished.Folders != 3 || finished.TotalSize != 30 {
+		t.Fatalf("summary = files %d, folders %d, size %d; want 2, 3, 30",
+			finished.Files, finished.Folders, finished.TotalSize)
+	}
+
+	// The report reads in DFS preorder, folders first then files.
+	id := strconv.FormatUint(uint64(started.Audit.ID), 10)
+	recorder = call(t, server, http.MethodGet, "/api/audits/"+id, nil)
+	requireStatus(t, recorder, http.StatusOK)
+	report := decodeJSON[struct {
+		Audit   auditView        `json:"audit"`
+		Entries []auditEntryView `json:"entries"`
+	}](t, recorder)
+	wantPaths := []string{"", "albums", "Archive", "Alpha.txt", "zeta.txt"}
+	if len(report.Entries) != len(wantPaths) {
+		t.Fatalf("entries = %+v, want %d", report.Entries, len(wantPaths))
+	}
+	for i, want := range wantPaths {
+		if report.Entries[i].Path != want {
+			t.Fatalf("entry %d = %q, want %q", i, report.Entries[i].Path, want)
+		}
+	}
+	if report.Entries[1].Expanded || report.Entries[1].TotalSize != 0 {
+		t.Fatalf("boundary folder = %+v, want it reported but not expanded", report.Entries[1])
+	}
+
+	// The history lists it.
+	recorder = call(t, server, http.MethodGet, "/api/audits", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	list := decodeJSON[struct {
+		Audits []auditView `json:"audits"`
+	}](t, recorder)
+	if len(list.Audits) != 1 || list.Audits[0].ID != started.Audit.ID {
+		t.Fatalf("audits = %+v, want the started audit only", list.Audits)
+	}
+
+	// The CSV export carries the documented headers, the BOM and the rows.
+	recorder = call(t, server, http.MethodGet, "/api/audits/"+id+"/export", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	if ct := recorder.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/csv") {
+		t.Fatalf("content-type = %q, want text/csv", ct)
+	}
+	if cd := recorder.Header().Get("Content-Disposition"); !strings.Contains(cd, "audit-"+id+".csv") {
+		t.Fatalf("content-disposition = %q, want the audit file name", cd)
+	}
+	body := recorder.Body.String()
+	if !strings.HasPrefix(body, "\ufeff") {
+		t.Fatal("the CSV must start with a UTF-8 BOM")
+	}
+	if !strings.Contains(body, "kind,path,name,depth,size,total_size,files,folders,expanded,modified_at,mime_type") {
+		t.Fatalf("the CSV header is missing: %q", body)
+	}
+	if !strings.Contains(body, "file,Alpha.txt,Alpha.txt,1,20,20,1,0,false,") {
+		t.Fatalf("the CSV rows are missing: %q", body)
+	}
+
+	// Cancelling a finished audit is idempotent.
+	recorder = call(t, server, http.MethodPost, "/api/audits/"+id+"/cancel", nil)
+	requireStatus(t, recorder, http.StatusOK)
+
+	// A missing audit is a 404 and a malformed id a 400.
+	recorder = call(t, server, http.MethodGet, "/api/audits/4242", nil)
+	requireStatus(t, recorder, http.StatusNotFound)
+	requireErrorCode(t, recorder, codeNotFound)
+
+	recorder = call(t, server, http.MethodGet, "/api/audits/not-a-number", nil)
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
+
+	// The maintenance endpoint prunes with the audit retention.
+	recorder = call(t, server, http.MethodPost, "/api/maintenance/audits/prune", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	pruned := decodeJSON[struct {
+		Keep   int  `json:"keep"`
+		Pruned bool `json:"pruned"`
+	}](t, recorder)
+	if !pruned.Pruned || pruned.Keep != defaultKeepAudits {
+		t.Fatalf("prune answer = %+v, want the default retention %d", pruned, defaultKeepAudits)
 	}
 }
