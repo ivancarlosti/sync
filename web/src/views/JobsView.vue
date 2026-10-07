@@ -24,6 +24,7 @@ import EmptyState from '@/components/ui/EmptyState.vue';
 import Spinner from '@/components/ui/Spinner.vue';
 import Switch from '@/components/ui/Switch.vue';
 import { useAction } from '@/composables/useAction';
+import { accountLabel as accountLabelOf } from '@/lib/accounts';
 import {
   accounts as accountsApi,
   jobs as jobsApi,
@@ -33,7 +34,6 @@ import {
 } from '@/lib/api';
 import { formatDateTime, formatRelative } from '@/lib/format';
 import { payloadFromJob, scheduleLabel } from '@/lib/jobs';
-import { providerLabel } from '@/lib/providers';
 import { useFeedbackStore } from '@/stores/feedback';
 
 const router = useRouter();
@@ -78,7 +78,7 @@ function accountLabel(id: number): string {
   if (!account) {
     return t('common.unknown');
   }
-  return `${providerLabel(account.provider)} · ${account.email || account.provider_account_id}`;
+  return accountLabelOf(account);
 }
 
 /** when renders a timestamp of the API, or an em dash when it is missing. */

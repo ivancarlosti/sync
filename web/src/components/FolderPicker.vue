@@ -171,13 +171,17 @@ const sharePointOptions = computed<SelectOption[]>(() =>
 
 /**
  * hasSharePoint reports whether this account can reach SharePoint at all. Only a
- * work or school account owns site collections: a personal Microsoft account
- * (MSA) has a "personal" drive and no libraries, and Graph refuses /sites for it.
- * The search field and the library select are left out when there is no library
- * to offer, and the hint below says so instead of leaving the field missing.
+ * work or school account owns site collections: its own drive is kind "business"
+ * (or it already carries a "document_library" root), while a personal Microsoft
+ * account (MSA) has a single "personal" root and Graph refuses /sites for it. The
+ * test is therefore "not a personal account", not "already lists a library":
+ * gating on a library that `/me/drives` has not returned yet is exactly what left
+ * the search field and the library select missing on a work account whose tenant
+ * only surfaces its libraries through that search. A personal account keeps the
+ * short hint below instead of an empty field.
  */
 const hasSharePoint = computed(
-  () => isMicrosoft.value && drives.value.some((drive) => !isOneDriveKind(drive.kind)),
+  () => isMicrosoft.value && drives.value.some((drive) => drive.kind !== 'personal'),
 );
 
 /**

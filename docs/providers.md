@@ -247,10 +247,13 @@ problem (403), and never confuses the two.
   `POST /api/accounts/:id/sites/resolve` when the search does not surface a
   library. Every library is labelled with the site it lives in, because each site
   names its default library `Documents`; it is only rendered for Microsoft, which
-  is the only provider with the capability. A **personal** Microsoft account owns
-  no site collection, so the site field and the library select are left out
-  entirely (a short hint says the account exposes no SharePoint libraries) instead
-  of being offered empty: Graph rejects `/sites` for an MSA.
+  is the only provider with the capability. The field is shown for any work or
+  school account — detected by the account *not* owning a `personal` root, since
+  `/me/drives` may return only the account's own OneDrive until a search surfaces
+  its libraries. A **personal** Microsoft account owns no site collection, so the
+  site field and the library select are left out entirely (a short hint says the
+  account exposes no SharePoint libraries) instead of being offered empty: Graph
+  rejects `/sites` for an MSA.
 * **Intra-provider jobs** — the editor lets both ends name the same account, so an
   OneDrive folder can be kept aligned with another folder of the same OneDrive, or
   with a SharePoint library of the same work account. The API refuses only the two

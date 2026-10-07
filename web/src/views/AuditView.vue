@@ -21,6 +21,7 @@ import EmptyState from '@/components/ui/EmptyState.vue';
 import Input from '@/components/ui/Input.vue';
 import Select from '@/components/ui/Select.vue';
 import Spinner from '@/components/ui/Spinner.vue';
+import { accountLabel } from '@/lib/accounts';
 import {
   accounts as accountsApi,
   audits as auditsApi,
@@ -64,10 +65,7 @@ let timer: ReturnType<typeof setInterval> | undefined;
 
 const accountOptions = computed(() => [
   { value: 0, label: t('audit.selectAccount'), disabled: true },
-  ...accounts.value.map((account) => ({
-    value: account.id,
-    label: account.display_name || account.email,
-  })),
+  ...accounts.value.map((account) => ({ value: account.id, label: accountLabel(account) })),
 ]);
 
 const selectedAccount = computed(() =>

@@ -32,6 +32,7 @@ import {
   type ConnectedAccount,
   type JobPayload,
 } from '@/lib/api';
+import { accountLabel } from '@/lib/accounts';
 import { ROOT_ID, ROOT_PATH, type FolderSelection } from '@/lib/folders';
 import { asNumber, asText, joinLines, splitLines } from '@/lib/forms';
 import { formatDateTime } from '@/lib/format';
@@ -47,7 +48,6 @@ import {
   payloadFromJob,
   scheduleLabel,
 } from '@/lib/jobs';
-import { providerLabel } from '@/lib/providers';
 import { useAuthStore } from '@/stores/auth';
 import { useFeedbackStore } from '@/stores/feedback';
 
@@ -108,10 +108,7 @@ const stepIndex = computed(() => Math.max(0, (STEP_ORDER as readonly string[]).i
 
 /** accountOptions are the accounts a side of the job can point at. */
 const accountOptions = computed<SelectOption[]>(() =>
-  accounts.value.map((account) => ({
-    value: account.id,
-    label: `${providerLabel(account.provider)} · ${account.email || account.provider_account_id}`,
-  })),
+  accounts.value.map((account) => ({ value: account.id, label: accountLabel(account) })),
 );
 
 const directions = computed<SelectOption[]>(() => directionOptions(t));
