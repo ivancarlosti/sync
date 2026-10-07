@@ -62,7 +62,7 @@ watch(
 
 <template>
   <header class="sticky top-0 z-40 w-full border-b border-border bg-background/95 backdrop-blur">
-    <div class="container flex h-14 items-center gap-2">
+    <div class="flex h-14 w-full items-center gap-2 px-5">
       <RouterLink :to="{ name: 'dashboard' }" class="flex items-center gap-2 rounded-md pe-2 font-semibold">
         <img src="/logo.svg" alt="" class="h-7 w-7" />
         <span class="text-base tracking-tight">{{ name }}</span>

@@ -87,10 +87,12 @@ list source tree ──► list destination tree ──► plan per path ──�
   (e.g. `destination newer by 42s`).
 * **Transfer** streams a download and an upload; folders are created on demand
   (`folder_created`).
-* **Finalising** sets `success`, `partial` (some files failed) or `failed`, writes
-  the counters, updates `last_run_at`/`next_run_at`, touches the accounts'
-  `last_synced_at` and publishes `sync.success` / `sync.run_failed` / `sync.error`
-  to the notifier.
+* **Finalising** sets `success`, `partial` (some files failed), `failed`, or
+  `timeout` when the run exhausts its time budget (a throttled provider is the
+  usual cause; the run continues on the next slot) or `cancelled` when an operator
+  stops it, writes the counters, updates `last_run_at`/`next_run_at`, touches the
+  accounts' `last_synced_at` and publishes `sync.success` / `sync.run_failed` /
+  `sync.error` to the notifier.
 
 Cancellation is cooperative (`SyncService.Cancel`), and a restart closes runs that
 were left `running` (the audit history never shows a run that no longer exists).

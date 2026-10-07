@@ -89,8 +89,9 @@ account rotates the row (`uniqueIndex idx_account_identity` on
 dashboard numbers). Counters are `files_scanned`, `files_created`,
 `files_updated`, `files_deleted`, `files_skipped`, `folders_created`,
 `conflicts`, `errors`, `bytes_transferred`; `status` is one of `running`,
-`success`, `partial`, `failed`, `cancelled`, `trigger` is `manual` or `scheduled`,
-and `duration_ms` is computed from `started_at`/`finished_at`.
+`success`, `partial`, `failed`, `cancelled`, `timeout` (the run hit its time
+budget, typically while a provider throttled it), `trigger` is `manual` or
+`scheduled`, and `duration_ms` is computed from `started_at`/`finished_at`.
 
 `sync_items` — the per-file detail of a run: `run_id` + `job_id` (both indexed),
 `action` (`created`, `updated`, `deleted`, `skipped`, `conflict`, `failed`,

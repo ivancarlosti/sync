@@ -116,6 +116,11 @@ const (
 	RunPartial   RunStatus = "partial"
 	RunFailed    RunStatus = "failed"
 	RunCancelled RunStatus = "cancelled"
+	// RunTimeout means the run ran into its configured time budget and stopped
+	// before finishing (typically because a provider throttled it). Unlike
+	// RunCancelled it was not stopped by an operator, so the UI reports it as a
+	// resumable, non-alarming outcome.
+	RunTimeout RunStatus = "timeout"
 )
 
 // ItemAction is the operation performed on a single file inside a run.

@@ -12,12 +12,12 @@ import plugin from 'tailwindcss/plugin';
 export default {
   darkMode: ['class'],
   content: ['./index.html', './src/**/*.{vue,ts}'],
+  // The shell is intentionally full-width (`w-full px-5` in AppLayout/AppHeader)
+  // so the wide Jobs and Runs tables get every pixel the viewport offers instead
+  // of being squeezed into a centred, capped box. The core `container` plugin is
+  // disabled outright so no dead `.container` rule is ever emitted.
+  corePlugins: { container: false },
   theme: {
-    container: {
-      center: true,
-      padding: '1.25rem',
-      screens: { '2xl': '1400px' },
-    },
     extend: {
       colors: {
         border: 'hsl(var(--border))',

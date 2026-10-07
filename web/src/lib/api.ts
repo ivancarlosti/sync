@@ -243,7 +243,7 @@ export interface SyncRun {
   id: number;
   job_id: number;
   job_name: string;
-  status: 'running' | 'success' | 'partial' | 'failed' | 'cancelled';
+  status: 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'timeout';
   trigger: 'manual' | 'scheduled';
   started_at: string;
   finished_at?: string;
@@ -282,6 +282,7 @@ export interface Stats {
   partial: number;
   failed: number;
   cancelled: number;
+  timed_out: number;
   conflicts: number;
   files_created: number;
   files_updated: number;

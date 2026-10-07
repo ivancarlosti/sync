@@ -227,6 +227,12 @@ watch(days, load);
           :icon="Ban"
           tone="muted"
         />
+        <StatCard
+          :label="t('dashboard.timedOut')"
+          :value="count(stats.timed_out)"
+          :icon="Clock"
+          tone="warning"
+        />
 
         <StatCard
           :label="t('dashboard.filesCreated')"

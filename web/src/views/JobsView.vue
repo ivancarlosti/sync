@@ -240,10 +240,10 @@ onMounted(load);
           </thead>
           <tbody class="divide-y divide-border">
             <tr v-for="job in rows" :key="job.id" class="align-top hover:bg-muted/40">
-              <td class="px-4 py-3">
+              <td class="min-w-0 px-4 py-3">
                 <RouterLink
                   :to="{ name: 'job-edit', params: { id: String(job.id) } }"
-                  class="font-medium text-primary underline-offset-4 hover:underline"
+                  class="break-anywhere font-medium text-primary underline-offset-4 hover:underline"
                 >
                   {{ job.name }}
                 </RouterLink>

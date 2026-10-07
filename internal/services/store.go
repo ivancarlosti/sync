@@ -307,6 +307,7 @@ type Stats struct {
 	Partial      int64 `json:"partial"`
 	Failed       int64 `json:"failed"`
 	Cancelled    int64 `json:"cancelled"`
+	TimedOut     int64 `json:"timed_out"`
 	Conflicts    int64 `json:"conflicts"`
 	FilesCreated int64 `json:"files_created"`
 	FilesUpdated int64 `json:"files_updated"`
@@ -337,6 +338,7 @@ func (s *Store) Stats(ctx context.Context, since time.Time) (Stats, error) {
 		Partial      int64
 		Failed       int64
 		Cancelled    int64
+		TimedOut     int64
 		Conflicts    int64
 		FilesCreated int64
 		FilesUpdated int64
@@ -353,6 +355,7 @@ func (s *Store) Stats(ctx context.Context, since time.Time) (Stats, error) {
 			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS partial, "+
 			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS failed, "+
 			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS cancelled, "+
+			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS timed_out, "+
 			"COALESCE(SUM(conflicts), 0) AS conflicts, "+
 			"COALESCE(SUM(files_created), 0) AS files_created, "+
 			"COALESCE(SUM(files_updated), 0) AS files_updated, "+
@@ -362,6 +365,7 @@ func (s *Store) Stats(ctx context.Context, since time.Time) (Stats, error) {
 		string(models.RunPartial),
 		string(models.RunFailed),
 		string(models.RunCancelled),
+		string(models.RunTimeout),
 	).Scan(&aggregate).Error
 	if err != nil {
 		return Stats{}, fmt.Errorf("services: aggregating runs: %w", err)
@@ -371,6 +375,7 @@ func (s *Store) Stats(ctx context.Context, since time.Time) (Stats, error) {
 	out.Partial = aggregate.Partial
 	out.Failed = aggregate.Failed
 	out.Cancelled = aggregate.Cancelled
+	out.TimedOut = aggregate.TimedOut
 	out.Conflicts = aggregate.Conflicts
 	out.FilesCreated = aggregate.FilesCreated
 	out.FilesUpdated = aggregate.FilesUpdated

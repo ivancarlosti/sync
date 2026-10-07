@@ -29,6 +29,7 @@ const TONES: Record<string, BadgeTone> = {
   running: 'default',
   // Needs attention but is not a failure.
   partial: 'warning',
+  timeout: 'warning',
   conflict: 'warning',
   degraded: 'warning',
   unsupported: 'warning',

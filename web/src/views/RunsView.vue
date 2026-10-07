@@ -228,10 +228,10 @@ onMounted(() => {
           </thead>
           <tbody class="divide-y divide-border">
             <tr v-for="run in rows" :key="run.id" class="hover:bg-muted/40">
-              <td class="px-3 py-2">
+              <td class="min-w-0 px-3 py-2">
                 <button
                   type="button"
-                  class="text-start font-medium hover:underline"
+                  class="break-anywhere text-start font-medium hover:underline"
                   @click="openJob(run)"
                 >
                   {{ run.job_name }}

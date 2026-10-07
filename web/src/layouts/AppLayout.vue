@@ -30,14 +30,14 @@ const name = computed(() => build.value?.name ?? 'Sync');
 
     <AppHeader />
 
-    <main id="content" class="container flex-1 py-6">
+    <main id="content" class="w-full flex-1 px-5 py-6">
       <RouterView v-slot="{ Component }">
         <component :is="Component" />
       </RouterView>
     </main>
 
     <footer class="border-t border-border py-4">
-      <div class="container flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+      <div class="flex w-full flex-wrap items-center justify-between gap-2 px-5 text-xs text-muted-foreground">
         <span>{{ name }} {{ build?.version ?? '' }}</span>
         <span v-if="build?.commit && build.commit !== 'unknown'" class="numeric">{{ build.commit.slice(0, 7) }}</span>
       </div>

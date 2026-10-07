@@ -968,7 +968,7 @@ func TestEngineStatus(t *testing.T) {
 		{name: "per file failures", ctx: ctx, errors: 2, want: models.RunPartial},
 		{name: "fatal failure", ctx: ctx, fatal: errors.New("boom"), want: models.RunFailed},
 		{name: "cancelled", ctx: cancelled, want: models.RunCancelled},
-		{name: "deadline", ctx: ctx, fatal: context.DeadlineExceeded, want: models.RunCancelled},
+		{name: "deadline", ctx: ctx, fatal: context.DeadlineExceeded, want: models.RunTimeout},
 	}
 	for _, tc := range cases {
 		e := &engine{run: &models.SyncRun{Errors: tc.errors}, fatal: tc.fatal}
@@ -980,6 +980,19 @@ func TestEngineStatus(t *testing.T) {
 	e := &engine{run: &models.SyncRun{}, fatal: errors.New("boom")}
 	if e.status(cancelled) != models.RunCancelled || e.run.Message == "" {
 		t.Errorf("a cancelled run must be reported as cancelled with a message (%q)", e.run.Message)
+	}
+
+	// A run that ran out of time is a timeout, not a cancellation, and carries a
+	// friendly message instead of the raw "context deadline exceeded" text.
+	timedOut, cancelTimeout := context.WithTimeout(ctx, 0)
+	defer cancelTimeout()
+	<-timedOut.Done()
+	timeout := &engine{run: &models.SyncRun{Message: "the run was cancelled: context deadline exceeded"}}
+	if got := timeout.status(timedOut); got != models.RunTimeout {
+		t.Errorf("status() = %q, want %q", got, models.RunTimeout)
+	}
+	if timeout.run.Message == "" || timeout.run.Message == "the run was cancelled: context deadline exceeded" {
+		t.Errorf("a timed out run must carry a friendly message, got %q", timeout.run.Message)
 	}
 }
 

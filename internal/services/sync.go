@@ -537,7 +537,7 @@ func (e *engine) walk(ctx context.Context, side *endpoint) error {
 	seen := map[string]bool{}
 	for len(queue) > 0 {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("the run was cancelled while listing %s: %w", side.label(), err)
+			return fmt.Errorf("the run was interrupted while listing %s: %w", side.label(), err)
 		}
 		current := queue[0]
 		queue = queue[1:]
@@ -694,7 +694,7 @@ func (e *engine) reconcilePaths(ctx context.Context) error {
 
 	for _, relative := range ordered {
 		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("the run was cancelled: %w", err)
+			return fmt.Errorf("the run was interrupted: %w", err)
 		}
 		if e.fatal != nil {
 			// A fatal problem (an account that must be reconnected) already
@@ -1151,14 +1151,21 @@ func (e *engine) record(action models.ItemAction, relative string, size int64, e
 	})
 }
 
-// status derives the final status of the run from its counters.
+// status derives the final status of the run from its counters. An operator
+// cancellation and a run that ran out of time are told apart so the history
+// reports the friendly, resumable "timeout" instead of a scary "cancelled" on
+// every throttled run. Both outcomes also replace the low-level error text (for
+// example "context deadline exceeded") with a human readable message.
 func (e *engine) status(ctx context.Context) models.RunStatus {
+	cancelled := errors.Is(ctx.Err(), context.Canceled) || errors.Is(e.fatal, context.Canceled)
+	timedOut := errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(e.fatal, context.DeadlineExceeded)
 	switch {
-	case ctx.Err() != nil, errors.Is(e.fatal, context.Canceled), errors.Is(e.fatal, context.DeadlineExceeded):
-		if e.run.Message == "" {
-			e.run.Message = "the run was cancelled"
-		}
+	case cancelled:
+		e.run.Message = "the run was cancelled"
 		return models.RunCancelled
+	case timedOut:
+		e.run.Message = "the run ran out of time before it finished (the provider was slow or throttled); it will continue on the next run"
+		return models.RunTimeout
 	case e.fatal != nil:
 		return models.RunFailed
 	case e.run.Errors > 0:
