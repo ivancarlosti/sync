@@ -231,8 +231,14 @@ func (p *Provider) Children(ctx context.Context, _ providers.Credentials, tokens
 		return nil, fmt.Errorf("microsoft graph: cannot list the children of %s: %w", folder, err)
 	}
 
+	// The factory builds the response of every *subsequent* page, so it must
+	// produce a collection response (one with GetValue) — not a single item.
+	// Passing the item factory made the page iterator decode the next page's
+	// `{"value":[...]}` into one DriveItem, whose missing GetValue surfaced as
+	// "value property missing in response object" the moment a folder held more
+	// than one page (Top below is 200).
 	iterator, err := msgraphgocore.NewPageIterator[graphmodels.DriveItemable](page, adapter,
-		graphmodels.CreateDriveItemFromDiscriminatorValue)
+		graphmodels.CreateDriveItemCollectionResponseFromDiscriminatorValue)
 	if err != nil {
 		return nil, fmt.Errorf("microsoft graph: cannot page the children of %s: %w", folder, err)
 	}
@@ -402,8 +408,10 @@ func (p *Provider) listSites(ctx context.Context, client *msgraphsdk.GraphServic
 	if err != nil {
 		return nil, fmt.Errorf("microsoft graph: cannot search sites: %w", err)
 	}
+	// A collection-response factory, so a paginated site search decodes each
+	// next page as a collection instead of a single site (see Children).
 	iterator, err := msgraphgocore.NewPageIterator[graphmodels.Siteable](page, adapter,
-		graphmodels.CreateSiteFromDiscriminatorValue)
+		graphmodels.CreateSiteCollectionResponseFromDiscriminatorValue)
 	if err != nil {
 		return nil, fmt.Errorf("microsoft graph: cannot page the site search results: %w", err)
 	}

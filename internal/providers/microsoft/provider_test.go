@@ -275,12 +275,20 @@ type recordingTransport struct {
 func (t *recordingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	t.urls = append(t.urls, request.URL.String())
 	t.headers = append(t.headers, request.Header.Clone())
-	body := t.bodies[request.URL.Path]
+	// A canned page is looked up by the full request URI (path plus query)
+	// first, so a paginated listing can answer the `$skiptoken` nextLink with a
+	// different body than the path's first page. Falling back to the path keeps
+	// the tests that script one body per endpoint working unchanged.
+	key := request.URL.RequestURI()
+	if _, ok := t.bodies[key]; !ok {
+		key = request.URL.Path
+	}
+	body := t.bodies[key]
 	if body == "" {
 		body = "{}"
 	}
 	status := http.StatusOK
-	if code, ok := t.statuses[request.URL.Path]; ok {
+	if code, ok := t.statuses[key]; ok {
 		status = code
 	}
 	header := http.Header{}
@@ -475,5 +483,73 @@ func TestIsUnauthorized(t *testing.T) {
 	}
 	if provider.IsUnauthorized(nil) {
 		t.Error("IsUnauthorized(nil) = true, want false")
+	}
+}
+
+// TestChildrenFollowsTheNextPageLink pins the pagination fix of the "value
+// property missing in response object" failure. Children asks for Top=200, so a
+// folder that holds more than one page follows an @odata.nextLink. The page
+// iterator's factory must build a collection response for every page after the
+// first; passing the single-item factory made it decode the next page's
+// `{"value":[...]}` into one DriveItem — which has no GetValue — and the listing
+// failed for exactly the large SharePoint folders that paginate.
+func TestChildrenFollowsTheNextPageLink(t *testing.T) {
+	const first = "/v1.0/drives/b!library/items/root/children"
+	const nextLink = "https://graph.microsoft.com" + first + "?page=2"
+	transport := &recordingTransport{bodies: map[string]string{
+		first: `{"value":[{"id":"i1","name":"one.pdf","size":10,"file":{}}],` +
+			`"@odata.nextLink":"` + nextLink + `"}`,
+		first + "?page=2": `{"value":[{"id":"i2","name":"two.pdf","size":20,"file":{}}]}`,
+	}}
+	provider := New()
+	provider.httpClient.Transport = transport
+
+	items, err := provider.Children(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "children-token"}, "b!library", "root")
+	if err != nil {
+		t.Fatalf("Children = %v", err)
+	}
+	if len(items) != 2 || items[0].ID != "i1" || items[1].ID != "i2" {
+		t.Fatalf("Children = %+v, want both pages", items)
+	}
+	if len(transport.urls) != 2 {
+		t.Fatalf("issued %d requests (%v), want the first page then its nextLink", len(transport.urls), transport.urls)
+	}
+	if transport.urls[1] != nextLink {
+		t.Errorf("second request went to %q, want the nextLink %q", transport.urls[1], nextLink)
+	}
+}
+
+// TestSearchSitesFollowsTheNextPageLink guards the same fix on the site search:
+// a tenant whose `GET /sites` result spans more than one page must resolve the
+// default library of every page instead of failing on the second page.
+func TestSearchSitesFollowsTheNextPageLink(t *testing.T) {
+	const sites = "/v1.0/sites"
+	const nextLink = "https://graph.microsoft.com/v1.0/sites?page=2"
+	const marketing = "contoso.sharepoint.com,aaa-111,bbb-222"
+	const sales = "contoso.sharepoint.com,ccc-333,ddd-444"
+	transport := &recordingTransport{bodies: map[string]string{
+		"/v1.0/me/drive": `{"id":"b!onedrive","name":"Ivan","driveType":"business"}`,
+		sites: `{"value":[{"id":"` + marketing + `","displayName":"Marketing",` +
+			`"webUrl":"https://contoso.sharepoint.com/sites/marketing"}],` +
+			`"@odata.nextLink":"` + nextLink + `"}`,
+		sites + "?page=2": `{"value":[{"id":"` + sales + `","displayName":"Sales",` +
+			`"webUrl":"https://contoso.sharepoint.com/sites/sales"}]}`,
+		sites + "/" + marketing + "/drive": `{"id":"b!marketing","name":"Documents","driveType":"documentLibrary"}`,
+		sites + "/" + sales + "/drive":     `{"id":"b!sales","name":"Documents","driveType":"documentLibrary"}`,
+	}}
+	provider := New()
+	provider.httpClient.Transport = transport
+
+	drives, err := provider.SearchSites(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "sites-token"}, "marketing")
+	if err != nil {
+		t.Fatalf("SearchSites = %v", err)
+	}
+	if len(drives) != 2 || drives[0].Name != "Marketing" || drives[1].Name != "Sales" {
+		t.Fatalf("SearchSites = %+v, want the libraries of both pages", drives)
+	}
+	if drives[0].ID != "b!marketing" || drives[1].ID != "b!sales" {
+		t.Errorf("SearchSites = %+v, want the default library of each site", drives)
 	}
 }
