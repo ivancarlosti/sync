@@ -279,9 +279,16 @@ export interface SyncJob {
   source_account_id: number;
   destination_account_id: number;
   source_drive_id: string;
+  /** source_drive_name/kind/owner label the root (see lib/drives.ts). */
+  source_drive_name: string;
+  source_drive_kind: string;
+  source_drive_owner: string;
   source_folder_id: string;
   source_folder_path: string;
   destination_drive_id: string;
+  destination_drive_name: string;
+  destination_drive_kind: string;
+  destination_drive_owner: string;
   destination_folder_id: string;
   destination_folder_path: string;
   direction: 'google_to_microsoft' | 'microsoft_to_google' | 'bidirectional';
@@ -305,9 +312,15 @@ export interface JobPayload {
   source_account_id: number;
   destination_account_id: number;
   source_drive_id: string;
+  source_drive_name: string;
+  source_drive_kind: string;
+  source_drive_owner: string;
   source_folder_id: string;
   source_folder_path: string;
   destination_drive_id: string;
+  destination_drive_name: string;
+  destination_drive_kind: string;
+  destination_drive_owner: string;
   destination_folder_id: string;
   destination_folder_path: string;
   direction: string;
@@ -359,6 +372,10 @@ export interface AuditRun {
   account_email: string;
   provider: ProviderName;
   drive_id: string;
+  /** drive_name/kind/owner label the root of the report (see lib/drives.ts). */
+  drive_name: string;
+  drive_kind: string;
+  drive_owner: string;
   root_folder_id: string;
   root_path: string;
   /** max_depth is how many folder levels below the root are analysed; 0 is unlimited. */
@@ -406,6 +423,9 @@ export interface AuditEntry {
 export interface AuditPayload {
   account_id: number;
   drive_id: string;
+  drive_name: string;
+  drive_kind: string;
+  drive_owner: string;
   folder_id: string;
   folder_path: string;
   depth: number;

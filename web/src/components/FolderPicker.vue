@@ -28,6 +28,7 @@ import Label from '@/components/ui/Label.vue';
 import Select, { type SelectOption } from '@/components/ui/Select.vue';
 import Spinner from '@/components/ui/Spinner.vue';
 import { accounts, type Drive, type FolderItem, type ProviderName, messageOf } from '@/lib/api';
+import { isOneDriveKind, siteOf } from '@/lib/drives';
 import { pathFrom, type FolderSelection } from '@/lib/folders';
 import { formatBytes, formatDateTime } from '@/lib/format';
 
@@ -82,35 +83,17 @@ const title = computed(() =>
 const isMicrosoft = computed(() => props.provider === 'microsoft');
 
 /**
- * locationOf names the place a library lives in, which is what tells two of them
- * apart: every SharePoint site ships a default library literally called
- * "Documents", so the name alone would show one indistinguishable row per site.
- * The place is the site segment of the drive URL (/sites/marketing,
- * /teams/hr); a URL that carries none — the account's own OneDrive under
- * /personal — contributes nothing, because that drive is already unique. The
- * site name is skipped when it merely repeats the library name, so a searched
- * site does not end up labelled twice.
+ * currentDrive finds the root the current selection sits in. The libraries a
+ * search found are not part of `/me/drives`, so both collections are searched;
+ * the identity of the root is what travels with the folder to the caller.
  */
-function locationOf(drive: Drive): string {
-  if (!drive.owner) {
-    return '';
-  }
-  try {
-    const segments = new URL(drive.owner).pathname.split('/').filter((part) => part !== '');
-    const marker = segments.findIndex((part) => ['sites', 'teams'].includes(part.toLowerCase()));
-    const place = marker >= 0 ? segments[marker + 1] : undefined;
-    if (!place || place.toLowerCase() === drive.name.toLowerCase()) {
-      return '';
-    }
-    return place;
-  } catch {
-    return '';
-  }
+function currentDrive(): Drive | undefined {
+  return [...drives.value, ...sites.value].find((candidate) => candidate.id === driveId.value);
 }
 
 /** optionOf renders one root; the kind (or the library's site) tells two apart. */
 function optionOf(drive: Drive, withKind: boolean): SelectOption {
-  const suffix = [withKind && drive.kind ? drive.kind : '', locationOf(drive)]
+  const suffix = [withKind && drive.kind ? drive.kind : '', siteOf(drive)]
     .filter((part) => part !== '')
     .join(' · ');
   return {
@@ -135,16 +118,6 @@ function dedupe(candidates: Drive[], withKind: boolean): SelectOption[] {
     options.push(optionOf(drive, withKind));
   }
   return options;
-}
-
-/**
- * isOneDriveKind marks the account's own drive: "personal" on a personal
- * account, "business" on a work/school one. Every other kind is a SharePoint
- * library (document_library, site), which is what keeps the work OneDrive out of
- * the library select.
- */
-function isOneDriveKind(kind: string | undefined): boolean {
-  return kind === 'personal' || kind === 'business';
 }
 
 /**
@@ -418,12 +391,23 @@ async function start(): Promise<void> {
   }
 }
 
-/** confirm hands the selection back to the job editor and closes. */
+/**
+ * confirm hands the selection back to the job editor and closes. The identity of
+ * the root travels with the ids and the path, so the caller can label the
+ * location (My Drive, a shared drive, an OneDrive, a SharePoint library) without
+ * asking the provider again.
+ */
 function confirm(): void {
+  const drive = currentDrive();
   emit('select', {
     driveId: driveId.value,
     folderId: folderId.value,
     folderPath: currentPath.value,
+    drive: {
+      name: drive?.name ?? '',
+      kind: drive?.kind ?? '',
+      owner: drive?.owner ?? '',
+    },
   });
   open.value = false;
 }

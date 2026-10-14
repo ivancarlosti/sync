@@ -220,6 +220,8 @@
     "source": "Source folder",
     "destination": "Destination folder",
     "drive": "Drive",
+    "myDrive": "My Drive",
+    "sharedDrive": "Shared drive",
     "oneDrive": "OneDrive",
     "sharePointLibrary": "SharePoint library",
     "selectRoot": "Select a root",

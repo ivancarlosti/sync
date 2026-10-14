@@ -279,6 +279,50 @@ func TestAuditValidation(t *testing.T) {
 	}
 }
 
+// TestAuditStoresDriveLabels checks that the display parts of the root travel
+// into the row: they are what lets the history screen name the drive (My Drive,
+// a shared drive, an OneDrive, a SharePoint library) instead of showing a bare
+// path. A caller that knows nothing about the drive must still be accepted, with
+// the columns left empty.
+func TestAuditStoresDriveLabels(t *testing.T) {
+	env := newAuditEnv(t)
+	seedTree(t, env)
+
+	run, err := env.audit.Start(context.Background(), AuditInput{
+		AccountID:  env.account.ID,
+		DriveID:    "shared-drive",
+		DriveName:  "  Finance  ",
+		DriveKind:  "shared",
+		DriveOwner: "",
+	})
+	if err != nil {
+		t.Fatalf("starting the audit: %v", err)
+	}
+	finished := env.waitAudit(t, run.ID)
+	if finished.DriveID != "shared-drive" {
+		t.Errorf("drive id = %q, want shared-drive", finished.DriveID)
+	}
+	if finished.DriveName != "Finance" || finished.DriveKind != "shared" || finished.DriveOwner != "" {
+		t.Errorf("drive label = %q/%q/%q, want the shared drive label",
+			finished.DriveName, finished.DriveKind, finished.DriveOwner)
+	}
+	if finished.Status != string(models.RunSuccess) {
+		t.Fatalf("status = %q (%s)", finished.Status, finished.Message)
+	}
+
+	// A run started without the drive parts keeps the columns empty, which is
+	// what the history screen renders as the path alone.
+	bare, err := env.audit.Start(context.Background(), AuditInput{AccountID: env.account.ID})
+	if err != nil {
+		t.Fatalf("starting the second audit: %v", err)
+	}
+	unnamed := env.waitAudit(t, bare.ID)
+	if unnamed.DriveName != "" || unnamed.DriveKind != "" || unnamed.DriveOwner != "" {
+		t.Errorf("drive label = %q/%q/%q, want it empty",
+			unnamed.DriveName, unnamed.DriveKind, unnamed.DriveOwner)
+	}
+}
+
 // TestAuditBusyAndCancel keeps a walk in flight with a blocking provider,
 // checks a second audit of the account is refused and then cancels it.
 func TestAuditBusyAndCancel(t *testing.T) {

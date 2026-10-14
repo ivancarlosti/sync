@@ -14,6 +14,7 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+	"unicode/utf8"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -1024,6 +1025,103 @@ func TestJobLifecycle(t *testing.T) {
 	recorder = call(t, server, http.MethodGet, "/api/jobs/4242", nil)
 	requireStatus(t, recorder, http.StatusNotFound)
 	requireErrorCode(t, recorder, codeNotFound)
+}
+
+// TestJobStoresDriveLabels pins the drive display columns: the folder picker
+// sends the name, kind and owner of each root along with its id, and the job
+// keeps them so the list can name an OneDrive, a shared drive or a SharePoint
+// library without a provider call. They are optional, so a payload that omits
+// them (an older client) still saves and leaves the columns empty.
+func TestJobStoresDriveLabels(t *testing.T) {
+	server, store := newTestServer(t, models.AuthModeNone)
+	google := saveAccount(t, store, models.ProviderGoogle, "google-1", "g@example.com")
+	microsoft := saveAccount(t, store, models.ProviderMicrosoft, "ms-1", "m@example.com")
+
+	payload := jobPayload(google, microsoft)
+	payload["source_drive_id"] = "shared-drive-1"
+	payload["source_drive_name"] = "  Finance  "
+	payload["source_drive_kind"] = "shared"
+	payload["destination_drive_id"] = "b!library"
+	payload["destination_drive_name"] = "Documents"
+	payload["destination_drive_kind"] = "document_library"
+	payload["destination_drive_owner"] = "https://contoso.sharepoint.com/sites/marketing/Shared Documents"
+
+	recorder := call(t, server, http.MethodPost, "/api/jobs", payload)
+	requireStatus(t, recorder, http.StatusCreated)
+	job := decodeJSON[jobView](t, recorder)
+
+	// The values are trimmed, and a Google shared drive has no owner URL.
+	if job.SourceDriveName != "Finance" || job.SourceDriveKind != "shared" || job.SourceDriveOwner != "" {
+		t.Errorf("source drive = %q/%q/%q, want the shared drive label",
+			job.SourceDriveName, job.SourceDriveKind, job.SourceDriveOwner)
+	}
+	if job.DestinationDriveName != "Documents" || job.DestinationDriveKind != "document_library" {
+		t.Errorf("destination drive = %q/%q, want the SharePoint library label",
+			job.DestinationDriveName, job.DestinationDriveKind)
+	}
+	if job.DestinationDriveOwner != payload["destination_drive_owner"] {
+		t.Errorf("destination drive owner = %q, want %q",
+			job.DestinationDriveOwner, payload["destination_drive_owner"])
+	}
+
+	// The columns are stored, not merely echoed: a re-read returns them.
+	id := strconv.FormatUint(uint64(job.ID), 10)
+	recorder = call(t, server, http.MethodGet, "/api/jobs/"+id, nil)
+	requireStatus(t, recorder, http.StatusOK)
+	stored := decodeJSON[jobView](t, recorder)
+	if stored.SourceDriveKind != "shared" || stored.DestinationDriveKind != "document_library" {
+		t.Errorf("stored drive kinds = %q/%q, want shared/document_library",
+			stored.SourceDriveKind, stored.DestinationDriveKind)
+	}
+
+	// An update replaces the job as a whole, so the editor sends the labels again.
+	payload["source_drive_name"] = "Finance 2026"
+	recorder = call(t, server, http.MethodPut, "/api/jobs/"+id, payload)
+	requireStatus(t, recorder, http.StatusOK)
+	if updated := decodeJSON[jobView](t, recorder); updated.SourceDriveName != "Finance 2026" {
+		t.Errorf("updated drive name = %q, want Finance 2026", updated.SourceDriveName)
+	}
+
+	// A payload without the display parts leaves them empty instead of failing:
+	// that is what an older SPA (and a script) sends.
+	trimmed := jobPayload(google, microsoft)
+	trimmed["source_drive_id"] = "shared-drive-1"
+	trimmed["destination_drive_id"] = "b!library"
+	recorder = call(t, server, http.MethodPost, "/api/jobs", trimmed)
+	requireStatus(t, recorder, http.StatusCreated)
+	bare := decodeJSON[jobView](t, recorder)
+	if bare.SourceDriveName != "" || bare.DestinationDriveKind != "" {
+		t.Errorf("drive columns = %q/%q, want them empty",
+			bare.SourceDriveName, bare.DestinationDriveKind)
+	}
+}
+
+// TestCreateJobClampsDriveLabels pins the width guard: a provider value longer
+// than its column is cut, not refused, so an unusually long library name cannot
+// turn a job save into a 500.
+func TestCreateJobClampsDriveLabels(t *testing.T) {
+	server, store := newTestServer(t, models.AuthModeNone)
+	google := saveAccount(t, store, models.ProviderGoogle, "google-1", "g@example.com")
+	microsoft := saveAccount(t, store, models.ProviderMicrosoft, "ms-1", "m@example.com")
+
+	payload := jobPayload(google, microsoft)
+	payload["source_drive_id"] = "shared-drive-1"
+	payload["source_drive_name"] = strings.Repeat("ä", driveNameWidth+5)
+	payload["source_drive_kind"] = strings.Repeat("k", driveKindWidth+5)
+
+	recorder := call(t, server, http.MethodPost, "/api/jobs", payload)
+	requireStatus(t, recorder, http.StatusCreated)
+	job := decodeJSON[jobView](t, recorder)
+	if got := len([]rune(job.SourceDriveName)); got != driveNameWidth {
+		t.Errorf("drive name length = %d, want %d", got, driveNameWidth)
+	}
+	if got := len([]rune(job.SourceDriveKind)); got != driveKindWidth {
+		t.Errorf("drive kind length = %d, want %d", got, driveKindWidth)
+	}
+	// The cut is by rune, so the clamped value stays valid UTF-8.
+	if !utf8.ValidString(job.SourceDriveName) {
+		t.Error("the clamped drive name is not valid UTF-8")
+	}
 }
 
 // createJob creates a job through the API.
@@ -2363,9 +2461,13 @@ func TestAuditLifecycle(t *testing.T) {
 	requireStatus(t, recorder, http.StatusBadRequest)
 	requireErrorCode(t, recorder, codeValidation)
 
-	// Start the audit: the answer is the row to poll (202).
+	// Start the audit: the answer is the row to poll (202). The drive display
+	// parts travel with the drive id, so the history entry names the root.
 	recorder = call(t, server, http.MethodPost, "/api/audits", map[string]any{
 		"account_id":  account.ID,
+		"drive_id":    "drive-1",
+		"drive_name":  "  My Drive  ",
+		"drive_kind":  "personal",
 		"folder_path": "/",
 		"depth":       1,
 	})
@@ -2375,6 +2477,10 @@ func TestAuditLifecycle(t *testing.T) {
 	}](t, recorder)
 	if started.Audit.ID == 0 || started.Audit.AccountID != account.ID {
 		t.Fatalf("started audit = %+v", started.Audit)
+	}
+	if started.Audit.DriveName != "My Drive" || started.Audit.DriveKind != "personal" {
+		t.Errorf("started audit drive = %q/%q, want the My Drive label",
+			started.Audit.DriveName, started.Audit.DriveKind)
 	}
 
 	finished := waitAuditRun(t, store, started.Audit.ID)

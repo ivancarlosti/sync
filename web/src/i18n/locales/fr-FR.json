@@ -220,6 +220,8 @@
     "source": "Dossier source",
     "destination": "Dossier de destination",
     "drive": "Lecteur",
+    "myDrive": "Mon Drive",
+    "sharedDrive": "Drive partagé",
     "oneDrive": "OneDrive",
     "sharePointLibrary": "Bibliothèque SharePoint",
     "selectRoot": "Sélectionnez une racine",

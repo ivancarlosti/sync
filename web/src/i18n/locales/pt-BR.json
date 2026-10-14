@@ -220,6 +220,8 @@
     "source": "Pasta de origem",
     "destination": "Pasta de destino",
     "drive": "Unidade",
+    "myDrive": "Meu Drive",
+    "sharedDrive": "Drive compartilhado",
     "oneDrive": "OneDrive",
     "sharePointLibrary": "Biblioteca do SharePoint",
     "selectRoot": "Selecione uma raiz",

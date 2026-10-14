@@ -124,11 +124,13 @@ history are kept (only `DELETE /api/accounts/:id` deletes them).
 ## 6. Jobs
 
 `jobView` = every `sync_jobs` column (`id, name, source_account_id,
-destination_account_id, source_drive_id, source_folder_id, source_folder_path,
-destination_drive_id, destination_folder_id, destination_folder_path, direction,
-conflict_policy, delete_missing, interval_minutes, enabled, last_run_at,
-next_run_at, last_status, last_error, created_at, updated_at`) plus
-`exclude_patterns: string[]` and `running: boolean`.
+destination_account_id, source_drive_id, source_drive_name, source_drive_kind,
+source_drive_owner, source_folder_id, source_folder_path, destination_drive_id,
+destination_drive_name, destination_drive_kind, destination_drive_owner,
+destination_folder_id, destination_folder_path, direction, conflict_policy,
+delete_missing, interval_minutes, enabled, last_run_at, next_run_at, last_status,
+last_error, created_at, updated_at`) plus `exclude_patterns: string[]` and
+`running: boolean`.
 
 | Method | Path | Notes |
 |---|---|---|
@@ -149,9 +151,15 @@ Create/update payload:
   "source_account_id": 1,
   "destination_account_id": 2,
   "source_drive_id": "root",
+  "source_drive_name": "My Drive",
+  "source_drive_kind": "personal",
+  "source_drive_owner": "",
   "source_folder_id": "1AbCdEf",
   "source_folder_path": "My Drive / Photos",
   "destination_drive_id": "b!xyz",
+  "destination_drive_name": "Documents",
+  "destination_drive_kind": "document_library",
+  "destination_drive_owner": "https://contoso.sharepoint.com/sites/marketing/Shared%20Documents",
   "destination_folder_id": "01ABCD",
   "destination_folder_path": "OneDrive / Backup",
   "direction": "google_to_microsoft",
@@ -176,6 +184,15 @@ folder sits inside the other in the direction the job copies (which would copy t
 tree into itself on every run). The nesting check compares the display
 `*_folder_path` values, so a job whose paths the editor left empty is accepted and
 only ever caught by the identical-location rule.
+
+`*_drive_name`, `*_drive_kind` and `*_drive_owner` are the display parts of each
+root, exactly as `GET /api/accounts/:id/drives` returned them
+(`kind` ∈ `personal` \| `business` \| `shared` \| `document_library`, and `owner`
+carries the drive URL). The API stores them next to the ids so the job list names
+the location — My Drive, a shared drive, an OneDrive or a SharePoint library —
+without a provider call. They are **optional**: a payload that omits them leaves
+the columns empty, and a job stored before they existed keeps rendering as its
+path alone. Values are clamped to the column widths (`191`/`32`/`191`).
 
 ## 7. Runs
 
@@ -208,16 +225,25 @@ scans the provider again.
 {
   "account_id": 1,
   "drive_id": "b!xyz",
+  "drive_name": "Documents",
+  "drive_kind": "document_library",
+  "drive_owner": "https://contoso.sharepoint.com/sites/marketing/Shared%20Documents",
   "folder_id": "01ABCD",
   "folder_path": "SharePoint / Marketing",
   "depth": 2
 }
 ```
 
+`drive_name`, `drive_kind` and `drive_owner` are optional display parts of the
+root, as in §6: the run stores them so the history screen names the location
+(My Drive, a shared drive, an OneDrive, a SharePoint library) without a provider
+call. A run stored before the columns existed keeps rendering as its path alone.
+
 `auditView` = the `audit_runs` row (`id, account_id, account_email, provider,
-drive_id, root_folder_id, root_path, max_depth, status, trigger, started_at,
-finished_at, duration_ms, files, folders, total_size, max_depth_reached,
-truncated, message, created_at`) plus `running`. `auditEntryView` = `{id, kind
+drive_id, drive_name, drive_kind, drive_owner, root_folder_id, root_path,
+max_depth, status, trigger, started_at, finished_at, duration_ms, files, folders,
+total_size, max_depth_reached, truncated, message, created_at`) plus `running`.
+`auditEntryView` = `{id, kind
 (folder|file), path, name, depth, size, total_size, files, folders, expanded,
 listed, modified_at?, mime_type?}`.
 

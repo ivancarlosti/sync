@@ -19,6 +19,15 @@ import (
 // always a typo and would hide a job from the dashboard.
 const maxIntervalMinutes = 7 * 24 * 60
 
+// Widths of the drive display columns on models.SyncJob and models.AuditRun,
+// mirroring their gorm tags. The values come from the provider, so payloads are
+// clamped to them here before they reach the database.
+const (
+	driveNameWidth  = 191
+	driveKindWidth  = 32
+	driveOwnerWidth = 191
+)
+
 // jobInput is the create/update payload of a job. Pointers are used where the
 // update semantics differ from the create defaults (`enabled`).
 type jobInput struct {
@@ -26,9 +35,15 @@ type jobInput struct {
 	SourceAccountID       uint     `json:"source_account_id"`
 	DestinationAccountID  uint     `json:"destination_account_id"`
 	SourceDriveID         string   `json:"source_drive_id"`
+	SourceDriveName       string   `json:"source_drive_name"`
+	SourceDriveKind       string   `json:"source_drive_kind"`
+	SourceDriveOwner      string   `json:"source_drive_owner"`
 	SourceFolderID        string   `json:"source_folder_id"`
 	SourceFolderPath      string   `json:"source_folder_path"`
 	DestinationDriveID    string   `json:"destination_drive_id"`
+	DestinationDriveName  string   `json:"destination_drive_name"`
+	DestinationDriveKind  string   `json:"destination_drive_kind"`
+	DestinationDriveOwner string   `json:"destination_drive_owner"`
 	DestinationFolderID   string   `json:"destination_folder_id"`
 	DestinationFolderPath string   `json:"destination_folder_path"`
 	Direction             string   `json:"direction"`
@@ -37,6 +52,20 @@ type jobInput struct {
 	DeleteMissing         bool     `json:"delete_missing"`
 	IntervalMinutes       int      `json:"interval_minutes"`
 	Enabled               *bool    `json:"enabled"`
+}
+
+// driveLabel clamps one display part of a drive to the width of its column. The
+// values come from the provider (a library name, a site URL), so the length is
+// not ours to trust: trimming to the column keeps a long name from turning a job
+// save into a 500. The cut is by rune, not by byte, so a truncated value stays
+// valid UTF-8.
+func driveLabel(value string, max int) string {
+	trimmed := strings.TrimSpace(value)
+	runes := []rune(trimmed)
+	if len(runes) <= max {
+		return trimmed
+	}
+	return string(runes[:max])
 }
 
 // jobView is a job plus the two pieces of state the UI needs but that do not
@@ -179,13 +208,30 @@ func (s *Server) applyJobInput(c *gin.Context, input jobInput, job *models.SyncJ
 		enabled = *input.Enabled
 	}
 
+	// The display parts of both roots travel with the ids: the picker is the only
+	// place that knows them, and the job list needs them to tell an OneDrive from
+	// a SharePoint library. They are optional, so a payload that omits them (an
+	// older client, a script) simply leaves the columns empty.
+	sourceDriveName := driveLabel(input.SourceDriveName, driveNameWidth)
+	sourceDriveKind := driveLabel(input.SourceDriveKind, driveKindWidth)
+	sourceDriveOwner := driveLabel(input.SourceDriveOwner, driveOwnerWidth)
+	destDriveName := driveLabel(input.DestinationDriveName, driveNameWidth)
+	destDriveKind := driveLabel(input.DestinationDriveKind, driveKindWidth)
+	destDriveOwner := driveLabel(input.DestinationDriveOwner, driveOwnerWidth)
+
 	job.Name = name
 	job.SourceAccountID = source.ID
 	job.DestinationAccountID = destination.ID
 	job.SourceDriveID = sourceDrive
+	job.SourceDriveName = sourceDriveName
+	job.SourceDriveKind = sourceDriveKind
+	job.SourceDriveOwner = sourceDriveOwner
 	job.SourceFolderID = sourceFolder
 	job.SourceFolderPath = sourcePath
 	job.DestinationDriveID = destDrive
+	job.DestinationDriveName = destDriveName
+	job.DestinationDriveKind = destDriveKind
+	job.DestinationDriveOwner = destDriveOwner
 	job.DestinationFolderID = destFolder
 	job.DestinationFolderPath = destPath
 	job.Direction = string(direction)

@@ -220,6 +220,8 @@
     "source": "स्रोत फ़ोल्डर",
     "destination": "गंतव्य फ़ोल्डर",
     "drive": "ड्राइव",
+    "myDrive": "मेरा ड्राइव",
+    "sharedDrive": "साझा ड्राइव",
     "oneDrive": "OneDrive",
     "sharePointLibrary": "SharePoint लाइब्रेरी",
     "selectRoot": "रूट चुनें",

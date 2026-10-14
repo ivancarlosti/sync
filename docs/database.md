@@ -79,6 +79,9 @@ account rotates the row (`uniqueIndex idx_account_identity` on
 | `name` | `VARCHAR(191)` | unique by convention, not by index |
 | `source_account_id`, `destination_account_id` | `BIGINT UNSIGNED` | indexed; no FK constraint (portability) |
 | `source_drive_id`, `source_folder_id`, `destination_drive_id`, `destination_folder_id` | `VARCHAR(191)` | provider item ids |
+| `source_drive_name`, `destination_drive_name` | `VARCHAR(191)` | display name of the root, as the provider listed it |
+| `source_drive_kind`, `destination_drive_kind` | `VARCHAR(32)` | `personal` \| `business` \| `shared` \| `document_library` |
+| `source_drive_owner`, `destination_drive_owner` | `VARCHAR(191)` | the drive URL (what tells two SharePoint libraries of one tenant apart) |
 | `source_folder_path`, `destination_folder_path` | `VARCHAR(1024)` | human readable, rendered by the UI without a provider call |
 | `direction` | `VARCHAR(32)` | `google_to_microsoft` \| `microsoft_to_google` \| `bidirectional` |
 | `conflict_policy` | `VARCHAR(32)` | `newest_wins` \| `source_wins` \| `destination_wins` \| `skip` |
@@ -109,10 +112,11 @@ ids of both sides, size, provider hash, both modification times, `last_synced_at
 detectable without hashing the whole tree on every run.
 
 `audit_runs` — one row per content audit (see [api.md](api.md) §8): the audited
-root (`account_id`, `account_email`, `provider`, `drive_id`, `root_folder_id`,
-`root_path`), `max_depth`, `status`/`trigger`/timing like `sync_runs`, and the
-summary counters `files`, `folders`, `total_size`, `max_depth_reached`,
-`truncated`.
+root (`account_id`, `account_email`, `provider`, `drive_id`, `drive_name`
+(`VARCHAR(191)`), `drive_kind` (`VARCHAR(32)`), `drive_owner` (`VARCHAR(191)`),
+`root_folder_id`, `root_path`), `max_depth`, `status`/`trigger`/timing like
+`sync_runs`, and the summary counters `files`, `folders`, `total_size`,
+`max_depth_reached`, `truncated`.
 
 `audit_entries` — the report of an audit: `audit_id` (indexed) + `kind`
 (`folder` \| `file`), `path`, `name`, `depth`, `size`, `total_size`, `files`,

@@ -39,7 +39,13 @@ const (
 type AuditInput struct {
 	AccountID uint
 	// DriveID and FolderID default to the drive root when empty.
-	DriveID    string
+	DriveID string
+	// DriveName, DriveKind and DriveOwner are the display parts of the root,
+	// mirroring providers.Drive. They are stored on the run so the history screen
+	// can name the root without a provider round trip; all three are optional.
+	DriveName  string
+	DriveKind  string
+	DriveOwner string
 	FolderID   string
 	FolderPath string
 	// Depth bounds the report, not the walk: nodes deeper than it are not
@@ -201,6 +207,9 @@ func (s *AuditService) createRun(ctx context.Context, account *models.ConnectedA
 		AccountEmail: account.Email,
 		Provider:     account.Provider,
 		DriveID:      driveOrDefault(input.DriveID),
+		DriveName:    strings.TrimSpace(input.DriveName),
+		DriveKind:    strings.TrimSpace(input.DriveKind),
+		DriveOwner:   strings.TrimSpace(input.DriveOwner),
 		RootFolderID: folderOrDefault(input.FolderID),
 		RootPath:     displayRoot(input.FolderPath),
 		MaxDepth:     input.Depth,

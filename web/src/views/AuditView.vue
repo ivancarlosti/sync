@@ -22,6 +22,7 @@ import Input from '@/components/ui/Input.vue';
 import Select from '@/components/ui/Select.vue';
 import Spinner from '@/components/ui/Spinner.vue';
 import { accountLabel } from '@/lib/accounts';
+import { driveFromAudit, driveLabel, type DriveIdentity } from '@/lib/drives';
 import {
   accounts as accountsApi,
   audits as auditsApi,
@@ -48,6 +49,12 @@ const accountId = ref(0);
 const driveId = ref('');
 const folderId = ref('');
 const folderPath = ref(ROOT_PATH);
+/**
+ * drive is the context of the root the selected folder sits in (see
+ * lib/drives.ts). It travels to the server with the ids so the history entry can
+ * name an OneDrive or a SharePoint library instead of showing a bare path.
+ */
+const drive = ref<DriveIdentity>({ name: '', kind: '', owner: '' });
 const depth = ref(0);
 
 const loading = ref(true);
@@ -175,6 +182,7 @@ function applyAccount(value: string | number): void {
   driveId.value = '';
   folderId.value = '';
   folderPath.value = ROOT_PATH;
+  drive.value = { name: '', kind: '', owner: '' };
 }
 
 /** applyFolders stores the folder the browser returned. */
@@ -182,7 +190,27 @@ function applyFolders(selection: FolderSelection): void {
   driveId.value = selection.driveId;
   folderId.value = selection.folderId;
   folderPath.value = selection.folderPath;
+  drive.value = selection.drive;
 }
+
+/**
+ * driveContext labels the root a run read from (My Drive, a shared drive, an
+ * OneDrive, a SharePoint library), so two audits of the same account are told
+ * apart. It is empty for a run stored before the drive columns existed.
+ */
+function driveContext(run: AuditRun): string {
+  return driveLabel(t, run.provider, driveFromAudit(run));
+}
+
+/** reportDescription names the account, the drive and the path of a report. */
+const reportDescription = computed(() => {
+  if (!detail.value) {
+    return '';
+  }
+  return [detail.value.account_email, driveContext(detail.value), detail.value.root_path]
+    .filter((part) => part !== '')
+    .join(' · ');
+});
 
 /** start launches an audit and refreshes the history. */
 async function start(): Promise<void> {
@@ -195,6 +223,9 @@ async function start(): Promise<void> {
     await auditsApi.start({
       account_id: accountId.value,
       drive_id: driveId.value,
+      drive_name: drive.value.name ?? '',
+      drive_kind: drive.value.kind ?? '',
+      drive_owner: drive.value.owner ?? '',
       folder_id: folderId.value,
       folder_path: folderPath.value,
       depth: depth.value,
@@ -350,7 +381,10 @@ onBeforeUnmount(clearTimer);
                   </span>
                 </span>
               </td>
-              <td class="break-anywhere px-3 py-2 text-muted-foreground">{{ run.root_path }}</td>
+              <td class="break-anywhere px-3 py-2 text-muted-foreground">
+                <p v-if="driveContext(run)" class="text-xs">{{ driveContext(run) }}</p>
+                <p>{{ run.root_path }}</p>
+              </td>
               <td class="px-3 py-2 text-end">
                 <span class="numeric">
                   {{ run.max_depth > 0 ? count(run.max_depth) : t('audit.depthUnlimited') }}
@@ -388,7 +422,7 @@ onBeforeUnmount(clearTimer);
     <Dialog
       v-model:open="detailOpen"
       :title="t('audit.report')"
-      :description="detail ? `${detail.account_email} · ${detail.root_path}` : ''"
+      :description="reportDescription"
       size="xl"
       :close-label="t('common.closeDialog')"
     >

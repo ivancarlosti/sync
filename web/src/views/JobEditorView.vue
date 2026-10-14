@@ -33,6 +33,7 @@ import {
   type JobPayload,
 } from '@/lib/api';
 import { accountLabel } from '@/lib/accounts';
+import { driveFromJob, driveLabel } from '@/lib/drives';
 import { ROOT_ID, ROOT_PATH, type FolderSelection } from '@/lib/folders';
 import { asNumber, asText, joinLines, splitLines } from '@/lib/forms';
 import { formatDateTime } from '@/lib/format';
@@ -127,16 +128,32 @@ function folderPath(which: 'source' | 'destination'): string {
   return value === '' ? ROOT_PATH : value;
 }
 
+/**
+ * driveContext labels the root one side sits in (My Drive, a shared drive, an
+ * OneDrive, a SharePoint library) so the account and the path are not the only
+ * things naming the location. It is empty while no folder was picked, and for a
+ * job stored before the drive columns existed.
+ */
+function driveContext(which: 'source' | 'destination'): string {
+  return driveLabel(t, account(which)?.provider ?? '', driveFromJob(draft.value, which));
+}
+
 /** applyFolders stores what the browser returned for one side. */
 function applyFolders(which: 'source' | 'destination', selection: FolderSelection): void {
   if (which === 'source') {
     draft.value.source_drive_id = selection.driveId;
+    draft.value.source_drive_name = selection.drive.name ?? '';
+    draft.value.source_drive_kind = selection.drive.kind ?? '';
+    draft.value.source_drive_owner = selection.drive.owner ?? '';
     draft.value.source_folder_id = selection.folderId;
     draft.value.source_folder_path = selection.folderPath;
     delete errors.value.source;
     return;
   }
   draft.value.destination_drive_id = selection.driveId;
+  draft.value.destination_drive_name = selection.drive.name ?? '';
+  draft.value.destination_drive_kind = selection.drive.kind ?? '';
+  draft.value.destination_drive_owner = selection.drive.owner ?? '';
   draft.value.destination_folder_id = selection.folderId;
   draft.value.destination_folder_path = selection.folderPath;
   delete errors.value.destination;
@@ -511,6 +528,9 @@ onMounted(load);
                   {{ t('browser.browse') }}
                 </Button>
               </div>
+              <p v-if="driveContext('source')" class="text-xs text-muted-foreground">
+                {{ driveContext('source') }}
+              </p>
               <p v-if="errors.source" class="text-xs text-destructive">{{ t(errors.source) }}</p>
             </div>
           </div>
@@ -555,6 +575,9 @@ onMounted(load);
                   {{ t('browser.browse') }}
                 </Button>
               </div>
+              <p v-if="driveContext('destination')" class="text-xs text-muted-foreground">
+                {{ driveContext('destination') }}
+              </p>
               <p v-if="errors.destination" class="text-xs text-destructive">
                 {{ t(errors.destination) }}
               </p>

@@ -220,6 +220,8 @@
     "source": "Carpeta de origen",
     "destination": "Carpeta de destino",
     "drive": "Unidad",
+    "myDrive": "Mi unidad",
+    "sharedDrive": "Unidad compartida",
     "oneDrive": "OneDrive",
     "sharePointLibrary": "Biblioteca de SharePoint",
     "selectRoot": "Seleccione una raíz",

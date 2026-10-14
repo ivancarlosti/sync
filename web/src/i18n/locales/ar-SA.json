@@ -220,6 +220,8 @@
     "source": "مجلد المصدر",
     "destination": "مجلد الهدف",
     "drive": "المحرك",
+    "myDrive": "الدرايف الخاص بي",
+    "sharedDrive": "الدرايف المشترك",
     "oneDrive": "OneDrive",
     "sharePointLibrary": "مكتبة SharePoint",
     "selectRoot": "اختر جذرًا",

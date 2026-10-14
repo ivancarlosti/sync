@@ -18,6 +18,9 @@ import (
 type auditInput struct {
 	AccountID  uint   `json:"account_id"`
 	DriveID    string `json:"drive_id"`
+	DriveName  string `json:"drive_name"`
+	DriveKind  string `json:"drive_kind"`
+	DriveOwner string `json:"drive_owner"`
 	FolderID   string `json:"folder_id"`
 	FolderPath string `json:"folder_path"`
 	// Depth bounds the report, not the walk: deeper nodes are counted but not
@@ -88,6 +91,9 @@ func (s *Server) handleStartAudit(c *gin.Context) {
 	run, err := s.deps.Audit.Start(c.Request.Context(), services.AuditInput{
 		AccountID:  input.AccountID,
 		DriveID:    input.DriveID,
+		DriveName:  driveLabel(input.DriveName, driveNameWidth),
+		DriveKind:  driveLabel(input.DriveKind, driveKindWidth),
+		DriveOwner: driveLabel(input.DriveOwner, driveOwnerWidth),
 		FolderID:   input.FolderID,
 		FolderPath: input.FolderPath,
 		Depth:      input.Depth,

@@ -32,6 +32,7 @@ import {
   type ConnectedAccount,
   type SyncJob,
 } from '@/lib/api';
+import { driveFromJob, driveLabel } from '@/lib/drives';
 import { formatDateTime, formatRelative } from '@/lib/format';
 import { payloadFromJob, scheduleLabel } from '@/lib/jobs';
 import { useFeedbackStore } from '@/stores/feedback';
@@ -79,6 +80,18 @@ function accountLabel(id: number): string {
     return t('common.unknown');
   }
   return accountLabelOf(account);
+}
+
+/**
+ * driveContext labels the root one end of a job sits in (My Drive, a shared
+ * drive, an OneDrive, a SharePoint library), so two locations on the same
+ * account are told apart. It is empty for a job stored before the drive columns
+ * existed, which is what keeps those rows rendering exactly as before.
+ */
+function driveContext(job: SyncJob, which: 'source' | 'destination'): string {
+  const accountId = which === 'source' ? job.source_account_id : job.destination_account_id;
+  const provider = accountsById.value.get(accountId)?.provider ?? '';
+  return driveLabel(t, provider, driveFromJob(job, which));
 }
 
 /** when renders a timestamp of the API, or an em dash when it is missing. */
@@ -253,12 +266,18 @@ onMounted(load);
               </td>
               <td class="px-4 py-3">
                 <p>{{ accountLabel(job.source_account_id) }}</p>
+                <p v-if="driveContext(job, 'source')" class="text-xs text-muted-foreground">
+                  {{ driveContext(job, 'source') }}
+                </p>
                 <p class="text-xs text-muted-foreground">
                   {{ job.source_folder_path || t('browser.root') }}
                 </p>
               </td>
               <td class="px-4 py-3">
                 <p>{{ accountLabel(job.destination_account_id) }}</p>
+                <p v-if="driveContext(job, 'destination')" class="text-xs text-muted-foreground">
+                  {{ driveContext(job, 'destination') }}
+                </p>
                 <p class="text-xs text-muted-foreground">
                   {{ job.destination_folder_path || t('browser.root') }}
                 </p>

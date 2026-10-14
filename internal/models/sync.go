@@ -13,10 +13,22 @@ type SyncJob struct {
 	SourceAccountID      uint `gorm:"index" json:"source_account_id"`
 	DestinationAccountID uint `gorm:"index" json:"destination_account_id"`
 
-	SourceDriveID         string `gorm:"size:191" json:"source_drive_id"`
-	SourceFolderID        string `gorm:"size:191" json:"source_folder_id"`
-	SourceFolderPath      string `gorm:"size:1024" json:"source_folder_path"`
+	// The drive fields name the root both ends sit in. The id identifies it,
+	// while name/kind/owner are the human readable parts the folder picker
+	// showed (see providers.Drive), so the job list can tell an OneDrive from a
+	// SharePoint library — and one library's site from another — without a
+	// provider round trip. They stay empty on jobs created before they existed.
+	SourceDriveID    string `gorm:"size:191" json:"source_drive_id"`
+	SourceDriveName  string `gorm:"size:191" json:"source_drive_name"`
+	SourceDriveKind  string `gorm:"size:32" json:"source_drive_kind"`
+	SourceDriveOwner string `gorm:"size:191" json:"source_drive_owner"`
+	SourceFolderID   string `gorm:"size:191" json:"source_folder_id"`
+	SourceFolderPath string `gorm:"size:1024" json:"source_folder_path"`
+
 	DestinationDriveID    string `gorm:"size:191" json:"destination_drive_id"`
+	DestinationDriveName  string `gorm:"size:191" json:"destination_drive_name"`
+	DestinationDriveKind  string `gorm:"size:32" json:"destination_drive_kind"`
+	DestinationDriveOwner string `gorm:"size:191" json:"destination_drive_owner"`
 	DestinationFolderID   string `gorm:"size:191" json:"destination_folder_id"`
 	DestinationFolderPath string `gorm:"size:1024" json:"destination_folder_path"`
 

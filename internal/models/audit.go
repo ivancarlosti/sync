@@ -16,7 +16,15 @@ type AuditRun struct {
 
 	// The root of the report: the drive and folder the operator picked, plus the
 	// human readable path so the UI names it without walking the tree again.
+	//
+	// DriveName/Kind/Owner are the display parts of the root (see
+	// providers.Drive): they are what tells an OneDrive from a SharePoint
+	// library, and one library's site from another, on the history screen. They
+	// stay empty on runs created before they existed.
 	DriveID      string `gorm:"size:191" json:"drive_id"`
+	DriveName    string `gorm:"size:191" json:"drive_name"`
+	DriveKind    string `gorm:"size:32" json:"drive_kind"`
+	DriveOwner   string `gorm:"size:191" json:"drive_owner"`
 	RootFolderID string `gorm:"size:191" json:"root_folder_id"`
 	RootPath     string `gorm:"size:1024" json:"root_path"`
 	// MaxDepth bounds the *report*, not the walk: nodes deeper than it are not

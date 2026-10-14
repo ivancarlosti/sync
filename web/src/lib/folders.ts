@@ -4,6 +4,7 @@
 // stores the human readable path next to them (so a job list can name the folders
 // without walking the tree). Both halves are produced together by the picker, so
 // they travel as one value.
+import { type DriveIdentity } from '@/lib/drives';
 
 /** FolderSelection is what the folder browser returns to the job editor. */
 export interface FolderSelection {
@@ -12,6 +13,13 @@ export interface FolderSelection {
   folderId: string;
   /** folderPath is the display path; `/` stands for the root. */
   folderPath: string;
+  /**
+   * drive is the context of the root the folder sits in: its name, kind and
+   * owner, exactly as the provider listed it. It travels with the ids and the
+   * path so the caller can label the location (My Drive, a shared drive, an
+   * OneDrive, a SharePoint library) without asking the provider again.
+   */
+  drive: DriveIdentity;
 }
 
 /** ROOT_PATH is how the API path of a drive root is displayed. */
