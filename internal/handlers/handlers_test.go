@@ -152,6 +152,7 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 		Auth:        services.NewAuthService(cfg, store),
 		OAuth:       services.NewOAuthService(store, registry, creds, tokens),
 		Tokens:      tokens,
+		APITokens:   services.NewAPITokenService(store),
 		Credentials: creds,
 		Guide:       services.NewGuideService(registry, creds),
 		Registry:    registry,
@@ -300,14 +301,17 @@ func withProviders(extra []providers.Provider) []providers.Provider {
 // provider that answers from memory; it records what it was asked for and can be
 // made to fail on demand.
 type stubProvider struct {
-	name      models.ProviderName
-	account   providers.Account
-	drives    []providers.Drive
-	sites     []providers.Drive
-	children  []providers.Item
-	failure   error
-	asked     []string
-	refreshes int
+	name     models.ProviderName
+	account  providers.Account
+	drives   []providers.Drive
+	sites    []providers.Drive
+	children []providers.Item
+	// childrenByFolder overrides the canned listing of one folder, so a test can
+	// describe a real tree instead of a single flat listing.
+	childrenByFolder map[string][]providers.Item
+	failure          error
+	asked            []string
+	refreshes        int
 }
 
 // Name identifies the stub, which replaces the built-in implementation of the
@@ -375,6 +379,9 @@ func (p *stubProvider) Children(ctx context.Context, creds providers.Credentials
 		return nil, p.failure
 	}
 	p.asked = append(p.asked, driveID+"/"+folderID)
+	if items, ok := p.childrenByFolder[folderID]; ok {
+		return items, nil
+	}
 	return p.children, nil
 }
 
@@ -2317,6 +2324,13 @@ func TestAuditLifecycle(t *testing.T) {
 			{ID: "folder-1", Name: "albums", IsDir: true},
 			{ID: "file-1", Name: "Alpha.txt", Size: 20, ModifiedAt: fixedNow},
 		},
+		// A real tree below the folders: `albums` holds one file and `Archive` is
+		// empty. The nested file stays out of a depth 1 report, but its bytes must
+		// still reach the totals of its folder and of the run.
+		childrenByFolder: map[string][]providers.Item{
+			"folder-1": {{ID: "file-3", Name: "inside.txt", Size: 5}},
+			"folder-2": {},
+		},
 	}
 	server, store := newTestServerWith(t, models.AuthModeNone, testOptions{
 		configure: func(cfg *config.Config) {
@@ -2367,12 +2381,16 @@ func TestAuditLifecycle(t *testing.T) {
 	if finished.Status != string(models.RunSuccess) {
 		t.Fatalf("status = %q (%s)", finished.Status, finished.Message)
 	}
-	if finished.Files != 2 || finished.Folders != 3 || finished.TotalSize != 30 {
-		t.Fatalf("summary = files %d, folders %d, size %d; want 2, 3, 30",
+	if finished.Files != 3 || finished.Folders != 3 || finished.TotalSize != 35 {
+		t.Fatalf("summary = files %d, folders %d, size %d; want 3, 3, 35 (the nested file of `albums` counts)",
 			finished.Files, finished.Folders, finished.TotalSize)
 	}
+	if finished.MaxDepthReached != 2 {
+		t.Fatalf("max depth = %d, want 2: the depth bounds the report, not the walk", finished.MaxDepthReached)
+	}
 
-	// The report reads in DFS preorder, folders first then files.
+	// The report reads in DFS preorder, folders first then files, and stops at the
+	// requested depth: `inside.txt` is counted but never listed.
 	id := strconv.FormatUint(uint64(started.Audit.ID), 10)
 	recorder = call(t, server, http.MethodGet, "/api/audits/"+id, nil)
 	requireStatus(t, recorder, http.StatusOK)
@@ -2389,8 +2407,15 @@ func TestAuditLifecycle(t *testing.T) {
 			t.Fatalf("entry %d = %q, want %q", i, report.Entries[i].Path, want)
 		}
 	}
-	if report.Entries[1].Expanded || report.Entries[1].TotalSize != 0 {
-		t.Fatalf("boundary folder = %+v, want it reported but not expanded", report.Entries[1])
+	// The boundary folder is listed with its exact subtree and says through Listed
+	// that its children are not part of the report; the root aggregates everything.
+	boundary := report.Entries[1]
+	if !boundary.Expanded || boundary.Listed || boundary.TotalSize != 5 || boundary.Files != 1 {
+		t.Fatalf("boundary folder = %+v, want a walked, unlisted folder whose 5 bytes are counted", boundary)
+	}
+	root := report.Entries[0]
+	if !root.Listed || root.TotalSize != 35 || root.Files != 3 || root.Folders != 2 {
+		t.Fatalf("root entry = %+v, want the exact totals of the whole tree", root)
 	}
 
 	// The history lists it.
@@ -2416,10 +2441,13 @@ func TestAuditLifecycle(t *testing.T) {
 	if !strings.HasPrefix(body, "\ufeff") {
 		t.Fatal("the CSV must start with a UTF-8 BOM")
 	}
-	if !strings.Contains(body, "kind,path,name,depth,size,total_size,files,folders,expanded,modified_at,mime_type") {
+	if !strings.Contains(body, "kind,path,name,depth,size,total_size,files,folders,expanded,listed,modified_at,mime_type") {
 		t.Fatalf("the CSV header is missing: %q", body)
 	}
-	if !strings.Contains(body, "file,Alpha.txt,Alpha.txt,1,20,20,1,0,false,") {
+	if !strings.Contains(body, "folder,albums,albums,1,0,5,1,0,true,false,,") {
+		t.Fatalf("the CSV must carry the counted subtree of a folder whose children are not listed: %q", body)
+	}
+	if !strings.Contains(body, "file,Alpha.txt,Alpha.txt,1,20,20,1,0,false,false,"+fixedNow.Format(time.RFC3339)+",") {
 		t.Fatalf("the CSV rows are missing: %q", body)
 	}
 
@@ -2446,4 +2474,382 @@ func TestAuditLifecycle(t *testing.T) {
 	if !pruned.Pruned || pruned.Keep != defaultKeepAudits {
 		t.Fatalf("prune answer = %+v, want the default retention %d", pruned, defaultKeepAudits)
 	}
+}
+
+// -----------------------------------------------------------------------------
+// API tokens
+// -----------------------------------------------------------------------------
+
+// callWithHeader performs one request against the router with one extra header,
+// which is how the token endpoints are exercised (Authorization: Bearer …).
+func callWithHeader(t *testing.T, server *Server, method, path, header, value string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("encoding the request body: %v", err)
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	request := httptest.NewRequest(method, path, reader)
+	if reader != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	request.Header.Set(header, value)
+	recorder := httptest.NewRecorder()
+	server.Router().ServeHTTP(recorder, request)
+	return recorder
+}
+
+// TestAPITokenEndpoints follows the administration of a token end to end: the
+// secret is answered once, the token authenticates a request, a read-only token
+// is refused on a write, and revoke/delete take it away.
+func TestAPITokenEndpoints(t *testing.T) {
+	server, _ := newTestServer(t, models.AuthModeNone)
+
+	// An unnamed token is refused before anything is written.
+	recorder := call(t, server, http.MethodPost, "/api/tokens", map[string]any{"name": "  "})
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
+
+	// Creating a read-only token answers the secret, exactly once.
+	recorder = call(t, server, http.MethodPost, "/api/tokens", map[string]any{
+		"name":            "cost exporter",
+		"scopes":          []string{"read"},
+		"expires_in_days": 30,
+	})
+	requireStatus(t, recorder, http.StatusCreated)
+	created := decodeJSON[struct {
+		Token  apiTokenView `json:"token"`
+		Secret string       `json:"secret"`
+	}](t, recorder)
+	if created.Token.ID == 0 || created.Token.Name != "cost exporter" || created.Token.State != "active" {
+		t.Fatalf("created token = %+v", created.Token)
+	}
+	if created.Token.ExpiresAt == nil || !created.Token.ExpiresAt.After(fixedNow) {
+		t.Fatalf("expiry = %v, want the requested 30 days", created.Token.ExpiresAt)
+	}
+	if len(created.Token.Scopes) != 1 || created.Token.Scopes[0] != models.ScopeRead {
+		t.Fatalf("scopes = %v, want read only", created.Token.Scopes)
+	}
+	rest, ok := strings.CutPrefix(created.Secret, "sync_")
+	if !ok {
+		t.Fatalf("secret = %q, want the sync_ prefix", created.Secret)
+	}
+	prefix, _, ok := strings.Cut(rest, ".")
+	if !ok || prefix != created.Token.Prefix {
+		t.Fatalf("secret = %q, want sync_%s.<secret>", created.Secret, created.Token.Prefix)
+	}
+
+	// The list never carries a secret, only the public prefix.
+	recorder = call(t, server, http.MethodGet, "/api/tokens", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	listed := decodeJSON[struct {
+		Tokens []apiTokenView `json:"tokens"`
+		Scopes []string       `json:"scopes"`
+	}](t, recorder)
+	if len(listed.Tokens) != 1 || len(listed.Scopes) != 2 {
+		t.Fatalf("tokens = %+v, scopes = %v", listed.Tokens, listed.Scopes)
+	}
+	if body := recorder.Body.String(); strings.Contains(body, created.Secret) || strings.Contains(body, "\"hash\"") {
+		t.Fatalf("the list leaks the secret: %s", body)
+	}
+
+	// The token authenticates a read.
+	recorder = callWithHeader(t, server, http.MethodGet, "/api/stats", "Authorization", "Bearer "+created.Secret, nil)
+	requireStatus(t, recorder, http.StatusOK)
+
+	// …and the session endpoint reports it as the operator of the request.
+	recorder = callWithHeader(t, server, http.MethodGet, "/api/auth/session", "Authorization", "Bearer "+created.Secret, nil)
+	requireStatus(t, recorder, http.StatusOK)
+	operator := decodeJSON[struct {
+		Operator services.Identity `json:"operator"`
+	}](t, recorder)
+	if operator.Operator.Token != "cost exporter" || operator.Operator.Method != models.AuthModeToken {
+		t.Fatalf("operator = %+v, want the API-token identity", operator.Operator)
+	}
+
+	// The `X-API-Key` header is accepted too.
+	recorder = callWithHeader(t, server, http.MethodGet, "/api/stats", "X-API-Key", created.Secret, nil)
+	requireStatus(t, recorder, http.StatusOK)
+
+	// A read-only token cannot write, and a wrong secret authenticates nothing.
+	recorder = callWithHeader(t, server, http.MethodPost, "/api/maintenance/oauth/states/prune", "Authorization", "Bearer "+created.Secret, nil)
+	requireStatus(t, recorder, http.StatusForbidden)
+	requireErrorCode(t, recorder, codeForbidden)
+
+	recorder = callWithHeader(t, server, http.MethodGet, "/api/stats", "Authorization", "Bearer sync_"+prefix+".wrong", nil)
+	requireStatus(t, recorder, http.StatusUnauthorized)
+}
+
+// TestAPITokenRegenerateRevokeAndDelete covers the rest of the token lifecycle:
+// the old secret dies with the regeneration, revoke is idempotent, and delete
+// removes the row (a stale identifier is then a 400 from the path parser only
+// when it is not a number).
+func TestAPITokenRegenerateRevokeAndDelete(t *testing.T) {
+	server, _ := newTestServer(t, models.AuthModeNone)
+
+	recorder := call(t, server, http.MethodPost, "/api/tokens", map[string]any{"name": "writer"})
+	requireStatus(t, recorder, http.StatusCreated)
+	created := decodeJSON[struct {
+		Token  apiTokenView `json:"token"`
+		Secret string       `json:"secret"`
+	}](t, recorder)
+	if len(created.Token.Scopes) != 2 {
+		t.Fatalf("scopes = %v, want read and write by default", created.Token.Scopes)
+	}
+
+	// A write token may write.
+	recorder = callWithHeader(t, server, http.MethodPost, "/api/maintenance/oauth/states/prune", "Authorization", "Bearer "+created.Secret, nil)
+	requireStatus(t, recorder, http.StatusOK)
+
+	// Regenerating replaces the credential in place.
+	id := strconv.FormatUint(uint64(created.Token.ID), 10)
+	recorder = call(t, server, http.MethodPost, "/api/tokens/"+id+"/regenerate", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	regenerated := decodeJSON[struct {
+		Token  apiTokenView `json:"token"`
+		Secret string       `json:"secret"`
+	}](t, recorder)
+	if regenerated.Secret == created.Secret || regenerated.Token.Prefix == created.Token.Prefix || regenerated.Token.ID != created.Token.ID {
+		t.Fatalf("regenerated = %+v, want the same row with a new credential", regenerated.Token)
+	}
+	recorder = callWithHeader(t, server, http.MethodGet, "/api/stats", "Authorization", "Bearer "+created.Secret, nil)
+	requireStatus(t, recorder, http.StatusUnauthorized)
+	recorder = callWithHeader(t, server, http.MethodGet, "/api/stats", "Authorization", "Bearer "+regenerated.Secret, nil)
+	requireStatus(t, recorder, http.StatusOK)
+
+	// Revoking is idempotent, keeps the row and the credential stops working.
+	recorder = call(t, server, http.MethodPost, "/api/tokens/"+id+"/revoke", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	revoked := decodeJSON[struct {
+		Token apiTokenView `json:"token"`
+	}](t, recorder)
+	if revoked.Token.State != "revoked" || revoked.Token.RevokedAt == nil {
+		t.Fatalf("revoked token = %+v", revoked.Token)
+	}
+	recorder = call(t, server, http.MethodPost, "/api/tokens/"+id+"/revoke", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	recorder = callWithHeader(t, server, http.MethodGet, "/api/stats", "Authorization", "Bearer "+regenerated.Secret, nil)
+	requireStatus(t, recorder, http.StatusUnauthorized)
+	// A revoked token cannot be regenerated.
+	recorder = call(t, server, http.MethodPost, "/api/tokens/"+id+"/regenerate", nil)
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
+
+	// Deleting removes the row for good.
+	recorder = call(t, server, http.MethodDelete, "/api/tokens/"+id, nil)
+	requireStatus(t, recorder, http.StatusNoContent)
+	if _, err := server.deps.Store.GetAPIToken(context.Background(), created.Token.ID); !errors.Is(err, services.ErrNotFound) {
+		t.Fatalf("the token is still stored: %v", err)
+	}
+
+	// A malformed identifier is a 400; an unknown but well formed one is a 404.
+	recorder = call(t, server, http.MethodDelete, "/api/tokens/not-a-number", nil)
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
+	recorder = call(t, server, http.MethodPost, "/api/tokens/4242/revoke", nil)
+	requireStatus(t, recorder, http.StatusNotFound)
+	requireErrorCode(t, recorder, codeNotFound)
+}
+
+// -----------------------------------------------------------------------------
+// Billing
+// -----------------------------------------------------------------------------
+
+// seedBilling stores one job, one run and the two traffic rows of that run, which
+// is everything the billing endpoints read.
+func seedBilling(t *testing.T, store *services.Store) (*models.SyncJob, *models.SyncRun) {
+	t.Helper()
+	ctx := context.Background()
+	job := &models.SyncJob{Name: "nightly", Enabled: true, Direction: string(models.DirectionGoogleToMicrosoft)}
+	if err := store.SaveJob(ctx, job); err != nil {
+		t.Fatalf("saving the job: %v", err)
+	}
+	started := time.Date(2026, 9, 27, 1, 0, 0, 0, time.UTC)
+	run := &models.SyncRun{
+		JobID: job.ID, JobName: job.Name, Status: string(models.RunSuccess),
+		Trigger: string(models.TriggerScheduled), StartedAt: started,
+	}
+	if err := store.CreateRun(ctx, run); err != nil {
+		t.Fatalf("creating the run: %v", err)
+	}
+	rows := []models.TrafficEntry{
+		{
+			RunID: run.ID, JobID: job.ID, AccountID: 1, AccountEmail: "source@example.test", Provider: "google",
+			Direction: string(models.TrafficInbound), Bytes: 2048, Files: 2,
+			Day: "2026-09-27", Month: "2026-09", StartedAt: started,
+		},
+		{
+			RunID: run.ID, JobID: job.ID, AccountID: 2, AccountEmail: "target@example.test", Provider: "microsoft",
+			Direction: string(models.TrafficOutbound), Bytes: 2048, Files: 2, Operations: 3,
+			Day: "2026-09-27", Month: "2026-09", StartedAt: started,
+		},
+	}
+	if err := store.SaveTraffic(ctx, rows); err != nil {
+		t.Fatalf("saving the traffic: %v", err)
+	}
+	return job, run
+}
+
+// TestBillingEndpoints checks the JSON report, the per-run breakdown, the run
+// detail and the CSV export, including the schema that labels them.
+func TestBillingEndpoints(t *testing.T) {
+	server, store := newTestServer(t, models.AuthModeNone)
+	_, run := seedBilling(t, store)
+
+	// The default report is grouped by day and covers the window it was given.
+	recorder := call(t, server, http.MethodGet, "/api/billing?from=2026-09-01&to=2026-09-30", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	report := decodeJSON[struct {
+		GroupBy string                 `json:"group_by"`
+		Schema  services.BillingSchema `json:"schema"`
+		Rows    []services.BillingRow  `json:"rows"`
+		Total   services.TrafficTotals `json:"total"`
+	}](t, recorder)
+	if report.GroupBy != services.BillingByDay || len(report.Rows) != 1 {
+		t.Fatalf("report = %+v, want one day", report)
+	}
+	if report.Schema.ID != services.BillingSchemaNone || report.Schema.Unit != "B" {
+		t.Fatalf("schema = %+v, want the bare-bytes default", report.Schema)
+	}
+	if row := report.Rows[0]; row.Day != "2026-09-27" || row.Inbound.Bytes != 2048 || row.Outbound.Operations != 3 {
+		t.Fatalf("row = %+v, want the day bucket of the run", row)
+	}
+	if report.Total.Bytes != 4096 || report.Total.Files != 4 || report.Total.Operations != 3 {
+		t.Fatalf("total = %+v, want both directions summed", report.Total)
+	}
+
+	// Every grouping answers (the account one splits the two accounts).
+	for _, query := range []string{"group_by=month", "group_by=run"} {
+		recorder = call(t, server, http.MethodGet, "/api/billing?"+query+"&from=2026-09-01&to=2026-09-30", nil)
+		requireStatus(t, recorder, http.StatusOK)
+		if got := decodeJSON[struct {
+			Rows []services.BillingRow `json:"rows"`
+		}](t, recorder); len(got.Rows) != 1 {
+			t.Fatalf("%s returned %d rows, want 1", query, len(got.Rows))
+		}
+	}
+	recorder = call(t, server, http.MethodGet, "/api/billing?group_by=account&from=2026-09-01&to=2026-09-30", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	if got := decodeJSON[struct {
+		Rows []services.BillingRow `json:"rows"`
+	}](t, recorder); len(got.Rows) != 2 {
+		t.Fatalf("group_by=account returned %d rows, want one per account", len(got.Rows))
+	}
+
+	// The per-run breakdown carries the individual rows of the window.
+	recorder = call(t, server, http.MethodGet, "/api/billing/runs?from=2026-09-01&to=2026-09-30", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	breakdown := decodeJSON[struct {
+		Traffic []models.TrafficEntry `json:"traffic"`
+	}](t, recorder)
+	if len(breakdown.Traffic) != 2 {
+		t.Fatalf("traffic = %+v, want the two rows of the run", breakdown.Traffic)
+	}
+
+	// The run detail shows the same traffic beside the per-file items.
+	id := strconv.FormatUint(uint64(run.ID), 10)
+	recorder = call(t, server, http.MethodGet, "/api/runs/"+id, nil)
+	requireStatus(t, recorder, http.StatusOK)
+	detail := decodeJSON[struct {
+		Traffic []models.TrafficEntry `json:"traffic"`
+	}](t, recorder)
+	if len(detail.Traffic) != 2 {
+		t.Fatalf("run traffic = %+v, want the two rows", detail.Traffic)
+	}
+}
+
+// TestBillingExportAndValidation checks the CSV contract, the input validation and
+// that the report follows the billing schema of Admin > Settings.
+func TestBillingExportAndValidation(t *testing.T) {
+	server, store := newTestServer(t, models.AuthModeNone)
+	seedBilling(t, store)
+
+	// The export is a CSV with a stable English header and the byte quantities.
+	recorder := call(t, server, http.MethodGet, "/api/billing/export?from=2026-09-01&to=2026-09-30", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	if ct := recorder.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/csv") {
+		t.Fatalf("content-type = %q, want text/csv", ct)
+	}
+	if cd := recorder.Header().Get("Content-Disposition"); !strings.Contains(cd, "billing-day-2026-09-01-to-2026-09-30.csv") {
+		t.Fatalf("content-disposition = %q, want the dated file name", cd)
+	}
+	body := recorder.Body.String()
+	if !strings.HasPrefix(body, "\ufeff") {
+		t.Fatal("the billing CSV must start with a UTF-8 BOM")
+	}
+	if !strings.Contains(body, "bucket,day,month,account_id,account_email,run_id,job_id,inbound,outbound,operations,total,cost,unit,currency") {
+		t.Fatalf("the CSV header is missing: %q", body)
+	}
+	if !strings.Contains(body, "2026-09-27,2026-09-27,,,,,,2048,2048,3,4096,,B,USD") {
+		t.Fatalf("the CSV row is missing or mislabelled: %q", body)
+	}
+
+	// A malformed date and an unknown grouping are validation errors.
+	recorder = call(t, server, http.MethodGet, "/api/billing?from=27-09-2026", nil)
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
+	recorder = call(t, server, http.MethodGet, "/api/billing?group_by=weekly", nil)
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
+	recorder = call(t, server, http.MethodGet, "/api/billing?account_id=abc", nil)
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
+
+	// The schema of the report follows Admin > Settings, and the settings answer
+	// carries the presets for the form.
+	recorder = call(t, server, http.MethodGet, "/api/settings", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	settings := decodeJSON[struct {
+		Schemas []services.BillingSchema `json:"billing_schemas"`
+		Default string                   `json:"billing_schema_default"`
+	}](t, recorder)
+	if len(settings.Schemas) != 5 || settings.Default == "" {
+		t.Fatalf("schemas = %+v, want the five presets and the custom document", settings.Schemas)
+	}
+
+	recorder = call(t, server, http.MethodPut, "/api/settings", map[string]any{
+		"default_locale":                "en-US",
+		"default_theme":                 "system",
+		"sync_default_interval_minutes": 60,
+		"sync_run_timeout_minutes":      30,
+		"billing_schema":                "oci",
+		"billing_schema_custom":         "",
+		"billing_rate_per_gib":          0.01,
+		"billing_currency":              "usd",
+	})
+	requireStatus(t, recorder, http.StatusOK)
+
+	recorder = call(t, server, http.MethodGet, "/api/billing?from=2026-09-01&to=2026-09-30", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	priced := decodeJSON[struct {
+		Schema services.BillingSchema `json:"schema"`
+	}](t, recorder)
+	if priced.Schema.ID != services.BillingSchemaOCI || priced.Schema.Unit != "GiB" || priced.Schema.Currency != "USD" {
+		t.Fatalf("schema = %+v, want the priced OCI schema", priced.Schema)
+	}
+	recorder = call(t, server, http.MethodGet, "/api/billing/export?from=2026-09-01&to=2026-09-30", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	// The cost column prices the window with the configured rate (0.01 per GiB of
+	// the 4096 bytes of the two directions) and the quantities switch to GiB.
+	wantCost := strconv.FormatFloat(float64(4096)/(1024*1024*1024)*0.01, 'f', 6, 64)
+	if body = recorder.Body.String(); !strings.Contains(body, wantCost+",GiB,USD") {
+		t.Fatalf("the priced CSV is missing the cost and the unit: %q", body)
+	}
+
+	// An unknown schema is refused by the settings validation.
+	recorder = call(t, server, http.MethodPut, "/api/settings", map[string]any{
+		"default_locale":                "en-US",
+		"default_theme":                 "system",
+		"sync_default_interval_minutes": 60,
+		"sync_run_timeout_minutes":      30,
+		"billing_schema":                "weekly",
+		"billing_schema_custom":         "",
+		"billing_rate_per_gib":          0,
+		"billing_currency":              "USD",
+	})
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
 }

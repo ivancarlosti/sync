@@ -49,6 +49,12 @@ type Identity struct {
 	Method        models.AuthMode `json:"method"`
 	Admin         bool            `json:"admin"`
 	ExpiresAt     time.Time       `json:"expires_at,omitempty"`
+	// Token is the name of the API token that authenticated the request; it is
+	// empty for a browser session (see docs/authentication.md).
+	Token string `json:"token,omitempty"`
+	// Scopes is what an API token is allowed to do. A session carries no scopes,
+	// which means "everything an administrator may do".
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // Session is a signed cookie value plus the identity it carries.

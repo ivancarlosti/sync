@@ -20,8 +20,8 @@ type auditInput struct {
 	DriveID    string `json:"drive_id"`
 	FolderID   string `json:"folder_id"`
 	FolderPath string `json:"folder_path"`
-	// Depth is how many folder levels below the selected folder are analysed; 0
-	// is unlimited.
+	// Depth bounds the report, not the walk: deeper nodes are counted but not
+	// listed. 0 is unlimited.
 	Depth int `json:"depth"`
 }
 
@@ -44,6 +44,7 @@ type auditEntryView struct {
 	Files      int        `json:"files"`
 	Folders    int        `json:"folders"`
 	Expanded   bool       `json:"expanded"`
+	Listed     bool       `json:"listed"`
 	ModifiedAt *time.Time `json:"modified_at,omitempty"`
 	MimeType   string     `json:"mime_type,omitempty"`
 }
@@ -68,6 +69,7 @@ func newAuditEntryViews(entries []models.AuditEntry) []auditEntryView {
 			Files:      entry.Files,
 			Folders:    entry.Folders,
 			Expanded:   entry.Expanded,
+			Listed:     entry.Listed,
 			ModifiedAt: entry.ModifiedAt,
 			MimeType:   entry.MimeType,
 		})
@@ -149,7 +151,7 @@ func (s *Server) handleCancelAudit(c *gin.Context) {
 // data export, not a UI string), matching the documentation in docs/api.md.
 var auditCSVHeader = []string{
 	"kind", "path", "name", "depth", "size", "total_size",
-	"files", "folders", "expanded", "modified_at", "mime_type",
+	"files", "folders", "expanded", "listed", "modified_at", "mime_type",
 }
 
 // handleExportAudit answers GET /api/audits/:id/export: it streams the persisted
@@ -201,6 +203,7 @@ func (s *Server) handleExportAudit(c *gin.Context) {
 			strconv.Itoa(entry.Files),
 			strconv.Itoa(entry.Folders),
 			strconv.FormatBool(entry.Expanded),
+			strconv.FormatBool(entry.Listed),
 			modified,
 			entry.MimeType,
 		}

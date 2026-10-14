@@ -124,9 +124,13 @@ export interface Identity {
   email?: string;
   name?: string;
   picture?: string;
-  method: AuthMode;
+  method: AuthMode | 'token';
   admin: boolean;
   expires_at?: string;
+  /** token is the name of the API token that authenticated the request. */
+  token?: string;
+  /** scopes is what an API token may do; a session carries none (it may do all). */
+  scopes?: string[];
 }
 
 /** AppSettings are the defaults an administrator can change in Admin > Settings. */
@@ -135,6 +139,82 @@ export interface AppSettings {
   default_theme: string;
   sync_default_interval_minutes: number;
   sync_run_timeout_minutes: number;
+  /** billing_schema is the line-item vocabulary of the billing report. */
+  billing_schema: string;
+  /** billing_schema_custom is the JSON document of the `custom` schema. */
+  billing_schema_custom: string;
+  /** billing_rate_per_gib prices one GiB; 0 leaves the report in bytes only. */
+  billing_rate_per_gib: number;
+  billing_currency: string;
+}
+
+/** BillingSchema is the line-item vocabulary of the billing report. */
+export interface BillingSchema {
+  id: string;
+  label: string;
+  hint?: string;
+  inbound_label: string;
+  outbound_label: string;
+  operations_label: string;
+  cost_label: string;
+  unit: string;
+  currency?: string;
+  rate_per_gib: number;
+  custom: boolean;
+}
+
+/** TrafficTotals are the counters of one direction of a billing row. */
+export interface TrafficTotals {
+  bytes: number;
+  files: number;
+  operations: number;
+  runs: number;
+}
+
+/** BillingRow is one line of a billing report. */
+export interface BillingRow {
+  day?: string;
+  month?: string;
+  account_id?: number;
+  account_email?: string;
+  run_id?: number;
+  job_id?: number;
+  inbound: TrafficTotals;
+  outbound: TrafficTotals;
+  total: TrafficTotals;
+}
+
+/** TrafficEntry is the traffic one run moved through one account. */
+export interface TrafficEntry {
+  id: number;
+  run_id: number;
+  job_id: number;
+  account_id: number;
+  account_email?: string;
+  provider?: string;
+  direction: 'inbound' | 'outbound';
+  bytes: number;
+  files: number;
+  operations: number;
+  day: string;
+  month: string;
+  started_at: string;
+}
+
+/** APITokenView is the public shape of an API token (never the secret). */
+export interface APITokenView {
+  id: number;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  created_by?: string;
+  expires_at?: string;
+  revoked_at?: string;
+  last_used_at?: string;
+  last_used_ip?: string;
+  requests: number;
+  created_at: string;
+  state: 'active' | 'revoked' | 'expired';
 }
 
 /** SessionView is the answer of GET /api/auth/session. */
@@ -311,6 +391,13 @@ export interface AuditEntry {
   files: number;
   folders: number;
   expanded: boolean;
+  /**
+   * listed is whether the folder's children are part of the report. A folder at
+   * the depth boundary still has exact totals (its subtree was walked and
+   * counted) but says listed=false, which tells an empty folder from a listing
+   * that stops at the requested depth.
+   */
+  listed: boolean;
   modified_at?: string;
   mime_type?: string;
 }
@@ -572,7 +659,10 @@ export const runs = {
   list: (limit = 50, jobId?: number) =>
     request<{ runs: SyncRun[] }>({ url: '/runs', params: { limit, job_id: jobId } }),
   get: (id: number) =>
-    request<{ run: SyncRun; items: RunItem[] }>({ url: `/runs/${id}`, method: 'GET' }),
+    request<{ run: SyncRun; items: RunItem[]; traffic: TrafficEntry[] }>({
+      url: `/runs/${id}`,
+      method: 'GET',
+    }),
   items: (id: number, limit = 200) =>
     request<{ items: RunItem[]; limit: number }>({ url: `/runs/${id}/items`, params: { limit } }),
 };
@@ -606,10 +696,76 @@ export const dashboard = {
 
 export const settings = {
   get: () =>
-    request<{ settings: AppSettings; locales: string[]; themes: string[] }>({ url: '/settings' }),
+    request<{
+      settings: AppSettings;
+      locales: string[];
+      themes: string[];
+      billing_schemas: BillingSchema[];
+      billing_schema_default: string;
+    }>({ url: '/settings' }),
   update: (payload: AppSettings) =>
     request<{ settings: AppSettings }>({ url: '/settings', method: 'PUT', data: payload }),
   raw: () => request<{ values: Record<string, string> }>({ url: '/settings/raw' }),
+};
+
+/**
+ * tokens manages the programmatic credentials of the API (Admin > API). The
+ * secret is returned exactly once, by `create` and `regenerate`: every other
+ * answer, including `list`, only ever carries the public prefix.
+ */
+export const tokens = {
+  list: () => request<{ tokens: APITokenView[]; scopes: string[] }>({ url: '/tokens' }),
+  create: (payload: { name: string; scopes?: string[]; expires_in_days?: number }) =>
+    request<{ token: APITokenView; secret: string }>({ url: '/tokens', method: 'POST', data: payload }),
+  regenerate: (id: number) =>
+    request<{ token: APITokenView; secret: string }>({
+      url: `/tokens/${id}/regenerate`,
+      method: 'POST',
+    }),
+  revoke: (id: number) =>
+    request<{ token: APITokenView }>({ url: `/tokens/${id}/revoke`, method: 'POST' }),
+  remove: (id: number) => request<void>({ url: `/tokens/${id}`, method: 'DELETE' }),
+};
+
+/** BillingGroupBy is the bucket a billing report is grouped by. */
+export type BillingGroupBy = 'day' | 'month' | 'account' | 'run';
+
+/** BillingQuery is the window and the grouping of a billing report. */
+export interface BillingQuery {
+  from?: string;
+  to?: string;
+  group_by?: BillingGroupBy;
+  account_id?: number;
+  job_id?: number;
+  limit?: number;
+}
+
+export const billing = {
+  summary: (query: BillingQuery = {}) =>
+    request<{
+      group_by: BillingGroupBy;
+      from: string;
+      to: string;
+      schema: BillingSchema;
+      rows: BillingRow[];
+      total: TrafficTotals;
+    }>({ url: '/billing', params: query }),
+  runs: (query: BillingQuery = {}) =>
+    request<{ from: string; to: string; traffic: TrafficEntry[] }>({
+      url: '/billing/runs',
+      params: query,
+    }),
+  /** exportHref is the browser URL of the CSV download (a file, not JSON). */
+  exportHref: (query: BillingQuery = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== undefined && value !== '') {
+        params.set(key, String(value));
+      }
+    }
+    const encoded = params.toString();
+    return `/api/billing/export${encoded === '' ? '' : `?${encoded}`}`;
+  },
 };
 
 export const providers = {

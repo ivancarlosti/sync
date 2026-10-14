@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -473,6 +474,10 @@ func (s *Store) PruneRuns(ctx context.Context, keep int) error {
 	if err := s.db.WithContext(ctx).Where("run_id IN ?", ids).Delete(&models.SyncItem{}).Error; err != nil {
 		return fmt.Errorf("services: pruning run items: %w", err)
 	}
+	// A traffic row only exists because of its run, so it is pruned with it.
+	if err := s.db.WithContext(ctx).Where("run_id IN ?", ids).Delete(&models.TrafficEntry{}).Error; err != nil {
+		return fmt.Errorf("services: pruning run traffic: %w", err)
+	}
 	if err := s.db.WithContext(ctx).Where("id IN ?", ids).Delete(&models.SyncRun{}).Error; err != nil {
 		return fmt.Errorf("services: pruning runs: %w", err)
 	}
@@ -768,4 +773,306 @@ func (s *Store) TouchChannel(ctx context.Context, id uint, status, message strin
 		return fmt.Errorf("services: updating channel %d: %w", id, err)
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// API tokens
+// ---------------------------------------------------------------------------
+
+// ListAPITokens returns every token, newest first. The secret digest travels in
+// the row but is never serialised (see models.APIToken).
+func (s *Store) ListAPITokens(ctx context.Context) ([]models.APIToken, error) {
+	var rows []models.APIToken
+	if err := s.db.WithContext(ctx).Order("id DESC").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("services: listing api tokens: %w", err)
+	}
+	return rows, nil
+}
+
+// GetAPIToken returns one token by id.
+func (s *Store) GetAPIToken(ctx context.Context, id uint) (*models.APIToken, error) {
+	var row models.APIToken
+	if err := s.db.WithContext(ctx).First(&row, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("services: loading api token %d: %w", id, err)
+	}
+	return &row, nil
+}
+
+// FindAPITokenByPrefix is the authentication lookup: the prefix is the indexed,
+// non-secret half of a token.
+func (s *Store) FindAPITokenByPrefix(ctx context.Context, prefix string) (*models.APIToken, error) {
+	var row models.APIToken
+	err := s.db.WithContext(ctx).Where("prefix = ?", prefix).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("services: loading api token: %w", err)
+	}
+	return &row, nil
+}
+
+// CreateAPIToken inserts a token.
+func (s *Store) CreateAPIToken(ctx context.Context, token *models.APIToken) error {
+	if err := s.db.WithContext(ctx).Create(token).Error; err != nil {
+		return fmt.Errorf("services: creating api token: %w", err)
+	}
+	return nil
+}
+
+// SaveAPIToken updates a token row (rename, regenerate, revoke).
+func (s *Store) SaveAPIToken(ctx context.Context, token *models.APIToken) error {
+	if err := s.db.WithContext(ctx).Save(token).Error; err != nil {
+		return fmt.Errorf("services: saving api token %d: %w", token.ID, err)
+	}
+	return nil
+}
+
+// DeleteAPIToken removes a token; a delete of a missing row is not an error, so
+// the endpoint stays idempotent.
+func (s *Store) DeleteAPIToken(ctx context.Context, id uint) error {
+	if err := s.db.WithContext(ctx).Delete(&models.APIToken{}, id).Error; err != nil {
+		return fmt.Errorf("services: deleting api token %d: %w", id, err)
+	}
+	return nil
+}
+
+// TouchAPIToken records a successful authentication: the counters are what tells
+// an operator that a token is still in use (and from where).
+func (s *Store) TouchAPIToken(ctx context.Context, id uint, when time.Time, ip string) error {
+	err := s.db.WithContext(ctx).Model(&models.APIToken{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"last_used_at": &when,
+			"last_used_ip": ip,
+			"requests":     gorm.Expr("requests + 1"),
+		}).Error
+	if err != nil {
+		return fmt.Errorf("services: recording the use of api token %d: %w", id, err)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Traffic (billing)
+// ---------------------------------------------------------------------------
+
+// The buckets a billing report can be grouped by.
+const (
+	// BillingByDay is the default: one row per UTC day.
+	BillingByDay = "day"
+	// BillingByMonth is one row per UTC month, the shape of a cloud invoice.
+	BillingByMonth = "month"
+	// BillingByAccount is one row per connected account.
+	BillingByAccount = "account"
+	// BillingByRun is the finest grain: one row per run.
+	BillingByRun = "run"
+)
+
+// BillingFilter selects the traffic a report covers.
+type BillingFilter struct {
+	// From and To are inclusive day bounds (UTC); a zero time means "no bound".
+	From time.Time
+	To   time.Time
+	// AccountID and JobID are optional filters (0 means "every one").
+	AccountID uint
+	JobID     uint
+	// GroupBy is one of the BillingBy* constants.
+	GroupBy string
+	// Limit bounds the rows of a report (0 means "every row of the window").
+	Limit int
+}
+
+// TrafficTotals are the counters of one direction of a billing row.
+type TrafficTotals struct {
+	Bytes      int64 `json:"bytes"`
+	Files      int64 `json:"files"`
+	Operations int64 `json:"operations"`
+	// Runs is how many distinct runs contributed to the row.
+	Runs int64 `json:"runs"`
+}
+
+// BillingRow is one line of a billing report. Which of Day/Month/AccountID/RunID
+// is set depends on the grouping the request asked for.
+type BillingRow struct {
+	Day          string        `json:"day,omitempty"`
+	Month        string        `json:"month,omitempty"`
+	AccountID    uint          `json:"account_id,omitempty"`
+	AccountEmail string        `json:"account_email,omitempty"`
+	RunID        uint          `json:"run_id,omitempty"`
+	JobID        uint          `json:"job_id,omitempty"`
+	Inbound      TrafficTotals `json:"inbound"`
+	Outbound     TrafficTotals `json:"outbound"`
+	Total        TrafficTotals `json:"total"`
+}
+
+// billingAggregate is the raw scan of one GROUP BY row. Summing in SQL is what
+// keeps a report over a year of traffic a single query.
+type billingAggregate struct {
+	Day          string
+	Month        string
+	AccountID    uint
+	AccountEmail string
+	RunID        uint
+	JobID        uint
+	InBytes      int64
+	InFiles      int64
+	InOps        int64
+	InRuns       int64
+	OutBytes     int64
+	OutFiles     int64
+	OutOps       int64
+	OutRuns      int64
+}
+
+// billingAggregateSelect sums both directions of one bucket. The direction
+// literals come from the models constants (never from a request), and
+// SUM(CASE WHEN …) with COUNT(DISTINCT CASE …) is the one spelling MySQL/MariaDB
+// and SQLite both accept.
+var billingAggregateSelect = "MAX(day) AS day, MAX(month) AS month, " +
+	"MAX(account_id) AS account_id, MAX(account_email) AS account_email, " +
+	"MAX(run_id) AS run_id, MAX(job_id) AS job_id, " +
+	"COALESCE(SUM(CASE WHEN direction = '" + string(models.TrafficInbound) + "' THEN bytes ELSE 0 END), 0) AS in_bytes, " +
+	"COALESCE(SUM(CASE WHEN direction = '" + string(models.TrafficInbound) + "' THEN files ELSE 0 END), 0) AS in_files, " +
+	"COALESCE(SUM(CASE WHEN direction = '" + string(models.TrafficInbound) + "' THEN operations ELSE 0 END), 0) AS in_ops, " +
+	"COUNT(DISTINCT CASE WHEN direction = '" + string(models.TrafficInbound) + "' THEN run_id END) AS in_runs, " +
+	"COALESCE(SUM(CASE WHEN direction = '" + string(models.TrafficOutbound) + "' THEN bytes ELSE 0 END), 0) AS out_bytes, " +
+	"COALESCE(SUM(CASE WHEN direction = '" + string(models.TrafficOutbound) + "' THEN files ELSE 0 END), 0) AS out_files, " +
+	"COALESCE(SUM(CASE WHEN direction = '" + string(models.TrafficOutbound) + "' THEN operations ELSE 0 END), 0) AS out_ops, " +
+	"COUNT(DISTINCT CASE WHEN direction = '" + string(models.TrafficOutbound) + "' THEN run_id END) AS out_runs"
+
+// SaveTraffic upserts the absolute counters of a run. The uniqueness of
+// (run, account, direction) is what makes a retried or throttled flush harmless:
+// the counters are the current totals, never an increment.
+func (s *Store) SaveTraffic(ctx context.Context, rows []models.TrafficEntry) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "run_id"}, {Name: "account_id"}, {Name: "direction"}},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"job_id", "account_email", "provider", "bytes", "files", "operations",
+			"day", "month", "started_at", "updated_at",
+		}),
+	}).Create(&rows).Error
+	if err != nil {
+		return fmt.Errorf("services: saving traffic: %w", err)
+	}
+	return nil
+}
+
+// BillingSummary aggregates a window of traffic by day, month, account or run.
+func (s *Store) BillingSummary(ctx context.Context, filter BillingFilter) ([]BillingRow, error) {
+	group, err := billingGroupBy(filter.GroupBy)
+	if err != nil {
+		return nil, err
+	}
+	query := s.db.WithContext(ctx).Model(&models.TrafficEntry{}).Select(billingAggregateSelect)
+	query = billingWindow(query, filter).Group(group).Order(group + " DESC")
+	if filter.Limit > 0 {
+		query = query.Limit(filter.Limit)
+	}
+
+	var aggregates []billingAggregate
+	if err := query.Scan(&aggregates).Error; err != nil {
+		return nil, fmt.Errorf("services: aggregating traffic: %w", err)
+	}
+	rows := make([]BillingRow, 0, len(aggregates))
+	for _, aggregate := range aggregates {
+		rows = append(rows, billingRow(filter.GroupBy, aggregate))
+	}
+	return rows, nil
+}
+
+// ListTrafficRuns returns the individual traffic rows of a window, newest run
+// first: the per-run breakdown behind the aggregate report.
+func (s *Store) ListTrafficRuns(ctx context.Context, filter BillingFilter) ([]models.TrafficEntry, error) {
+	query := billingWindow(s.db.WithContext(ctx).Model(&models.TrafficEntry{}), filter).
+		Order("run_id DESC, account_id ASC, direction ASC")
+	if filter.Limit > 0 {
+		query = query.Limit(filter.Limit)
+	}
+	var rows []models.TrafficEntry
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("services: listing traffic: %w", err)
+	}
+	return rows, nil
+}
+
+// GetRunTraffic returns the traffic rows of one run, which is what the run detail
+// shows beside the per-file items.
+func (s *Store) GetRunTraffic(ctx context.Context, runID uint) ([]models.TrafficEntry, error) {
+	var rows []models.TrafficEntry
+	err := s.db.WithContext(ctx).
+		Where("run_id = ?", runID).
+		Order("direction ASC, account_id ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("services: loading the traffic of run %d: %w", runID, err)
+	}
+	return rows, nil
+}
+
+// billingWindow applies the day bounds and the optional filters of a report. The
+// comparison is on the stored day bucket, so it stays a portable string range.
+func billingWindow(query *gorm.DB, filter BillingFilter) *gorm.DB {
+	if !filter.From.IsZero() {
+		query = query.Where("day >= ?", filter.From.UTC().Format(models.TrafficDayFormat))
+	}
+	if !filter.To.IsZero() {
+		query = query.Where("day <= ?", filter.To.UTC().Format(models.TrafficDayFormat))
+	}
+	if filter.AccountID > 0 {
+		query = query.Where("account_id = ?", filter.AccountID)
+	}
+	if filter.JobID > 0 {
+		query = query.Where("job_id = ?", filter.JobID)
+	}
+	return query
+}
+
+// billingGroupBy whitelists the grouping of a report: the returned expression is
+// the only thing ever interpolated into the GROUP BY.
+func billingGroupBy(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", BillingByDay:
+		return "day", nil
+	case BillingByMonth:
+		return "month", nil
+	case BillingByAccount:
+		return "account_id", nil
+	case BillingByRun:
+		return "run_id", nil
+	default:
+		return "", fmt.Errorf("%w: unknown grouping %q", ErrValidation, value)
+	}
+}
+
+// billingRow maps one aggregate onto the line the request asked for, so a day
+// report never carries the arbitrary account id of a MAX() over the whole window.
+func billingRow(groupBy string, aggregate billingAggregate) BillingRow {
+	row := BillingRow{
+		Inbound:  TrafficTotals{Bytes: aggregate.InBytes, Files: aggregate.InFiles, Operations: aggregate.InOps, Runs: aggregate.InRuns},
+		Outbound: TrafficTotals{Bytes: aggregate.OutBytes, Files: aggregate.OutFiles, Operations: aggregate.OutOps, Runs: aggregate.OutRuns},
+	}
+	row.Total = TrafficTotals{
+		Bytes:      row.Inbound.Bytes + row.Outbound.Bytes,
+		Files:      row.Inbound.Files + row.Outbound.Files,
+		Operations: row.Inbound.Operations + row.Outbound.Operations,
+		Runs:       row.Inbound.Runs + row.Outbound.Runs,
+	}
+	switch strings.ToLower(strings.TrimSpace(groupBy)) {
+	case BillingByMonth:
+		row.Month = aggregate.Month
+	case BillingByAccount:
+		row.AccountID, row.AccountEmail = aggregate.AccountID, aggregate.AccountEmail
+	case BillingByRun:
+		row.RunID, row.JobID = aggregate.RunID, aggregate.JobID
+	default:
+		row.Day = aggregate.Day
+	}
+	return row
 }

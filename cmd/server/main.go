@@ -172,6 +172,7 @@ func build(cfg *config.Config, settings *database.Settings) handlers.Deps {
 		Auth:        services.NewAuthService(cfg, store),
 		OAuth:       services.NewOAuthService(store, registry, credentials, tokens),
 		Tokens:      tokens,
+		APITokens:   services.NewAPITokenService(store),
 		Credentials: credentials,
 		Guide:       services.NewGuideService(registry, credentials),
 		Registry:    registry,

@@ -70,9 +70,16 @@ and protected by the signed `state` parameter instead.
 | Method | Path | Payload / answer |
 |---|---|---|
 | `GET` | `/api/stats?days=30` | `{days, since, stats:{accounts,jobs,enabled_jobs,runs,succeeded,partial,failed,cancelled,timed_out,conflicts,files_created,files_updated,files_deleted,bytes_transferred}, running_jobs, running_ids}` — `days=0` means *since the beginning* |
-| `GET` | `/api/settings` | `{settings:{default_locale,default_theme,sync_default_interval_minutes,sync_run_timeout_minutes}, locales[], themes[]}` |
-| `PUT` | `/api/settings` | same `settings` object as body (`locale` ∈ the 7 codes, `theme` ∈ light/dark/system, interval `0–10080`, timeout `1–1440`) → `{settings}` |
+| `GET` | `/api/settings` | `{settings:{default_locale,default_theme,sync_default_interval_minutes,sync_run_timeout_minutes,billing_schema,billing_schema_custom,billing_rate_per_gib,billing_currency}, locales[], themes[], billing_schemas[], billing_schema_default}` |
+| `PUT` | `/api/settings` | same `settings` object as body (`locale` ∈ the 7 codes, `theme` ∈ light/dark/system, interval `0–10080`, timeout `1–1440`, `billing_schema` ∈ `none`/`oci`/`aws`/`gcp`/`custom`, rate `0–100000` per GiB, currency a three letter code, `billing_schema_custom` a JSON document) → `{settings}` |
 | `GET` | `/api/settings/raw` | `{values:{key:value}}` — every stored key except `provider.*` |
+
+`billing_schemas` is the list the Admin > Settings form offers:
+`{id, label, hint?, inbound_label, outbound_label, operations_label, cost_label,
+unit, currency?, rate_per_gib, custom}`. The `custom` document accepts
+`{label, inbound_label, outbound_label, operations_label, cost_label, unit}`;
+every omitted field keeps the default. The pricing is the report's only cost
+input: see §9 and [database.md](database.md) §8 for the queries behind it.
 
 ## 4. Providers
 
@@ -171,11 +178,12 @@ only ever caught by the identical-location rule.
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/runs?job_id=&status=&limit=` | `{runs:[runView]}` (`limit` default 50, max 200) |
-| `GET` | `/api/runs/:id` | `{run, items:[runItemView]}` (max 1000 items) |
+| `GET` | `/api/runs/:id` | `{run, items:[runItemView], traffic:[trafficEntry]}` (max 1000 items) |
 | `GET` | `/api/runs/:id/items?limit=` | `{items, limit}` (default 100, max 1000) |
 
 `runView` = the `sync_runs` row plus `running`; `runItemView` =
-`{id, action, path, size, evidence?, created_at}`.
+`{id, action, path, size, evidence?, created_at}`; `trafficEntry` is the traffic
+one run moved through one account (see §9).
 
 ## 8. Audits
 
@@ -207,21 +215,28 @@ drive_id, root_folder_id, root_path, max_depth, status, trigger, started_at,
 finished_at, duration_ms, files, folders, total_size, max_depth_reached,
 truncated, message, created_at`) plus `running`. `auditEntryView` = `{id, kind
 (folder|file), path, name, depth, size, total_size, files, folders, expanded,
-modified_at?, mime_type?}`.
+listed, modified_at?, mime_type?}`.
 
 Semantics:
 
 * the **selected folder is depth 0**; `max_depth = 0` means **unlimited**, and
   the requested depth is clamped to `25`;
-* a folder at `depth >= max_depth` is recorded but not expanded
-  (`expanded:false`, subtree sizes `0`);
-* `truncated` is set when the report stopped at the node cap (`10000`);
+* the depth bounds the **report, not the walk**: a folder at
+  `depth >= max_depth` is listed with the exact totals of its subtree (the walk
+  descends into it and counts everything below) and says so through
+  `listed:false` — only its children are missing from the report;
+* `expanded` is false only for a folder the walk could not descend into (it was
+  removed mid-audit, or a budget was hit first);
+* `truncated` is set when a budget stopped the walk: the entry cap (`10000`
+  entries) or the walk cap (`200000` visited nodes). A truncated report is the
+  only incomplete one, and `max_depth_reached` can exceed the requested depth;
 * `path` is relative to the audited root (empty for the root itself); a folder
   carries the aggregate of its subtree.
 
-The CSV columns are `kind,path,name,depth,size,total_size,files,folders,expanded,
-modified_at,mime_type`, prefixed with a UTF-8 BOM so a spreadsheet opens accented
-paths correctly.
+The CSV columns are
+`kind,path,name,depth,size,total_size,files,folders,expanded,listed,modified_at,
+mime_type`, prefixed with a UTF-8 BOM so a spreadsheet opens accented paths
+correctly.
 
 ## 9. Notifications
 
@@ -247,6 +262,59 @@ paths correctly.
 ```
 
 Field schemas, secrets and delivery semantics: [notifications.md](notifications.md).
+
+## 9. Billing and API tokens
+
+### Billing
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/billing?from=&to=&group_by=&account_id=&job_id=&limit=` | `{group_by, from, to, schema, rows:[billingRow], total}` |
+| `GET` | `/api/billing/runs?from=&to=&account_id=&job_id=&limit=` | `{from, to, traffic:[trafficEntry]}` |
+| `GET` | `/api/billing/export?...` | CSV of the report (same filters) |
+
+* Dates are `YYYY-MM-DD` UTC days, both inclusive; **the default window is the
+  last 90 days** and the default `limit` is 90 rows (1000 for the report, 500 for
+  the per-run breakdown, 2000 maximum).
+* `group_by` is `day` (default), `month`, `account` or `run`; anything else is a
+  `validation` 400.
+* `billingRow` = `{day?, month?, account_id?, account_email?, run_id?, job_id?,
+  inbound, outbound, total}` where a counter is `{bytes, files, operations,
+  runs}`. Only the fields of the requested grouping are set.
+* `trafficEntry` = one `(run, account, direction)` row:
+  `{id, run_id, job_id, account_id, account_email, provider, direction, bytes,
+  files, operations, day, month, started_at}`. `direction` is `inbound` (read
+  from the source account) or `outbound` (written to the destination);
+  `operations` counts the payload-free write calls (deletions, folder creations).
+* `schema` is the active billing vocabulary (§3): the report is **labelled** with
+  it while the quantities stay bytes. The CSV applies it: `inbound`/`outbound`/
+  `total` are rendered in its unit, plus a `cost` column when a rate is
+  configured.
+
+```text
+kind: text/csv; charset=utf-8   filename: billing-<group_by>-<from>-to-<to>.csv
+bucket,day,month,account_id,account_email,run_id,job_id,inbound,outbound,operations,total,cost,unit,currency
+```
+
+### API tokens
+
+| Method | Path | Payload / answer |
+|---|---|---|
+| `GET` | `/api/tokens` | `{tokens:[apiTokenView], scopes:[…]}` |
+| `POST` | `/api/tokens` | `{name, scopes?, expires_in_days?}` → **201** `{token, secret}` |
+| `POST` | `/api/tokens/:id/regenerate` | → `{token, secret}` |
+| `POST` | `/api/tokens/:id/revoke` | → `{token}` (idempotent) |
+| `DELETE` | `/api/tokens/:id` | `204` |
+
+* `apiTokenView` = `{id, name, prefix, scopes, created_by?, expires_at?,
+  revoked_at?, last_used_at?, last_used_ip?, requests, created_at, state}` with
+  `state` ∈ `active` \| `revoked` \| `expired`.
+* `secret` is `sync_<prefix>.<secret>` and is **answered once**, by the create and
+  the regenerate call; it is stored as a SHA-256 digest and cannot be read back.
+* `scopes` is a subset of `read` (every `GET`) and `write` (everything else); the
+  default is both, `expires_in_days` defaults to `0` (never) and is capped at 365.
+* Authentication is `Authorization: Bearer sync_…` or `X-API-Key: sync_…`; see
+  [authentication.md](authentication.md) §6.
 
 ## 10. Maintenance
 

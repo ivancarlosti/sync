@@ -21,9 +21,11 @@ func (s *Server) handleGetSettings(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
-		"settings": current,
-		"locales":  config.SupportedLocales,
-		"themes":   config.SupportedThemes,
+		"settings":               current,
+		"locales":                config.SupportedLocales,
+		"themes":                 config.SupportedThemes,
+		"billing_schemas":        services.BillingSchemas(),
+		"billing_schema_default": services.DefaultBillingSchemaDocument(),
 	})
 }
 

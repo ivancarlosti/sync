@@ -50,9 +50,12 @@
     "jobs": "任务",
     "runs": "执行记录",
     "audit": "审计",
+    "billing": "计费",
     "notifications": "通知",
     "admin": "管理",
     "adminProviders": "提供商",
+    "adminGuide": "设置指南",
+    "adminApi": "API",
     "adminSettings": "设置",
     "adminAbout": "关于",
     "signOut": "退出登录",
@@ -60,8 +63,7 @@
     "toggleTheme": "切换主题",
     "changeLanguage": "切换语言",
     "skipToContent": "跳到内容",
-    "primaryNavigation": "主导航",
-    "adminGuide": "设置指南"
+    "primaryNavigation": "主导航"
   },
   "auth": {
     "title": "登录 Sync",
@@ -89,20 +91,6 @@
     "error_network": "无法连接到服务器。",
     "error_unauthorized": "会话已过期，请重新登录。",
     "error_unknown": "身份验证失败。"
-  },
-  "theme": {
-    "light": "浅色",
-    "dark": "深色",
-    "system": "跟随系统"
-  },
-  "language": {
-    "en-US": "English",
-    "pt-BR": "Português (Brasil)",
-    "es-MX": "Español (México)",
-    "fr-FR": "Français",
-    "h-CN": "中文（简体）",
-    "hi-IN": "हिन्दी",
-    "ar-SA": "العربية"
   },
   "status": {
     "connected": "已连接",
@@ -348,6 +336,7 @@
     "conflicts": "冲突",
     "errors": "错误",
     "bytes": "数据",
+    "traffic": "流量",
     "items": "文件",
     "itemsEmpty": "此执行未记录任何文件操作。",
     "action": "操作",
@@ -584,7 +573,20 @@
           }
         }
       }
-    }
+    },
+    "billing": "流量报表",
+    "billingSubtitle": "用发票中的费用项术语来标注流量报表。",
+    "billingSchema": "计费方案",
+    "billingSchemaCustom": "自定义方案（JSON）",
+    "billingSchemaCustomHint": "留空的字段沿用默认值。键：label、inbound_label、outbound_label、operations_label、cost_label、unit。",
+    "billingRate": "每 GiB 价格",
+    "billingRateHint": "用于计算费用列的每 GiB 价格。为零时报表只显示字节，不显示费用。",
+    "billingCurrency": "货币",
+    "billingSchema_none": "无（字节）",
+    "billingSchema_oci": "Oracle Cloud (OCI)",
+    "billingSchema_aws": "Amazon Web Services",
+    "billingSchema_gcp": "Google Cloud",
+    "billingSchema_custom": "自定义"
   },
   "audit": {
     "title": "审计",
@@ -593,7 +595,9 @@
     "folder": "文件夹",
     "browse": "浏览文件夹",
     "depth": "深度",
-    "depthHint": "0 表示分析整棵树；每增加一层即多一个文件夹。",
+    "depthHint": "0 表示列出整棵树；深度只限制列表，不影响总量，因此每个文件夹的大小都准确。",
+    "notListed": "未列出子项",
+    "notListedHint": "该文件夹的合计包含其整个子树；只是由于报告止于当前深度，未列出其子项。",
     "depthUnlimited": "整棵树",
     "start": "开始审计",
     "starting": "正在开始…",
@@ -631,6 +635,72 @@
     "error_internal": "服务器无法完成审计。",
     "error_unknown": "审计失败。"
   },
+  "billing": {
+    "title": "计费",
+    "subtitle": "本实例通过各账户传输的流量，可按日、月、账户或运行分组。",
+    "download": "下载 CSV",
+    "groupBy": "分组方式",
+    "groupDay": "按日",
+    "groupMonth": "按月",
+    "groupAccount": "按账户",
+    "groupRun": "按运行",
+    "from": "开始",
+    "to": "结束",
+    "bucket": "期间",
+    "inbound": "入站",
+    "outbound": "出站",
+    "operations": "操作数",
+    "total": "合计",
+    "cost": "费用",
+    "windowTotal": "期间合计",
+    "windowHint": "所选期间",
+    "runBucket": "运行 {id}",
+    "accountBucket": "账户 {id}",
+    "allBuckets": "全部流量",
+    "empty": "该期间没有记录到流量。",
+    "emptyHint": "运行一个作业，或放宽期间：每次运行都会记录它在各账户上传输的数据。",
+    "loadError": "无法加载流量报表。"
+  },
+  "api": {
+    "title": "API 令牌",
+    "subtitle": "用于 Sync API 的程序化凭据。令牌只显示一次：服务器仅保存其密钥的摘要。",
+    "create": "创建令牌",
+    "createHint": "为调用方命名以便辨认，并只授予它需要的最小范围。",
+    "name": "名称",
+    "namePlaceholder": "费用导出工具",
+    "nameRequired": "请为令牌命名。",
+    "token": "令牌",
+    "scopes": "范围",
+    "scope_read": "只读",
+    "scope_write": "读写",
+    "state_active": "有效",
+    "state_revoked": "已撤销",
+    "state_expired": "已过期",
+    "lastUsed": "最近使用",
+    "requests": "{count} 次请求",
+    "expiresAt": "有效期",
+    "neverExpires": "永不过期",
+    "days30": "30 天后",
+    "days90": "90 天后",
+    "days365": "365 天后",
+    "regenerate": "重新生成",
+    "revoke": "撤销",
+    "deleteTitle": "删除该令牌？",
+    "deleteMessage": "令牌 {name} 将被永久删除，仍在使用它的调用方会立即失败。",
+    "revokeTitle": "撤销该令牌？",
+    "revokeMessage": "撤销后仍保留历史记录，但任何调用方都无法再用它通过身份验证。",
+    "regenerated": "令牌 {name} 已重新生成，旧的密钥不再可用。",
+    "revoked": "令牌已撤销。",
+    "deleted": "令牌已删除。",
+    "actionError": "无法修改该令牌。",
+    "loadError": "无法加载令牌列表。",
+    "secretTitle": "{name} 的密钥",
+    "secretHint": "这是唯一一次显示密钥，请把它粘贴到将使用它的工具中。",
+    "secretWarning": "请立即保存：Sync 无法再次显示它，只能重新生成新密钥。",
+    "secretDone": "我已保存",
+    "empty": "还没有 API 令牌。",
+    "emptyHint": "创建一个令牌，脚本或费用工具即可无需浏览器会话访问 API。"
+  },
   "errors": {
     "notFoundTitle": "页面未找到",
     "notFoundMessage": "Sync 中不存在地址 {path}。",
@@ -639,5 +709,19 @@
     "forbiddenMessage": "您的账户无权查看此页面。",
     "genericTitle": "出错了",
     "genericMessage": "应用无法完成上一个操作。"
+  },
+  "theme": {
+    "light": "浅色",
+    "dark": "深色",
+    "system": "跟随系统"
+  },
+  "language": {
+    "en-US": "English",
+    "pt-BR": "Português (Brasil)",
+    "es-MX": "Español (México)",
+    "fr-FR": "Français",
+    "h-CN": "中文（简体）",
+    "hi-IN": "हिन्दी",
+    "ar-SA": "العربية"
   }
 }

@@ -29,6 +29,15 @@ type AppSettings struct {
 	SyncIntervalMinutes int `json:"sync_default_interval_minutes"`
 	// RunTimeoutMinutes bounds a single sync run.
 	RunTimeoutMinutes int `json:"sync_run_timeout_minutes"`
+	// BillingSchema selects the line-item vocabulary of the billing report
+	// (`none`, `oci`, `aws`, `gcp` or `custom`).
+	BillingSchema string `json:"billing_schema"`
+	// BillingSchemaCustom is the JSON document of the `custom` schema.
+	BillingSchemaCustom string `json:"billing_schema_custom"`
+	// BillingRatePerGiB prices one GiB; 0 leaves the report in bytes only.
+	BillingRatePerGiB float64 `json:"billing_rate_per_gib"`
+	// BillingCurrency labels the cost column (a three letter code).
+	BillingCurrency string `json:"billing_currency"`
 }
 
 // SettingsService reads and writes the editable settings.
@@ -45,10 +54,14 @@ func NewSettingsService(cfg *config.Config, settings *database.Settings) *Settin
 // Defaults returns the values seeded at boot: the environment configuration.
 func Defaults(cfg *config.Config) map[string]string {
 	return map[string]string{
-		models.SettingDefaultLocale: cfg.DefaultLocale,
-		models.SettingDefaultTheme:  cfg.DefaultTheme,
-		models.SettingSyncInterval:  strconv.Itoa(DefaultSyncInterval),
-		models.SettingSyncTimeout:   strconv.Itoa(DefaultRunTimeout),
+		models.SettingDefaultLocale:       cfg.DefaultLocale,
+		models.SettingDefaultTheme:        cfg.DefaultTheme,
+		models.SettingSyncInterval:        strconv.Itoa(DefaultSyncInterval),
+		models.SettingSyncTimeout:         strconv.Itoa(DefaultRunTimeout),
+		models.SettingBillingSchema:       BillingSchemaNone,
+		models.SettingBillingSchemaCustom: DefaultBillingSchemaDocument(),
+		models.SettingBillingRatePerGiB:   "0",
+		models.SettingBillingCurrency:     "USD",
 	}
 }
 
@@ -60,6 +73,8 @@ func (s *SettingsService) Load(ctx context.Context) (AppSettings, error) {
 		DefaultTheme:        s.cfg.DefaultTheme,
 		SyncIntervalMinutes: DefaultSyncInterval,
 		RunTimeoutMinutes:   DefaultRunTimeout,
+		BillingSchema:       BillingSchemaNone,
+		BillingCurrency:     "USD",
 	}
 	if locale := strings.TrimSpace(s.settings.Value(ctx, models.SettingDefaultLocale, out.DefaultLocale)); locale != "" {
 		out.DefaultLocale = locale
@@ -69,7 +84,30 @@ func (s *SettingsService) Load(ctx context.Context) (AppSettings, error) {
 	}
 	out.SyncIntervalMinutes = s.settings.Int(ctx, models.SettingSyncInterval, out.SyncIntervalMinutes)
 	out.RunTimeoutMinutes = s.settings.Int(ctx, models.SettingSyncTimeout, out.RunTimeoutMinutes)
+
+	if schema := strings.ToLower(strings.TrimSpace(s.settings.Value(ctx, models.SettingBillingSchema, out.BillingSchema))); schema != "" {
+		out.BillingSchema = schema
+	}
+	out.BillingSchemaCustom = s.settings.Value(ctx, models.SettingBillingSchemaCustom, "")
+	out.BillingRatePerGiB = s.float(ctx, models.SettingBillingRatePerGiB, 0)
+	if currency := strings.ToUpper(strings.TrimSpace(s.settings.Value(ctx, models.SettingBillingCurrency, out.BillingCurrency))); currency != "" {
+		out.BillingCurrency = currency
+	}
 	return out, nil
+}
+
+// float reads a numeric setting, falling back to the default when the stored
+// value is missing or malformed (a report must never fail on a bad setting).
+func (s *SettingsService) float(ctx context.Context, key string, fallback float64) float64 {
+	raw := strings.TrimSpace(s.settings.Value(ctx, key, ""))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseFloat(raw, 64)
+	if err != nil || value < 0 {
+		return fallback
+	}
+	return value
 }
 
 // Update validates and stores every editable setting at once.
@@ -89,11 +127,20 @@ func (s *SettingsService) Update(ctx context.Context, in AppSettings) (AppSettin
 	if in.RunTimeoutMinutes < 1 || in.RunTimeoutMinutes > 1440 {
 		return AppSettings{}, fmt.Errorf("%w: the run timeout must be between 1 and 1440 minutes", ErrValidation)
 	}
+	schema, document, currency, err := ValidateBillingSettings(
+		in.BillingSchema, in.BillingSchemaCustom, in.BillingCurrency, in.BillingRatePerGiB)
+	if err != nil {
+		return AppSettings{}, err
+	}
 	values := map[string]string{
-		models.SettingDefaultLocale: in.DefaultLocale,
-		models.SettingDefaultTheme:  theme,
-		models.SettingSyncInterval:  strconv.Itoa(in.SyncIntervalMinutes),
-		models.SettingSyncTimeout:   strconv.Itoa(in.RunTimeoutMinutes),
+		models.SettingDefaultLocale:       in.DefaultLocale,
+		models.SettingDefaultTheme:        theme,
+		models.SettingSyncInterval:        strconv.Itoa(in.SyncIntervalMinutes),
+		models.SettingSyncTimeout:         strconv.Itoa(in.RunTimeoutMinutes),
+		models.SettingBillingSchema:       schema,
+		models.SettingBillingSchemaCustom: document,
+		models.SettingBillingRatePerGiB:   strconv.FormatFloat(in.BillingRatePerGiB, 'f', -1, 64),
+		models.SettingBillingCurrency:     currency,
 	}
 	if err := s.settings.SetMany(ctx, values); err != nil {
 		return AppSettings{}, fmt.Errorf("services: saving settings: %w", err)

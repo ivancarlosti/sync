@@ -17,8 +17,15 @@ import Input from '@/components/ui/Input.vue';
 import Label from '@/components/ui/Label.vue';
 import Select from '@/components/ui/Select.vue';
 import Spinner from '@/components/ui/Spinner.vue';
+import Textarea from '@/components/ui/Textarea.vue';
 import { useAction } from '@/composables/useAction';
-import { maintenance, messageOf, settings as settingsApi, type AppSettings } from '@/lib/api';
+import {
+  maintenance,
+  messageOf,
+  settings as settingsApi,
+  type AppSettings,
+  type BillingSchema,
+} from '@/lib/api';
 import { asNumber } from '@/lib/forms';
 import { useAuthStore } from '@/stores/auth';
 import { useFeedbackStore } from '@/stores/feedback';
@@ -33,6 +40,7 @@ const feedback = useFeedbackStore();
 const stored = ref<AppSettings | null>(null);
 const locales = ref<string[]>([]);
 const themes = ref<string[]>([]);
+const schemas = ref<BillingSchema[]>([]);
 const raw = ref<Record<string, string>>({});
 const loading = ref(true);
 const failure = ref('');
@@ -45,6 +53,18 @@ const form = reactive({
   default_theme: '',
   sync_default_interval_minutes: '' as string | number,
   sync_run_timeout_minutes: '' as string | number,
+});
+
+/**
+ * billingForm is the billing vocabulary: which schema labels the report, the
+ * custom document behind the `custom` schema, and the price of one GiB (0 keeps
+ * the report in bytes and hides the cost column).
+ */
+const billingForm = reactive({
+  schema: 'none',
+  custom: '',
+  rate: '' as string | number,
+  currency: 'USD',
 });
 
 /** keep is how many runs the trim task leaves behind. */
@@ -72,6 +92,25 @@ const themeOptions = computed(() =>
   })),
 );
 
+/**
+ * schemaOptions names the billing schemas. The presets come from the server (so
+ * the API and the SPA can never disagree about them); the label of each is
+ * translated when the catalog has one.
+ */
+const schemaOptions = computed(() =>
+  schemas.value.map((schema) => ({
+    value: schema.id,
+    label: te(`admin.billingSchema_${schema.id}`)
+      ? t(`admin.billingSchema_${schema.id}`)
+      : schema.label,
+  })),
+);
+
+/** activeSchema is the description of the selected billing vocabulary. */
+const activeSchema = computed(() =>
+  schemas.value.find((schema) => schema.id === billingForm.schema),
+);
+
 /** rawRows is the stored key/value list, sorted once for display. */
 const rawRows = computed(() =>
   Object.entries(raw.value)
@@ -88,10 +127,15 @@ async function load(): Promise<void> {
     stored.value = answer.settings;
     locales.value = answer.locales;
     themes.value = answer.themes;
+    schemas.value = answer.billing_schemas;
     form.default_locale = answer.settings.default_locale;
     form.default_theme = answer.settings.default_theme;
     form.sync_default_interval_minutes = answer.settings.sync_default_interval_minutes;
     form.sync_run_timeout_minutes = answer.settings.sync_run_timeout_minutes;
+    billingForm.schema = answer.settings.billing_schema;
+    billingForm.custom = answer.settings.billing_schema_custom || answer.billing_schema_default;
+    billingForm.rate = answer.settings.billing_rate_per_gib;
+    billingForm.currency = answer.settings.billing_currency;
   } catch (error) {
     failure.value = messageOf(error);
   } finally {
@@ -120,6 +164,10 @@ async function save(): Promise<void> {
     default_theme: form.default_theme,
     sync_default_interval_minutes: asNumber(form.sync_default_interval_minutes, 0),
     sync_run_timeout_minutes: asNumber(form.sync_run_timeout_minutes, 0),
+    billing_schema: billingForm.schema,
+    billing_schema_custom: billingForm.custom,
+    billing_rate_per_gib: asNumber(billingForm.rate, 0),
+    billing_currency: billingForm.currency,
   };
   const answer = await runSave(() => settingsApi.update(body), {
     success: t('admin.savedSettings'),
@@ -233,6 +281,61 @@ onMounted(() => {
             :min="1"
           />
         </div>
+      </div>
+      <template #footer>
+        <Button :loading="saving" @click="save">
+          <Save class="h-4 w-4" aria-hidden="true" />
+          {{ saving ? t('common.saving') : t('common.save') }}
+        </Button>
+      </template>
+    </Card>
+
+    <Card :title="t('admin.billing')" :description="t('admin.billingSubtitle')">
+      <div class="space-y-4">
+        <div class="space-y-1.5">
+          <Label for="billing-schema">{{ t('admin.billingSchema') }}</Label>
+          <Select
+            id="billing-schema"
+            :model-value="billingForm.schema"
+            :options="schemaOptions"
+            :aria-label="t('admin.billingSchema')"
+            @update:model-value="(value) => { billingForm.schema = String(value); }"
+          />
+          <p v-if="activeSchema?.hint" class="text-sm text-muted-foreground">
+            {{ activeSchema.hint }}
+          </p>
+        </div>
+
+        <div v-if="billingForm.schema === 'custom'" class="space-y-1.5">
+          <Label for="billing-schema-custom">{{ t('admin.billingSchemaCustom') }}</Label>
+          <Textarea
+            id="billing-schema-custom"
+            v-model="billingForm.custom"
+            :rows="8"
+            :spellcheck="false"
+            class="font-mono text-xs"
+            :aria-label="t('admin.billingSchemaCustom')"
+          />
+          <p class="text-sm text-muted-foreground">{{ t('admin.billingSchemaCustomHint') }}</p>
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="space-y-1.5">
+            <Label for="billing-rate">{{ t('admin.billingRate') }}</Label>
+            <Input
+              id="billing-rate"
+              v-model="billingForm.rate"
+              type="number"
+              step="0.0001"
+              min="0"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="billing-currency">{{ t('admin.billingCurrency') }}</Label>
+            <Input id="billing-currency" v-model="billingForm.currency" maxlength="3" />
+          </div>
+        </div>
+        <p class="text-sm text-muted-foreground">{{ t('admin.billingRateHint') }}</p>
       </div>
       <template #footer>
         <Button :loading="saving" @click="save">

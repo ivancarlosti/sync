@@ -50,9 +50,12 @@
     "jobs": "कार्य",
     "runs": "निष्पादन",
     "audit": "ऑडिट",
+    "billing": "बिलिंग",
     "notifications": "सूचनाएँ",
     "admin": "प्रशासन",
     "adminProviders": "प्रदाता",
+    "adminGuide": "सेटअप गाइड",
+    "adminApi": "API",
     "adminSettings": "सेटिंग्स",
     "adminAbout": "परिचय",
     "signOut": "साइन आउट",
@@ -60,8 +63,7 @@
     "toggleTheme": "थीम बदलें",
     "changeLanguage": "भाषा बदलें",
     "skipToContent": "सामग्री पर जाएँ",
-    "primaryNavigation": "मुख्य नेविगेशन",
-    "adminGuide": "सेटअप गाइड"
+    "primaryNavigation": "मुख्य नेविगेशन"
   },
   "auth": {
     "title": "Sync में साइन इन करें",
@@ -89,20 +91,6 @@
     "error_network": "सर्वर उपलब्ध नहीं है।",
     "error_unauthorized": "आपका सत्र समाप्त हो गया। फिर से साइन इन करें।",
     "error_unknown": "प्रमाणीकरण विफल रहा।"
-  },
-  "theme": {
-    "light": "हल्का",
-    "dark": "गहरा",
-    "system": "सिस्टम"
-  },
-  "language": {
-    "en-US": "English",
-    "pt-BR": "Português (Brasil)",
-    "es-MX": "Español (México)",
-    "fr-FR": "Français",
-    "h-CN": "中文（简体）",
-    "hi-IN": "हिन्दी",
-    "ar-SA": "العربية"
   },
   "status": {
     "connected": "जुड़ा हुआ",
@@ -348,6 +336,7 @@
     "conflicts": "टकराव",
     "errors": "त्रुटियाँ",
     "bytes": "डेटा",
+    "traffic": "ट्रैफ़िक",
     "items": "फ़ाइलें",
     "itemsEmpty": "इस निष्पादन में कोई फ़ाइल क्रिया दर्ज नहीं हुई।",
     "action": "क्रिया",
@@ -584,7 +573,20 @@
           }
         }
       }
-    }
+    },
+    "billing": "ट्रैफ़िक रिपोर्ट",
+    "billingSubtitle": "ट्रैफ़िक रिपोर्ट पर अपने बिल की पंक्ति-मदों की शब्दावली लगाएँ।",
+    "billingSchema": "बिलिंग स्कीमा",
+    "billingSchemaCustom": "कस्टम स्कीमा (JSON)",
+    "billingSchemaCustomHint": "छोड़ा गया हर फ़ील्ड अपने डिफ़ॉल्ट पर रहता है। कुंजियाँ: label, inbound_label, outbound_label, operations_label, cost_label, unit।",
+    "billingRate": "प्रति GiB मूल्य",
+    "billingRateHint": "लागत कॉलम के लिए एक GiB का मूल्य। शून्य रहने पर रिपोर्ट बाइट्स में रहती है और लागत छिपी रहती है।",
+    "billingCurrency": "मुद्रा",
+    "billingSchema_none": "कोई नहीं (बाइट्स)",
+    "billingSchema_oci": "Oracle Cloud (OCI)",
+    "billingSchema_aws": "Amazon Web Services",
+    "billingSchema_gcp": "Google Cloud",
+    "billingSchema_custom": "कस्टम"
   },
   "audit": {
     "title": "ऑडिट",
@@ -593,7 +595,9 @@
     "folder": "फ़ोल्डर",
     "browse": "फ़ोल्डर ब्राउज़ करें",
     "depth": "गहराई",
-    "depthHint": "शून्य पूरे ट्री का विश्लेषण करता है; हर स्तर एक फ़ोल्डर जोड़ता है।",
+    "depthHint": "शून्य पूरा ट्री सूचीबद्ध करता है; गहराई केवल सूची सीमित करती है, कुल योग नहीं, इसलिए हर फ़ोल्डर का आकार सटीक रहता है।",
+    "notListed": "उप-आइटम सूचीबद्ध नहीं",
+    "notListedHint": "फ़ोल्डर के कुल योग उसके पूरे सबट्री को समाहित करते हैं; केवल उप-आइटम छूटे हैं, क्योंकि रिपोर्ट इस गहराई पर रुक जाती है।",
     "depthUnlimited": "पूरा ट्री",
     "start": "ऑडिट शुरू करें",
     "starting": "शुरू हो रहा है…",
@@ -631,6 +635,72 @@
     "error_internal": "सर्वर ऑडिट पूरा नहीं कर सका।",
     "error_unknown": "ऑडिट विफल रहा।"
   },
+  "billing": {
+    "title": "बिलिंग",
+    "subtitle": "इस इंस्टेंस ने अपने खातों से जो ट्रैफ़िक भेजा, दिन, महीने, खाते या रन के अनुसार।",
+    "download": "CSV डाउनलोड करें",
+    "groupBy": "इसके अनुसार समूहित करें",
+    "groupDay": "दिन",
+    "groupMonth": "महीना",
+    "groupAccount": "खाता",
+    "groupRun": "रन",
+    "from": "से",
+    "to": "तक",
+    "bucket": "अवधि",
+    "inbound": "इनबाउंड",
+    "outbound": "आउटबाउंड",
+    "operations": "संचालन",
+    "total": "कुल",
+    "cost": "लागत",
+    "windowTotal": "अवधि का कुल",
+    "windowHint": "चयनित अवधि के लिए",
+    "runBucket": "रन {id}",
+    "accountBucket": "खाता {id}",
+    "allBuckets": "सारा ट्रैफ़िक",
+    "empty": "इस अवधि में कोई ट्रैफ़िक दर्ज नहीं हुआ।",
+    "emptyHint": "कोई जॉब चलाएँ या अवधि बढ़ाएँ: हर रन दर्ज करता है कि उसने अपने खातों से क्या भेजा।",
+    "loadError": "ट्रैफ़िक रिपोर्ट लोड नहीं हो सकी।"
+  },
+  "api": {
+    "title": "API टोकन",
+    "subtitle": "Sync API के लिए प्रोग्रामेटिक क्रेडेंशियल। टोकन एक ही बार दिखता है: सर्वर उसके सीक्रेट का केवल डाइजेस्ट रखता है।",
+    "create": "टोकन बनाएँ",
+    "createHint": "कॉलर को नाम दें ताकि सूची पढ़ने योग्य रहे, और टोकन को सबसे छोटा आवश्यक स्कोप दें।",
+    "name": "नाम",
+    "namePlaceholder": "लागत निर्यातक",
+    "nameRequired": "टोकन को नाम दें।",
+    "token": "टोकन",
+    "scopes": "स्कोप",
+    "scope_read": "केवल पढ़ने योग्य",
+    "scope_write": "पढ़ना और लिखना",
+    "state_active": "सक्रिय",
+    "state_revoked": "रद्द",
+    "state_expired": "समाप्त",
+    "lastUsed": "अंतिम उपयोग",
+    "requests": "{count} अनुरोध",
+    "expiresAt": "समाप्ति",
+    "neverExpires": "कभी समाप्त नहीं",
+    "days30": "30 दिन बाद",
+    "days90": "90 दिन बाद",
+    "days365": "365 दिन बाद",
+    "regenerate": "फिर बनाएँ",
+    "revoke": "रद्द करें",
+    "deleteTitle": "टोकन हटाएँ?",
+    "deleteMessage": "टोकन {name} हमेशा के लिए हट जाता है। जो भी कॉलर इसे उपयोग कर रहा है वह तुरंत विफल होने लगेगा।",
+    "revokeTitle": "టोकेन रद्द करें?",
+    "revokeMessage": "रद्द किया गया टोकन इतिहास रखता है, पर अब कोई भी कॉलर उससे प्रमाणित नहीं हो सकता।",
+    "regenerated": "टोकन {name} फिर बना दिया गया। पिछला सीक्रेट अब काम नहीं करता।",
+    "revoked": "टोकन रद्द कर दिया गया।",
+    "deleted": "टोकन हटा दिया गया।",
+    "actionError": "टोकन बदला नहीं जा सका।",
+    "loadError": "टोकन लोड नहीं हो सके।",
+    "secretTitle": "{name} का सीक्रेट",
+    "secretHint": "सीक्रेट केवल इसी बार दिखाया जाता है। इसे उस टूल में चिपकाएँ जो इसका उपयोग करेगा।",
+    "secretWarning": "इसे अभी सहेजें: Sync इसे दोबारा नहीं दिखा सकता, केवल नया सीक्रेट बना सकता है।",
+    "secretDone": "मैंने सहेज लिया",
+    "empty": "अभी कोई API टोकन नहीं है।",
+    "emptyHint": "एक बनाएँ ताकि कोई स्क्रिप्ट या लागत टूल ब्राउज़र सत्र के बिना API पढ़ सके।"
+  },
   "errors": {
     "notFoundTitle": "पृष्ठ नहीं मिला",
     "notFoundMessage": "Sync में {path} पता मौजूद नहीं है।",
@@ -639,5 +709,19 @@
     "forbiddenMessage": "आपके खाते को यह पृष्ठ देखने की अनुमति नहीं है।",
     "genericTitle": "कुछ गलत हो गया",
     "genericMessage": "ऐप पिछली क्रिया पूरी नहीं कर सका।"
+  },
+  "theme": {
+    "light": "हल्का",
+    "dark": "गहरा",
+    "system": "सिस्टम"
+  },
+  "language": {
+    "en-US": "English",
+    "pt-BR": "Português (Brasil)",
+    "es-MX": "Español (México)",
+    "fr-FR": "Français",
+    "h-CN": "中文（简体）",
+    "hi-IN": "हिन्दी",
+    "ar-SA": "العربية"
   }
 }

@@ -4,7 +4,7 @@
 // Providers, the setup guide, Settings and About are screens of one task
 // ("configure this instance"), so they share a title block and a sub-navigation
 // instead of repeating the same header four times.
-import { Compass, Info, KeyRound, Settings } from '@lucide/vue';
+import { Compass, Info, KeyRound, Settings, Terminal } from '@lucide/vue';
 import { computed } from 'vue';
 import { RouterView, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -18,6 +18,7 @@ const route = useRoute();
 const tabs = computed(() => [
   { name: 'admin-providers', label: t('nav.adminProviders'), icon: KeyRound },
   { name: 'admin-guide', label: t('nav.adminGuide'), icon: Compass },
+  { name: 'admin-api', label: t('nav.adminApi'), icon: Terminal },
   { name: 'admin-settings', label: t('nav.adminSettings'), icon: Settings },
   { name: 'admin-about', label: t('nav.adminAbout'), icon: Info },
 ]);

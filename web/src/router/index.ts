@@ -18,8 +18,10 @@ export type RouteName =
   | 'job-edit'
   | 'runs'
   | 'audit'
+  | 'billing'
   | 'notifications'
   | 'admin-providers'
+  | 'admin-api'
   | 'admin-guide'
   | 'admin-settings'
   | 'admin-about'
@@ -73,6 +75,13 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/AuditView.vue'),
       },
       {
+        // The traffic report: what the instance moved, by day, month, account
+        // or run (see views/BillingView.vue).
+        path: 'billing',
+        name: 'billing',
+        component: () => import('@/views/BillingView.vue'),
+      },
+      {
         path: 'notifications',
         name: 'notifications',
         component: () => import('@/views/NotificationsView.vue'),
@@ -93,6 +102,13 @@ const routes: RouteRecordRaw[] = [
             path: 'guide/:provider?',
             name: 'admin-guide',
             component: () => import('@/views/admin/SetupGuideView.vue'),
+          },
+          {
+            // The API tokens of this instance: the programmatic credentials of
+            // the endpoints (see views/admin/ApiView.vue).
+            path: 'api',
+            name: 'admin-api',
+            component: () => import('@/views/admin/ApiView.vue'),
           },
           {
             path: 'settings',

@@ -33,6 +33,10 @@ Seeded keys (`internal/services/settings.go`, `Defaults`):
 | `default_theme` | `DEFAULT_THEME` | theme for a visitor without a stored choice |
 | `sync_default_interval_minutes` | `60` | schedule proposed for a new job |
 | `sync_run_timeout_minutes` | `30` | hard limit of one run |
+| `billing_schema` | `none` | line-item vocabulary of the billing report (`none`/`oci`/`aws`/`gcp`/`custom`) |
+| `billing_schema_custom` | `DefaultBillingSchemaDocument()` | the JSON document behind the `custom` schema |
+| `billing_rate_per_gib` | `0` | price of one GiB for the cost column (0 hides it) |
+| `billing_currency` | `USD` | currency of the cost column (three letter code) |
 
 Provider overrides use the prefix `provider.` (e.g. `provider.google.client_id`,
 `provider.google.client_secret` — the latter encrypted). `GET /api/settings/raw`
@@ -112,14 +116,32 @@ summary counters `files`, `folders`, `total_size`, `max_depth_reached`,
 
 `audit_entries` — the report of an audit: `audit_id` (indexed) + `kind`
 (`folder` \| `file`), `path`, `name`, `depth`, `size`, `total_size`, `files`,
-`folders` (the subtree totals of a folder), `expanded` (false for a folder at the
-depth boundary), `modified_at` and `mime_type`. The rows are batch-inserted after
-the walk, so their `id` order is the DFS preorder of the tree.
+`folders` (the subtree totals of a folder — exact even for a folder whose
+children the depth limit keeps out of the report), `expanded` (false only when the
+walk could not descend into the folder), `listed` (false when the folder's
+children are not part of the report), `modified_at` and `mime_type`. The rows are
+batch-inserted after the walk, so their `id` order is the DFS preorder of the tree.
 
 `notification_channels` — see [notifications.md](notifications.md) for the
 `config` documents; the table itself keeps `name`, `type` (`smtp` \| `webhook` \|
 `shoutrrr`), `config` (JSON, secrets encrypted), `events` (JSON array),
 `enabled`, `last_status`, `last_error`, `last_used_at`.
+
+`traffic_entries` — **the traffic accounting** behind [api.md](api.md) §9: one row
+per `(run_id, account_id, direction)` (`uniqueIndex
+idx_traffic_run_account_direction`, which is what makes a retried flush harmless)
+with `job_id`, `account_email`, `provider`, `direction` (`inbound` \| `outbound`),
+`bytes`, `files`, `operations`, and the UTC buckets `day` (`2026-10-13`) and
+`month` (`2026-10`) of the run start, plus `started_at`. The counters are
+**absolute** totals of the run, never increments, and the bucket columns are text
+so the report is a portable `GROUP BY`. A row is deleted with its run
+(`PruneRuns`).
+
+`api_tokens` — the programmatic credentials of [api.md](api.md) §9:
+`name`, `prefix` (`uniqueIndex`, the public half of `sync_<prefix>.<secret>`),
+`hash` (the SHA-256 of the secret half; the secret itself is never stored),
+`scopes` (JSON array of `read`/`write`), `created_by`, `expires_at`,
+`revoked_at`, `last_used_at`, `last_used_ip` and `requests`.
 
 ## 4. Relationships
 
@@ -201,6 +223,23 @@ WHERE (access_token <> '' AND access_token NOT LIKE 'v1:%')
 
 -- every editable setting
 SELECT `key`, value FROM settings WHERE `key` NOT LIKE 'provider.%' ORDER BY `key`;
+
+-- the traffic of the last 90 days, the shape the billing screen groups by
+SELECT day,
+       SUM(CASE WHEN direction = 'inbound'  THEN bytes ELSE 0 END) AS inbound_bytes,
+       SUM(CASE WHEN direction = 'outbound' THEN bytes ELSE 0 END) AS outbound_bytes,
+       SUM(operations) AS operations
+FROM traffic_entries
+WHERE day >= DATE_FORMAT(UTC_DATE() - INTERVAL 90 DAY, '%Y-%m-%d')
+GROUP BY day ORDER BY day DESC;
+
+-- what one run moved, and through which account
+SELECT account_email, direction, bytes, files, operations
+FROM traffic_entries WHERE run_id = 42 ORDER BY direction, account_id;
+
+-- the API tokens (the hash is never a secret to read: regenerate instead)
+SELECT id, name, prefix, scopes, expires_at, revoked_at, last_used_at, last_used_ip, requests
+FROM api_tokens ORDER BY id DESC;
 ```
 
 ## 9. Troubleshooting

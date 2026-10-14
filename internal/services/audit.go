@@ -23,6 +23,11 @@ const (
 	// AuditNodeLimit caps the number of entries one report may hold, so a huge
 	// tree cannot exhaust the database or the CSV download.
 	AuditNodeLimit = 10000
+	// AuditVisitLimit caps the number of nodes one walk may visit. A depth limit
+	// narrows the report, not the walk (the whole subtree is still listed so the
+	// totals stay exact), so this budget is what keeps a runaway tree bounded:
+	// hitting it sets Truncated exactly like the entry cap does.
+	AuditVisitLimit = 200000
 	// AuditMaxDepth caps the requested depth: deeper than this is a typo, and a
 	// report is a summary, not a backup manifest.
 	AuditMaxDepth = 25
@@ -37,8 +42,9 @@ type AuditInput struct {
 	DriveID    string
 	FolderID   string
 	FolderPath string
-	// Depth is how many folder levels below the selected folder are walked; 0 is
-	// unlimited.
+	// Depth bounds the report, not the walk: nodes deeper than it are not
+	// recorded as entries, but their subtree is still listed and counted, so
+	// every folder's totals are exact. 0 is unlimited.
 	Depth int
 }
 
@@ -288,35 +294,47 @@ type auditor struct {
 	folders         int
 	total           int64
 	maxDepthReached int
-	truncated       bool
-	lastProgress    time.Time
+	// visited counts every node the walk looked at, which is what the
+	// AuditVisitLimit budget is spent on.
+	visited      int
+	truncated    bool
+	lastProgress time.Time
 }
 
-// expand walks the folder `parentID` at `depth`, records its entry and every
-// descendant in DFS preorder and returns the subtree (size, files, folders not
-// counting the folder itself). A folder sitting at the depth boundary is
-// recorded but not descended into, so its subtree reads as zero.
+// expand walks the folder `parentID` at `depth`, counts every node below it and
+// records its entry plus every descendant in DFS preorder, returning the subtree
+// (size, files, folders, not counting the folder itself).
+//
+// The requested depth bounds the *report*, never the walk: `run.MaxDepth` decides
+// which nodes become entries while the whole subtree is still listed from the
+// provider and counted, so a folder's totals (and the run total) are exact at every
+// level. A folder whose children are not recorded says so through Listed; only the
+// node budgets (AuditNodeLimit, AuditVisitLimit) can make a report incomplete, and
+// both flag it Truncated.
 func (a *auditor) expand(ctx context.Context, parentID, path, name string, depth int) (int64, int, int) {
 	if ctx.Err() != nil || a.truncated {
 		return 0, 0, 0
 	}
-	if !a.emit(models.AuditEntry{
-		Kind:     string(models.AuditKindFolder),
-		Path:     path,
-		Name:     name,
-		Depth:    depth,
-		Expanded: true,
-	}) {
+	if !a.visit() {
 		return 0, 0, 0
 	}
-	index := len(a.entries) - 1
 	a.folders++
 	a.track(depth)
 
-	if a.run.MaxDepth > 0 && depth >= a.run.MaxDepth {
-		a.entries[index].Expanded = false
-		a.progress(ctx)
-		return 0, 0, 0
+	// The folder itself is recorded only when the report is deep enough to show
+	// it; its subtree is walked either way.
+	index := -1
+	if a.lists(depth) {
+		if !a.emit(models.AuditEntry{
+			Kind:   string(models.AuditKindFolder),
+			Path:   path,
+			Name:   name,
+			Depth:  depth,
+			Listed: a.lists(depth + 1),
+		}) {
+			return 0, 0, 0
+		}
+		index = len(a.entries) - 1
 	}
 
 	children, err := a.children(ctx, parentID)
@@ -335,6 +353,11 @@ func (a *auditor) expand(ctx context.Context, parentID, path, name string, depth
 		return 0, 0, 0
 	}
 	sortChildren(children)
+	if index >= 0 {
+		// The walk did descend into the folder, whether or not its children are
+		// part of the report.
+		a.entries[index].Expanded = true
+	}
 
 	var total int64
 	var files, folders int
@@ -342,39 +365,46 @@ func (a *auditor) expand(ctx context.Context, parentID, path, name string, depth
 		if ctx.Err() != nil || a.truncated {
 			break
 		}
+		if !a.visit() {
+			break
+		}
 		childPath := joinPath(path, child.Name)
 		if child.Dir() {
 			size, subFiles, subFolders := a.expand(ctx, child.ID, childPath, child.Name, depth+1)
 			total += size
 			files += subFiles
-			// The child folder itself, even at a boundary where it was not
-			// expanded, counts as one folder.
+			// The child folder itself counts as one folder even when the report
+			// stops before it (or before its children).
 			folders += subFolders + 1
 			continue
-		}
-		if !a.emit(models.AuditEntry{
-			Kind:       string(models.AuditKindFile),
-			Path:       childPath,
-			Name:       child.Name,
-			Depth:      depth + 1,
-			Size:       child.Size,
-			TotalSize:  child.Size,
-			Files:      1,
-			ModifiedAt: timeOrNil(child.ModifiedAt),
-			MimeType:   child.MimeType,
-		}) {
-			break
 		}
 		a.files++
 		a.total += child.Size
 		total += child.Size
 		files++
 		a.track(depth + 1)
+		if a.lists(depth + 1) {
+			if !a.emit(models.AuditEntry{
+				Kind:       string(models.AuditKindFile),
+				Path:       childPath,
+				Name:       child.Name,
+				Depth:      depth + 1,
+				Size:       child.Size,
+				TotalSize:  child.Size,
+				Files:      1,
+				ModifiedAt: timeOrNil(child.ModifiedAt),
+				MimeType:   child.MimeType,
+			}) {
+				break
+			}
+		}
 	}
 
-	a.entries[index].TotalSize = total
-	a.entries[index].Files = files
-	a.entries[index].Folders = folders
+	if index >= 0 {
+		a.entries[index].TotalSize = total
+		a.entries[index].Files = files
+		a.entries[index].Folders = folders
+	}
 	a.progress(ctx)
 	return total, files, folders
 }
@@ -409,7 +439,7 @@ func (a *auditor) reissue(ctx context.Context) error {
 	return nil
 }
 
-// emit appends one entry unless the node budget is spent, in which case it flags
+// emit appends one entry unless the entry budget is spent, in which case it flags
 // the report truncated and reports false.
 func (a *auditor) emit(entry models.AuditEntry) bool {
 	if len(a.entries) >= AuditNodeLimit {
@@ -419,6 +449,24 @@ func (a *auditor) emit(entry models.AuditEntry) bool {
 	entry.AuditID = a.run.ID
 	entry.CreatedAt = a.service.now()
 	a.entries = append(a.entries, entry)
+	return true
+}
+
+// lists reports whether nodes at `depth` are recorded in the report. The depth of
+// the request bounds the report, never the walk: a deeper node is still listed from
+// the provider and counted, it simply does not become an entry.
+func (a *auditor) lists(depth int) bool {
+	return a.run.MaxDepth == 0 || depth <= a.run.MaxDepth
+}
+
+// visit spends one node of the walk budget and reports whether the walk may
+// continue. The budget is what keeps an exhaustive walk bounded.
+func (a *auditor) visit() bool {
+	a.visited++
+	if a.visited > AuditVisitLimit {
+		a.truncated = true
+		return false
+	}
 	return true
 }
 

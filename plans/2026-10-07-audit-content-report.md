@@ -1,6 +1,10 @@
 # Plan — Audit content report
 
-Status: implemented (2026-10-07).
+Status: implemented (2026-10-07); the depth semantics of §4 were revised on
+2026-10-13 — the depth now bounds the *report*, not the walk (see
+[2026-10-13-billing-traffic-and-api-tokens.md](2026-10-13-billing-traffic-and-api-tokens.md) §6),
+because a boundary folder used to hide the whole subtree below it (the totals of
+its ancestors and of the run under-reported).
 
 ## 1. Goal
 

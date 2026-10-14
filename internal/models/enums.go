@@ -34,6 +34,12 @@ func (a AuthMode) Valid() bool {
 	}
 }
 
+// AuthModeToken is not a configurable mode: it is carried by the Identity of a
+// request authenticated with an API token, which is what lets the SPA tell a
+// script from a browser session. It is deliberately absent from Valid() so it can
+// never be selected in the configuration.
+const AuthModeToken AuthMode = "token"
+
 // ProviderName identifies a cloud storage provider implementation.
 type ProviderName string
 
@@ -149,6 +155,24 @@ const (
 	AuditKindFile AuditKind = "file"
 )
 
+// TrafficDirection is the side of a job one traffic row accounts for. The source
+// account is read from (inbound) and the destination is written to (outbound);
+// an operation that moves no payload (a delete, a folder creation) is attributed
+// to the account it acts on with the same split.
+type TrafficDirection string
+
+const (
+	// TrafficInbound is traffic read from the source account.
+	TrafficInbound TrafficDirection = "inbound"
+	// TrafficOutbound is traffic written to the destination account.
+	TrafficOutbound TrafficDirection = "outbound"
+)
+
+// Valid reports whether the value is a supported direction.
+func (t TrafficDirection) Valid() bool {
+	return t == TrafficInbound || t == TrafficOutbound
+}
+
 // TriggerSource explains what started a run.
 type TriggerSource string
 
@@ -201,6 +225,17 @@ const (
 	SettingDefaultTheme  = "default_theme"
 	SettingSyncInterval  = "sync_default_interval_minutes"
 	SettingSyncTimeout   = "sync_run_timeout_minutes"
+	// SettingBillingSchema selects the line-item vocabulary of the billing
+	// report (`none`, `oci`, `aws`, `gcp` or `custom`).
+	SettingBillingSchema = "billing_schema"
+	// SettingBillingSchemaCustom is the JSON document of the `custom` schema: the
+	// column labels, the unit and the optional per-unit price.
+	SettingBillingSchemaCustom = "billing_schema_custom"
+	// SettingBillingRatePerGiB is the price of one GiB used to compute a cost
+	// column; 0 leaves the report in bytes only.
+	SettingBillingRatePerGiB = "billing_rate_per_gib"
+	// SettingBillingCurrency is the currency the cost column is labelled with.
+	SettingBillingCurrency = "billing_currency"
 )
 
 // ProviderConfigPrefix is the settings-key prefix holding credentials entered

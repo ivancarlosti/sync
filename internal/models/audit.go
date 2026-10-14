@@ -19,8 +19,9 @@ type AuditRun struct {
 	DriveID      string `gorm:"size:191" json:"drive_id"`
 	RootFolderID string `gorm:"size:191" json:"root_folder_id"`
 	RootPath     string `gorm:"size:1024" json:"root_path"`
-	// MaxDepth is how many folder levels below the root are walked; 0 is
-	// unlimited. The selected folder is depth 0.
+	// MaxDepth bounds the *report*, not the walk: nodes deeper than it are not
+	// stored as entries, but their subtree is still listed and counted so every
+	// folder's total is exact. 0 is unlimited, and the selected folder is depth 0.
 	MaxDepth int `json:"max_depth"`
 
 	Status     string     `gorm:"size:32;index" json:"status"`
@@ -63,9 +64,15 @@ type AuditEntry struct {
 	TotalSize int64 `json:"total_size"`
 	Files     int   `json:"files"`
 	Folders   int   `json:"folders"`
-	// Expanded is false for a folder that sits at the depth boundary: it is
-	// reported but its contents are not.
-	Expanded   bool       `json:"expanded"`
+	// Expanded is false for a folder the walk could not descend into (it was
+	// removed mid-audit, or a budget was hit first); it stays true for a folder
+	// whose children are counted but not listed because of the depth limit.
+	Expanded bool `json:"expanded"`
+	// Listed is whether this folder's children are part of the report. A folder
+	// at the depth boundary has exact totals (the subtree was walked and counted)
+	// but Listed=false, which is how a reader tells an empty folder from a
+	// truncated listing.
+	Listed     bool       `json:"listed"`
 	ModifiedAt *time.Time `json:"modified_at,omitempty"`
 	MimeType   string     `gorm:"size:191" json:"mime_type,omitempty"`
 

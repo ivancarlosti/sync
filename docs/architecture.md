@@ -112,14 +112,58 @@ list folder tree to a depth ──► buffer entries (DFS preorder) ──► ba
 * The walk reuses the engine's token handling: an expired access token is renewed
   and a provider 401 mid-walk is retried once (`TokenManager.Reissue`).
 * The selected folder is **depth 0**; `max_depth = 0` is unlimited (clamped to
-  25). A folder at the depth boundary is recorded but not expanded.
-* The walk is bounded (`AuditNodeLimit = 10000` entries) and the live counters
-  reach the row every ~2s so the polling UI shows progress.
+  25). The depth bounds the **report, not the walk**: a folder at the boundary is
+  listed with the exact totals of its subtree — the walk descends into it and
+  counts everything below (`listed:false` marks the folders whose children are
+  left out), so an ancestor never under-reports what is below the cut.
+* The walk is bounded by two budgets: `AuditNodeLimit = 10000` entries and
+  `AuditVisitLimit = 200000` visited nodes, either of which sets `truncated`. The
+  live counters reach the row every ~2s so the polling UI shows progress.
 * `GET /api/audits/:id/export` streams the stored report as CSV without touching
   the provider again; `PruneAudits` keeps the newest audits per account.
 
 Cancellation is cooperative too (`AuditService.Cancel`), and the scheduler
 `Bootstrap` closes the audits a restart interrupted.
+
+## 3c. Traffic accounting (billing)
+
+`internal/services/billing.go` sits beside the engine: the three places that touch
+a provider (`copy`, `remove`, `ensureFolder`) report what they moved, and the run
+flushes the totals.
+
+```text
+download ─► inbound bytes  (source account)
+upload   ─► outbound bytes (destination account)      ─► flush (throttled 5s) ─► traffic_entries
+delete / folder created ─► one operation (the account it acts on)                 (upsert on run+account+direction)
+```
+
+* The counters are **absolute** `(account, direction)` totals of the run, never
+  increments: the flush is an upsert on
+  `(run_id, account_id, direction)`, so repeating it (throttled while the run is in
+  flight, forced once at the end) can neither double count nor lose a retry.
+* `inbound` is the account read from, `outbound` the account written to; an
+  operation that moves no payload is attributed to the account it acts on with the
+  same split. A job whose two endpoints are the same account therefore keeps two
+  rows.
+* The UTC `day`/`month` buckets come from the run start, so a run never spans a
+  bucket and the report is a plain `GROUP BY` (portable to MySQL/MariaDB and to the
+  SQLite of the tests).
+* A cancelled or crashed run keeps whatever the last throttled flush stored, which
+  is the traffic that really moved; `PruneRuns` deletes the rows with their run.
+* `internal/services/billing_schema.go` only decides the *vocabulary* of a report
+  (`none`, `oci`, `aws`, `gcp`, `custom`): the labels, the unit and the price per
+  GiB. The quantities stay bytes in the database.
+
+## 3d. API tokens
+
+`internal/services/apitokens.go` mints `sync_<prefix>.<secret>`: 4 random bytes as
+the public, unique-indexed prefix and 32 random bytes as the secret, of which only
+the SHA-256 digest is stored. `handlers/middleware.go` resolves a presented
+`Authorization: Bearer` / `X-API-Key` credential before the cookie (a presented
+token is the only credential considered) and `requireScope` maps the HTTP method
+onto the scope a request needs (`GET`/`HEAD`/`OPTIONS` → `read`, everything else →
+`write`). A browser session carries no scopes, which means "everything an
+administrator may do", so the guard only ever narrows a token.
 
 ## 4. Invariants every change must keep
 

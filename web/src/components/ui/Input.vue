@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 const props = withDefaults(
   defineProps<{
-    type?: 'text' | 'password' | 'email' | 'number' | 'url' | 'search' | 'tel' | 'datetime-local';
+    type?: 'text' | 'password' | 'email' | 'number' | 'url' | 'search' | 'tel' | 'date' | 'datetime-local';
     id?: string;
     name?: string;
     placeholder?: string;

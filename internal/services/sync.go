@@ -38,9 +38,12 @@ type SyncService struct {
 }
 
 // runState is the in-memory handle of a run in flight. The cancel function is
-// attached once the run context exists, which is what Cancel() triggers.
+// attached once the run context exists, which is what Cancel() triggers; a Cancel
+// that arrives before that point is remembered in `cancelled` and applied by
+// attach(), so it is never lost.
 type runState struct {
-	cancel context.CancelFunc
+	cancel    context.CancelFunc
+	cancelled bool
 }
 
 // NewSyncService builds the service. notifier may be nil (no notifications are
@@ -135,7 +138,15 @@ func (s *SyncService) Cancel(jobID uint) bool {
 	state, ok := s.running[jobID]
 	var cancel context.CancelFunc
 	if ok && state != nil {
-		cancel = state.cancel
+		if state.cancel != nil {
+			cancel = state.cancel
+		} else {
+			// The goroutine has not reached execute yet (the microseconds
+			// between the 202 and the run context existing): remember the
+			// request so attach() honours it instead of losing it, which is
+			// what would leave a cancelled run in flight forever.
+			state.cancelled = true
+		}
 	}
 	s.mu.Unlock()
 	if cancel != nil {
@@ -181,11 +192,15 @@ func (s *SyncService) reserve(ctx context.Context, job *models.SyncJob) error {
 }
 
 // attach hands the cancel function of the run context to the reservation, so
-// Cancel() can reach a run that already started.
+// Cancel() can reach a run that already started. A cancellation that arrived
+// before this point is applied right away.
 func (s *SyncService) attach(jobID uint, cancel context.CancelFunc) {
 	s.mu.Lock()
 	if state, ok := s.running[jobID]; ok && state != nil {
 		state.cancel = cancel
+		if state.cancelled {
+			cancel()
+		}
 	}
 	s.mu.Unlock()
 }
@@ -240,6 +255,9 @@ func (s *SyncService) execute(ctx context.Context, job *models.SyncJob, run *mod
 			slog.Error("storing the run items failed", "job", job.ID, "run", run.ID, "error", err)
 		}
 	}
+	// The final flush makes the counters of a finished run exact; a cancelled or
+	// crashed one keeps whatever the throttled flushes already stored.
+	engine.flushTraffic(ctx, true)
 
 	finished := s.now()
 	run.FinishedAt = &finished
@@ -343,6 +361,10 @@ type engine struct {
 	forward  bool
 	backward bool
 	fatal    error
+	// traffic accumulates what the run moves through each account; it is flushed
+	// throttled from the transfer path and once when the run ends.
+	traffic          map[trafficKey]trafficCounter
+	lastTrafficFlush time.Time
 }
 
 // endpoint is one side of a job: the account, its provider client, the selected
@@ -1031,6 +1053,20 @@ func (e *engine) copy(ctx context.Context, relative string, from, to *endpoint, 
 		return fmt.Errorf("uploading %q to %s: %w", relative, to.label(), err)
 	}
 	e.run.BytesTransferred += item.Size
+	// The payload that really moved: the download reports what it read and the
+	// listing (or the upload answer) what it wrote. Inbound is attributed to the
+	// account read from, outbound to the account written to.
+	read := transfer.Size
+	if read <= 0 {
+		read = item.Size
+	}
+	written := item.Size
+	if written <= 0 {
+		written = saved.Size
+	}
+	e.addTraffic(from.account, models.TrafficInbound, read, 1, 0)
+	e.addTraffic(to.account, models.TrafficOutbound, written, 1, 0)
+	e.flushTraffic(ctx, false)
 	if _, tracked := e.state[relative]; tracked {
 		e.run.FilesUpdated++
 	} else {
@@ -1056,6 +1092,10 @@ func (e *engine) remove(ctx context.Context, relative string, side *endpoint, it
 			return fmt.Errorf("deleting %q on %s: %w", relative, side.label(), err)
 		}
 	}
+	// A delete moves no payload: it is billed as one operation against the
+	// account it acted on.
+	e.addTraffic(side.account, e.trafficDirection(side), 0, 0, 1)
+	e.flushTraffic(ctx, false)
 	e.run.FilesDeleted++
 	delete(side.files, relative)
 	return e.forget(ctx, relative)
@@ -1133,6 +1173,10 @@ func (e *engine) ensureFolder(ctx context.Context, side *endpoint, dir string) (
 		return "", fmt.Errorf("creating the folder %q on %s: %w", dir, side.label(), err)
 	}
 	side.folders[dir] = folder.ID
+	// Creating a folder moves no payload either: it is one more operation on the
+	// account that now holds it.
+	e.addTraffic(side.account, e.trafficDirection(side), 0, 0, 1)
+	e.flushTraffic(ctx, false)
 	e.run.FoldersCreated++
 	e.record(models.ActionFolderCreated, dir, 0, "created the folder on "+side.label())
 	return folder.ID, nil

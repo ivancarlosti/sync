@@ -128,7 +128,49 @@ Identity mapping: `sub` → `subject`, `email` → `email`,
 6. `AUTH_METHOD=keycloak`, restart, and check `GET /api/auth/session` reports
    `keycloak.enabled: true`.
 
-## 6. Security notes
+## 6. API tokens
+
+A programmatic caller does not have to hold a session cookie: it can present an
+**API token** instead. Tokens are created in **Admin > API** (or through
+`POST /api/tokens`, see [api.md](api.md) §9).
+
+* Shape: `sync_<prefix>.<secret>` — the 8 hex character `prefix` is public (it is
+  what the row is looked up by, through the unique index), the 43 character
+  `secret` is 32 random bytes in base64url.
+* Storage: only the SHA-256 digest of the secret is written, in `api_tokens.hash`.
+  The secret leaves the server exactly once, in the answer that created or
+  regenerated the token; a lost secret can only be replaced.
+* Presentation: `Authorization: Bearer sync_…` (what curl and every SDK send) or
+  `X-API-Key: sync_…`. When a token is presented it is the *only* credential
+  considered: a stale token answers `401 unauthorized` instead of falling back to
+  a cookie that happens to be there.
+* Scopes: `read` allows every safe endpoint (`GET`, `HEAD`, `OPTIONS`), `write`
+  allows everything; a token whose scopes are unreadable is treated as `read`.
+  A session carries no scopes, which means "everything an administrator may do".
+* Lifecycle: `expires_at` (0 = never, capped at 365 days), `revoked_at` (soft: the
+  row survives, authentication fails), `DELETE` (the row is removed), and
+  `POST …/regenerate` (prefix and secret replaced in place, so the previous secret
+  dies immediately while the name, the scopes and the history survive).
+* Usage: every authenticated call is counted (`requests`, `last_used_at`,
+  `last_used_ip`), which is how an abandoned token is spotted.
+
+The token identity is the token itself (`method: token`, `admin: true`,
+`token`, `scopes`), because Sync has a single role: a token *is* an administrator
+credential and its scopes only narrow it. Everything else — audit, notifications,
+billing — therefore works unchanged for a script.
+
+```bash
+# mint one (the answer carries the secret once)
+curl -s -b jar.txt -H 'Content-Type: application/json' \
+  -d '{"name":"cost exporter","scopes":["read"],"expires_in_days":90}' \
+  https://sync.example.com/api/tokens
+
+# use it
+curl -s -H 'Authorization: Bearer sync_1a2b3c4d.…' \
+  'https://sync.example.com/api/billing?group_by=month'
+```
+
+## 7. Security notes
 
 * The session cookie is signed, not encrypted: it contains an e-mail and a
   display name, never a token and never a password.
@@ -139,6 +181,10 @@ Identity mapping: `sub` → `subject`, `email` → `email`,
   session lifetime (the realm ends the login, the cookie follows it).
 * Every answer carries the CSP, `X-Frame-Options: DENY` and
   `Referrer-Policy: same-origin` (see [reverse-proxy.md](reverse-proxy.md)).
-* No endpoint of the API is reachable without the session except `health`,
-  `version`, `auth/session`, `auth/login`, `auth/keycloak`, `auth/callback` and
-  the two provider callbacks (which are protected by the signed `state`).
+* API tokens are hashed credentials with an optional expiry: prefer a read-only
+  one for a reporting tool, and revoke rather than delete when a caller is
+  retired (the row keeps its history).
+* No endpoint of the API is reachable without the session **or an API token**,
+  except `health`, `version`, `auth/session`, `auth/login`, `auth/keycloak`,
+  `auth/callback` and the two provider callbacks (which are protected by the
+  signed `state`).

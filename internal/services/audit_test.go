@@ -174,8 +174,10 @@ func TestAuditWalksTree(t *testing.T) {
 	}
 }
 
-// TestAuditDepthBoundary checks that a folder at the requested depth is reported
-// but not descended into.
+// TestAuditDepthBoundary checks the depth semantics: the depth bounds the report,
+// not the walk, so a boundary folder is listed with its exact subtree totals (the
+// fix: an ancestor used to report zero for everything below the cut) and says
+// through Listed that its children are not part of the report.
 func TestAuditDepthBoundary(t *testing.T) {
 	env := newAuditEnv(t)
 	seedTree(t, env)
@@ -185,25 +187,44 @@ func TestAuditDepthBoundary(t *testing.T) {
 		t.Fatalf("starting the audit: %v", err)
 	}
 	finished := env.waitAudit(t, run.ID)
-	if finished.Files != 1 || finished.Folders != 3 || finished.TotalSize != 2 {
-		t.Fatalf("summary = files %d, folders %d, size %d; want 1, 3, 2",
+	// The whole subtree was walked and counted even though only depth 1 is
+	// listed, so the summary is the exact one of the unlimited report.
+	if finished.Files != 3 || finished.Folders != 4 || finished.TotalSize != 16 {
+		t.Fatalf("summary = files %d, folders %d, size %d; want 3, 4, 16",
 			finished.Files, finished.Folders, finished.TotalSize)
 	}
-	if finished.MaxDepthReached != 1 {
-		t.Fatalf("max depth = %d, want 1", finished.MaxDepthReached)
+	if finished.MaxDepthReached != 3 {
+		t.Fatalf("max depth = %d, want 3 (the requested depth does not bound the walk)", finished.MaxDepthReached)
 	}
+	if finished.Truncated {
+		t.Fatal("a depth-limited report of a small tree must not be truncated")
+	}
+
 	byPath := entriesByPath(t, env.store, run.ID)
+	root, ok := byPath[""]
+	if !ok {
+		t.Fatal("the root was not reported")
+	}
+	if !root.Expanded || !root.Listed || root.TotalSize != 16 || root.Files != 3 || root.Folders != 3 {
+		t.Fatalf("root entry = %+v, want an expanded, listed folder with 16 bytes, 3 files, 3 folders", root)
+	}
 	for _, boundary := range []string{"docs", "empty"} {
 		got, ok := byPath[boundary]
 		if !ok {
-			t.Fatalf("%q was not reported at the boundary", boundary)
+			t.Fatalf("%q was not listed at the boundary", boundary)
 		}
-		if got.Expanded || got.TotalSize != 0 || got.Files != 0 {
-			t.Fatalf("%q at the boundary = %+v, want not expanded with a zero subtree", boundary, got)
+		if !got.Expanded || got.Listed {
+			t.Fatalf("%q = expanded %t, listed %t; want the walk to descend into it while its children stay out of the report",
+				boundary, got.Expanded, got.Listed)
 		}
 	}
-	if _, ok := byPath["docs/notes.md"]; ok {
-		t.Fatal("a file below the boundary must not be reported")
+	if got := byPath["docs"]; got.TotalSize != 14 || got.Files != 2 || got.Folders != 1 {
+		t.Fatalf("docs entry = %+v, want its exact subtree (14 bytes, 2 files, 1 folder) below the depth limit", got)
+	}
+	for _, hidden := range []string{"docs/notes.md", "docs/img", "docs/img/a.png"} {
+		if _, ok := byPath[hidden]; ok {
+			t.Fatalf("%q must not be listed past the requested depth", hidden)
+		}
 	}
 }
 
@@ -225,6 +246,24 @@ func TestAuditorEmitHonoursNodeLimit(t *testing.T) {
 	}
 	if len(a.entries) != AuditNodeLimit {
 		t.Fatalf("entries = %d, want %d", len(a.entries), AuditNodeLimit)
+	}
+}
+
+// TestAuditorVisitHonoursBudget checks the walk budget: a depth limit no longer
+// stops the walk, so AuditVisitLimit is what bounds a runaway tree, and hitting it
+// flags the report truncated.
+func TestAuditorVisitHonoursBudget(t *testing.T) {
+	a := &auditor{service: NewAuditService(nil, nil), run: &models.AuditRun{ID: 1}}
+	for i := 0; i < AuditVisitLimit; i++ {
+		if !a.visit() {
+			t.Fatalf("visit #%d reported the budget spent too early", i)
+		}
+	}
+	if a.visit() {
+		t.Fatal("visit accepted a node past the limit")
+	}
+	if !a.truncated {
+		t.Fatal("the report must be flagged truncated once the walk budget is spent")
 	}
 }
 

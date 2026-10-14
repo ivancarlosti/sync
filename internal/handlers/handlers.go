@@ -36,6 +36,8 @@ type Deps struct {
 	OAuth *services.OAuthService
 	// Tokens resolves an account into a usable provider session.
 	Tokens *services.TokenManager
+	// APITokens mints and verifies the programmatic credentials of the API.
+	APITokens *services.APITokenService
 	// Credentials reads and writes the provider OAuth clients.
 	Credentials *services.ProviderSettings
 	// Guide assembles the guided app-registration walkthrough per provider.
@@ -108,6 +110,8 @@ func (d Deps) validate() error {
 		return errors.New("handlers: OAuth is required")
 	case d.Tokens == nil:
 		return errors.New("handlers: Tokens is required")
+	case d.APITokens == nil:
+		return errors.New("handlers: APITokens is required")
 	case d.Credentials == nil:
 		return errors.New("handlers: Credentials is required")
 	case d.Guide == nil:

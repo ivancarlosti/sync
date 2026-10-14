@@ -26,6 +26,7 @@ import {
   type RunItem,
   type SyncJob,
   type SyncRun,
+  type TrafficEntry,
 } from '@/lib/api';
 import { formatBytes, formatDateTime, formatDuration, formatNumber } from '@/lib/format';
 
@@ -46,6 +47,7 @@ const failure = ref('');
 
 const detail = ref<SyncRun | null>(null);
 const items = ref<RunItem[]>([]);
+const traffic = ref<TrafficEntry[]>([]);
 const itemsLoading = ref(false);
 const itemsFailure = ref('');
 
@@ -65,6 +67,7 @@ const detailOpen = computed({
     if (!open) {
       detail.value = null;
       items.value = [];
+      traffic.value = [];
       itemsFailure.value = '';
     }
   },
@@ -138,6 +141,7 @@ function applyFilter(value: string | number): void {
 async function open(run: SyncRun): Promise<void> {
   detail.value = run;
   items.value = [];
+  traffic.value = [];
   itemsFailure.value = '';
   itemsLoading.value = true;
   try {
@@ -146,6 +150,7 @@ async function open(run: SyncRun): Promise<void> {
     // flight updates its own row without a reload of the whole log.
     detail.value = answer.run;
     items.value = answer.items;
+    traffic.value = answer.traffic ?? [];
     rows.value = rows.value.map((row) => (row.id === answer.run.id ? answer.run : row));
   } catch (error) {
     itemsFailure.value = messageOf(error);
@@ -291,6 +296,34 @@ onMounted(() => {
         <p v-if="detail.message" class="break-anywhere text-sm text-muted-foreground">
           {{ detail.message }}
         </p>
+
+        <div v-if="traffic.length > 0" class="overflow-x-auto">
+          <p class="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {{ t('runs.traffic') }}
+          </p>
+          <table class="w-full text-sm">
+            <thead class="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th scope="col" class="px-3 py-2 text-start font-medium">{{ t('billing.groupAccount') }}</th>
+                <th scope="col" class="px-3 py-2 text-start font-medium">{{ t('runs.action') }}</th>
+                <th scope="col" class="px-3 py-2 text-end font-medium">{{ t('runs.bytes') }}</th>
+                <th scope="col" class="px-3 py-2 text-end font-medium">{{ t('billing.operations') }}</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-border">
+              <tr v-for="row in traffic" :key="row.id">
+                <td class="px-3 py-2">{{ row.account_email || row.provider }}</td>
+                <td class="px-3 py-2 text-muted-foreground">
+                  {{ row.direction === 'inbound' ? t('billing.inbound') : t('billing.outbound') }}
+                </td>
+                <td class="px-3 py-2 text-end"><span class="numeric">{{ size(row.bytes) }}</span></td>
+                <td class="px-3 py-2 text-end text-muted-foreground">
+                  <span class="numeric">{{ count(row.operations) }}</span>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         <EmptyState v-if="items.length === 0" :icon="ListChecks" :title="t('runs.itemsEmpty')" />
 

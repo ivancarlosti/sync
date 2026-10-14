@@ -452,6 +452,13 @@ onBeforeUnmount(clearTimer);
               <tr v-for="entry in entries" :key="entry.id">
                 <td class="break-anywhere px-3 py-2">
                   <span :style="indent(entry)">{{ entry.path || t('audit.root') }}</span>
+                  <span
+                    v-if="entry.kind === 'folder' && !entry.listed"
+                    class="ms-2 text-xs text-muted-foreground"
+                    :title="t('audit.notListedHint')"
+                  >
+                    — {{ t('audit.notListed') }}
+                  </span>
                 </td>
                 <td class="px-3 py-2"><StatusBadge :status="entry.kind" /></td>
                 <td class="px-3 py-2 text-end text-muted-foreground">

@@ -33,6 +33,9 @@ func (s *Server) securityHeaders() gin.HandlerFunc {
 
 // session resolves the operator identity of every request once.
 //
+//   - a request presenting an API token (`Authorization: Bearer sync_…` or
+//     `X-API-Key`) is authenticated by that token — and only by it, so a stale
+//     credential answers 401 instead of silently falling back to a cookie.
 //   - `none` mode: every request carries the open administrator identity.
 //   - `account` and `keycloak` modes: the signed cookie is verified; an invalid,
 //     tampered or expired cookie simply leaves the request unauthenticated, and
@@ -42,6 +45,15 @@ func (s *Server) securityHeaders() gin.HandlerFunc {
 // login, callbacks) are served from the same chain.
 func (s *Server) session() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		if raw := presentedToken(c); raw != "" {
+			if s.deps.APITokens != nil {
+				if identity, err := s.deps.APITokens.Authenticate(c.Request.Context(), raw, c.ClientIP()); err == nil {
+					c.Set(identityKey, identity)
+				}
+			}
+			c.Next()
+			return
+		}
 		if s.deps.Auth.Open() {
 			c.Set(identityKey, s.deps.Auth.OpenIdentity())
 			c.Next()
@@ -80,6 +92,24 @@ func (s *Server) requireSession() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if !s.operator(c).Authenticated {
 			abort(c, http.StatusUnauthorized, "sign in to continue")
+			return
+		}
+		c.Next()
+	}
+}
+
+// requireScope narrows an API token: a safe request (GET/HEAD/OPTIONS) needs the
+// `read` scope and everything else needs `write`.
+//
+// A browser session carries no scopes, which means "everything an administrator
+// may do", so this is a no-op for the SPA and only ever refuses a scoped token.
+// It is mounted on the whole `/secured` tree: the vocabulary is the HTTP method,
+// never a per-route annotation that could be forgotten.
+func (s *Server) requireScope() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		identity := s.operator(c)
+		if identity.Token != "" && !services.HasScope(identity.Scopes, scopeFor(c.Request.Method)) {
+			abort(c, http.StatusForbidden, "this API token is read-only")
 			return
 		}
 		c.Next()

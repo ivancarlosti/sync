@@ -50,9 +50,12 @@
     "jobs": "المهام",
     "runs": "عمليات التشغيل",
     "audit": "التدقيق",
+    "billing": "الفوترة",
     "notifications": "الإشعارات",
     "admin": "الإدارة",
     "adminProviders": "المزوّدون",
+    "adminGuide": "دليل الإعداد",
+    "adminApi": "واجهة API",
     "adminSettings": "الإعدادات",
     "adminAbout": "حول",
     "signOut": "تسجيل الخروج",
@@ -60,8 +63,7 @@
     "toggleTheme": "تبديل المظهر",
     "changeLanguage": "تغيير اللغة",
     "skipToContent": "الانتقال إلى المحتوى",
-    "primaryNavigation": "التنقل الرئيسي",
-    "adminGuide": "دليل الإعداد"
+    "primaryNavigation": "التنقل الرئيسي"
   },
   "auth": {
     "title": "تسجيل الدخول إلى Sync",
@@ -89,20 +91,6 @@
     "error_network": "الخادم غير متاح.",
     "error_unauthorized": "انتهت جلستك. سجّل الدخول مرة أخرى.",
     "error_unknown": "فشلت المصادقة."
-  },
-  "theme": {
-    "light": "فاتح",
-    "dark": "داكن",
-    "system": "النظام"
-  },
-  "language": {
-    "en-US": "English",
-    "pt-BR": "Português (Brasil)",
-    "es-MX": "Español (México)",
-    "fr-FR": "Français",
-    "h-CN": "中文（简体）",
-    "hi-IN": "हिन्दी",
-    "ar-SA": "العربية"
   },
   "status": {
     "connected": "متصل",
@@ -348,6 +336,7 @@
     "conflicts": "التعارضات",
     "errors": "الأخطاء",
     "bytes": "البيانات",
+    "traffic": "الحركة",
     "items": "الملفات",
     "itemsEmpty": "لم تسجّل هذه العملية أي إجراء على الملفات.",
     "action": "الإجراء",
@@ -584,7 +573,20 @@
           }
         }
       }
-    }
+    },
+    "billing": "تقرير حركة البيانات",
+    "billingSubtitle": "ضع على تقرير الحركة مصطلحات بنود فاتورتك.",
+    "billingSchema": "مخطط الفوترة",
+    "billingSchemaCustom": "مخطط مخصص (JSON)",
+    "billingSchemaCustomHint": "كل حقل تتركه يحتفظ بقيمته الافتراضية. المفاتيح: label، inbound_label، outbound_label، operations_label، cost_label، unit.",
+    "billingRate": "السعر لكل GiB",
+    "billingRateHint": "سعر الجيجابايت المستخدم في عمود التكلفة. الصفر يبقي التقرير بالبايت ويخفي التكلفة.",
+    "billingCurrency": "العملة",
+    "billingSchema_none": "بدون (بايت)",
+    "billingSchema_oci": "Oracle Cloud (OCI)",
+    "billingSchema_aws": "Amazon Web Services",
+    "billingSchema_gcp": "Google Cloud",
+    "billingSchema_custom": "مخصص"
   },
   "audit": {
     "title": "التدقيق",
@@ -593,7 +595,9 @@
     "folder": "المجلد",
     "browse": "تصفح المجلدات",
     "depth": "العمق",
-    "depthHint": "الصفر يحلِّل الشجرة كاملةً؛ وكل مستوى يضيف مجلدًا.",
+    "depthHint": "الصفر يعرض الشجرة كاملةً؛ العمق يحدّ القائمة فقط ولا يحدّ الإجماليات، فيبقى حجم كل مجلد دقيقًا.",
+    "notListed": "المجلدات الفرعية غير مدرجة",
+    "notListedHint": "إجماليات المجلد تشمل شجرته الفرعية كاملةً؛ وتُستثنى المجلدات الفرعية وحدها لأن التقرير يتوقف عند هذا العمق.",
     "depthUnlimited": "الشجرة كاملةً",
     "start": "ابدأ التدقيق",
     "starting": "جارٍ البدء…",
@@ -631,6 +635,72 @@
     "error_internal": "تعذَّر على الخادم إكمال التدقيق.",
     "error_unknown": "فشل التدقيق."
   },
+  "billing": {
+    "title": "الفوترة",
+    "subtitle": "الحركة التي نقلها هذا النظام عبر حساباته، حسب اليوم أو الشهر أو الحساب أو التشغيل.",
+    "download": "تنزيل CSV",
+    "groupBy": "التجميع حسب",
+    "groupDay": "اليوم",
+    "groupMonth": "الشهر",
+    "groupAccount": "الحساب",
+    "groupRun": "التشغيل",
+    "from": "من",
+    "to": "إلى",
+    "bucket": "الفترة",
+    "inbound": "وارد",
+    "outbound": "صادر",
+    "operations": "العمليات",
+    "total": "الإجمالي",
+    "cost": "التكلفة",
+    "windowTotal": "إجمالي الفترة",
+    "windowHint": "للفترة المحددة",
+    "runBucket": "التشغيل {id}",
+    "accountBucket": "الحساب {id}",
+    "allBuckets": "كل الحركة",
+    "empty": "لم تُسجَّل أي حركة في هذه الفترة.",
+    "emptyHint": "شغّل مهمة أو وسّع الفترة: كل تشغيل يسجل ما نقله عبر كل حساب من حساباته.",
+    "loadError": "تعذّر تحميل تقرير الحركة."
+  },
+  "api": {
+    "title": "رموز API",
+    "subtitle": "بيانات اعتماد برمجية لواجهة Sync. يُعرض الرمز مرة واحدة فقط لأن الخادم يحتفظ ببصمة السر وحدها.",
+    "create": "إنشاء رمز",
+    "createHint": "سمِّ الجهة المستدعية لتبقى القائمة واضحة، وامنح الرمز أصغر نطاق يكفيه.",
+    "name": "الاسم",
+    "namePlaceholder": "مُصدِّر التكاليف",
+    "nameRequired": "أعطِ الرمز اسمًا.",
+    "token": "الرمز",
+    "scopes": "النطاق",
+    "scope_read": "قراءة فقط",
+    "scope_write": "قراءة وكتابة",
+    "state_active": "نشط",
+    "state_revoked": "ملغى",
+    "state_expired": "منتهي",
+    "lastUsed": "آخر استخدام",
+    "requests": "{count} طلب",
+    "expiresAt": "الانتهاء",
+    "neverExpires": "لا ينتهي",
+    "days30": "بعد ٣٠ يومًا",
+    "days90": "بعد ٩٠ يومًا",
+    "days365": "بعد ٣٦٥ يومًا",
+    "regenerate": "إعادة التوليد",
+    "revoke": "إلغاء",
+    "deleteTitle": "حذف الرمز؟",
+    "deleteMessage": "سيُحذف الرمز {name} نهائيًا، وستبدأ كل جهة لا تزال تستخدمه في الفشل فورًا.",
+    "revokeTitle": "إلغاء الرمز؟",
+    "revokeMessage": "الرمز الملغى يحتفظ بسجله، لكن لم يعد أي مستدعٍ قادرًا على المصادقة به.",
+    "regenerated": "أُعيد توليد الرمز {name}. السر السابق لم يعد يعمل.",
+    "revoked": "أُلغي الرمز.",
+    "deleted": "حُذف الرمز.",
+    "actionError": "تعذّر تعديل الرمز.",
+    "loadError": "تعذّر تحميل الرموز.",
+    "secretTitle": "سر {name}",
+    "secretHint": "هذه المرة الوحيدة التي يُعرض فيها السر. الصقه في الأداة التي ستستخدمه.",
+    "secretWarning": "احفظه الآن: لا يمكن لـ Sync عرضه مرة أخرى، وإنما توليد سر جديد فقط.",
+    "secretDone": "حفظته",
+    "empty": "لا يوجد رمز API بعد.",
+    "emptyHint": "أنشئ واحدًا ليقرأ سكربت أو أداة تكاليف الواجهة دون جلسة متصفح."
+  },
   "errors": {
     "notFoundTitle": "الصفحة غير موجودة",
     "notFoundMessage": "العنوان {path} غير موجود في Sync.",
@@ -639,5 +709,19 @@
     "forbiddenMessage": "حسابك غير مخوَّل لعرض هذه الصفحة.",
     "genericTitle": "حدث خطأ ما",
     "genericMessage": "لم يتمكن التطبيق من إكمال الإجراء الأخير."
+  },
+  "theme": {
+    "light": "فاتح",
+    "dark": "داكن",
+    "system": "النظام"
+  },
+  "language": {
+    "en-US": "English",
+    "pt-BR": "Português (Brasil)",
+    "es-MX": "Español (México)",
+    "fr-FR": "Français",
+    "h-CN": "中文（简体）",
+    "hi-IN": "हिन्दी",
+    "ar-SA": "العربية"
   }
 }

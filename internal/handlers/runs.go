@@ -93,7 +93,18 @@ func (s *Server) handleGetRun(c *gin.Context) {
 		fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"run": newRunView(*run), "items": newRunItemViews(items)})
+	// The traffic of the run is what the billing report is built from: showing it
+	// beside the items is what makes a run accountable.
+	traffic, err := s.deps.Store.GetRunTraffic(c.Request.Context(), id)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"run":     newRunView(*run),
+		"items":   newRunItemViews(items),
+		"traffic": traffic,
+	})
 }
 
 // handleListRunItems answers GET /api/runs/:id/items, the paginated detail the

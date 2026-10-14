@@ -33,7 +33,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	oauth.GET("/:provider/callback", s.handleOAuthCallback)
 
 	secured := api.Group("")
-	secured.Use(s.requireSession())
+	secured.Use(s.requireSession(), s.requireScope())
 	{
 		accounts := secured.Group("/accounts")
 		accounts.GET("", s.handleListAccounts)
@@ -70,6 +70,18 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		settings.GET("", s.handleGetSettings)
 		settings.PUT("", s.handleUpdateSettings)
 		settings.GET("/raw", s.handleRawSettings)
+
+		tokens := secured.Group("/tokens")
+		tokens.GET("", s.handleListTokens)
+		tokens.POST("", s.handleCreateToken)
+		tokens.POST("/:id/regenerate", s.handleRegenerateToken)
+		tokens.POST("/:id/revoke", s.handleRevokeToken)
+		tokens.DELETE("/:id", s.handleDeleteToken)
+
+		billing := secured.Group("/billing")
+		billing.GET("", s.handleBilling)
+		billing.GET("/runs", s.handleBillingRuns)
+		billing.GET("/export", s.handleExportBilling)
 
 		providers := secured.Group("/providers")
 		providers.GET("", s.handleListProviders)
