@@ -19,6 +19,22 @@ const (
 	DefaultRunTimeout = 30
 )
 
+// Retention bounds used when nothing was configured yet.
+const (
+	// DefaultRetentionDays is the age, in days, past which the automatic purge
+	// erases a run, an audit report or a traffic day.
+	DefaultRetentionDays = 180
+	// MinRetentionDays and MaxRetentionDays bound an operator's choice: one day
+	// keeps the report usable during an incident, ten years covers any record
+	// keeping rule this side of a legal hold.
+	MinRetentionDays = 1
+	MaxRetentionDays = 3650
+)
+
+// Rates bound what an operator may price one GiB at: the cost columns of the
+// billing report stay readable numbers. The bound itself lives next to the
+// billing schema vocabulary, where ValidateBillingSettings applies it.
+
 // AppSettings is the runtime configuration an administrator can change in
 // Admin > Settings. The environment provides the initial value, the database
 // holds the operator's choice.
@@ -34,10 +50,22 @@ type AppSettings struct {
 	BillingSchema string `json:"billing_schema"`
 	// BillingSchemaCustom is the JSON document of the `custom` schema.
 	BillingSchemaCustom string `json:"billing_schema_custom"`
-	// BillingRatePerGiB prices one GiB; 0 leaves the report in bytes only.
-	BillingRatePerGiB float64 `json:"billing_rate_per_gib"`
+	// BillingRateInPerGiB prices one GiB read from a source account; 0 is the
+	// common case (ingress is free) and leaves the inbound cost at zero.
+	BillingRateInPerGiB float64 `json:"billing_rate_in_per_gib"`
+	// BillingRateOutPerGiB prices one GiB written to a destination account. With
+	// both rates at 0 the report stays in bytes only.
+	BillingRateOutPerGiB float64 `json:"billing_rate_out_per_gib"`
 	// BillingCurrency labels the cost column (a three letter code).
 	BillingCurrency string `json:"billing_currency"`
+	// PurgeEnabled arms the automatic retention pass. It never disables the
+	// manual "purge now" actions of Admin > Settings.
+	PurgeEnabled bool `json:"purge_enabled"`
+	// PurgeJobsDays, PurgeAuditsDays and PurgeBillingDays are the ages, in days,
+	// past which each kind of record is erased.
+	PurgeJobsDays    int `json:"purge_jobs_days"`
+	PurgeAuditsDays  int `json:"purge_audits_days"`
+	PurgeBillingDays int `json:"purge_billing_days"`
 }
 
 // SettingsService reads and writes the editable settings.
@@ -52,16 +80,25 @@ func NewSettingsService(cfg *config.Config, settings *database.Settings) *Settin
 }
 
 // Defaults returns the values seeded at boot: the environment configuration.
+//
+// The legacy `billing_rate_per_gib` is deliberately not seeded any more: it is
+// only read as the fallback of the outbound rate, so an instance configured
+// before the split keeps its price and a fresh one never grows a dead key.
 func Defaults(cfg *config.Config) map[string]string {
 	return map[string]string{
-		models.SettingDefaultLocale:       cfg.DefaultLocale,
-		models.SettingDefaultTheme:        cfg.DefaultTheme,
-		models.SettingSyncInterval:        strconv.Itoa(DefaultSyncInterval),
-		models.SettingSyncTimeout:         strconv.Itoa(DefaultRunTimeout),
-		models.SettingBillingSchema:       BillingSchemaNone,
-		models.SettingBillingSchemaCustom: DefaultBillingSchemaDocument(),
-		models.SettingBillingRatePerGiB:   "0",
-		models.SettingBillingCurrency:     "USD",
+		models.SettingDefaultLocale:        cfg.DefaultLocale,
+		models.SettingDefaultTheme:         cfg.DefaultTheme,
+		models.SettingSyncInterval:         strconv.Itoa(DefaultSyncInterval),
+		models.SettingSyncTimeout:          strconv.Itoa(DefaultRunTimeout),
+		models.SettingBillingSchema:        BillingSchemaNone,
+		models.SettingBillingSchemaCustom:  DefaultBillingSchemaDocument(),
+		models.SettingBillingRateInPerGiB:  "0",
+		models.SettingBillingRateOutPerGiB: "0",
+		models.SettingBillingCurrency:      "USD",
+		models.SettingPurgeEnabled:         "true",
+		models.SettingPurgeJobsDays:        strconv.Itoa(DefaultRetentionDays),
+		models.SettingPurgeAuditsDays:      strconv.Itoa(DefaultRetentionDays),
+		models.SettingPurgeBillingDays:     strconv.Itoa(DefaultRetentionDays),
 	}
 }
 
@@ -75,6 +112,10 @@ func (s *SettingsService) Load(ctx context.Context) (AppSettings, error) {
 		RunTimeoutMinutes:   DefaultRunTimeout,
 		BillingSchema:       BillingSchemaNone,
 		BillingCurrency:     "USD",
+		PurgeEnabled:        true,
+		PurgeJobsDays:       DefaultRetentionDays,
+		PurgeAuditsDays:     DefaultRetentionDays,
+		PurgeBillingDays:    DefaultRetentionDays,
 	}
 	if locale := strings.TrimSpace(s.settings.Value(ctx, models.SettingDefaultLocale, out.DefaultLocale)); locale != "" {
 		out.DefaultLocale = locale
@@ -89,11 +130,31 @@ func (s *SettingsService) Load(ctx context.Context) (AppSettings, error) {
 		out.BillingSchema = schema
 	}
 	out.BillingSchemaCustom = s.settings.Value(ctx, models.SettingBillingSchemaCustom, "")
-	out.BillingRatePerGiB = s.float(ctx, models.SettingBillingRatePerGiB, 0)
+	out.BillingRateInPerGiB = s.float(ctx, models.SettingBillingRateInPerGiB, 0)
+	// The single rate of the first releases is the fallback of the outbound one,
+	// so an upgraded instance keeps the price it had configured.
+	legacy := s.float(ctx, models.SettingBillingRatePerGiB, 0)
+	out.BillingRateOutPerGiB = s.float(ctx, models.SettingBillingRateOutPerGiB, legacy)
 	if currency := strings.ToUpper(strings.TrimSpace(s.settings.Value(ctx, models.SettingBillingCurrency, out.BillingCurrency))); currency != "" {
 		out.BillingCurrency = currency
 	}
+	out.PurgeEnabled = s.settings.Bool(ctx, models.SettingPurgeEnabled, out.PurgeEnabled)
+	out.PurgeJobsDays = clampDays(s.settings.Int(ctx, models.SettingPurgeJobsDays, out.PurgeJobsDays))
+	out.PurgeAuditsDays = clampDays(s.settings.Int(ctx, models.SettingPurgeAuditsDays, out.PurgeAuditsDays))
+	out.PurgeBillingDays = clampDays(s.settings.Int(ctx, models.SettingPurgeBillingDays, out.PurgeBillingDays))
 	return out, nil
+}
+
+// clampDays keeps a stored retention inside its bounds, so a hand-edited
+// database cannot make the purge erase everything or nothing.
+func clampDays(days int) int {
+	if days < MinRetentionDays {
+		return MinRetentionDays
+	}
+	if days > MaxRetentionDays {
+		return MaxRetentionDays
+	}
+	return days
 }
 
 // float reads a numeric setting, falling back to the default when the stored
@@ -128,19 +189,37 @@ func (s *SettingsService) Update(ctx context.Context, in AppSettings) (AppSettin
 		return AppSettings{}, fmt.Errorf("%w: the run timeout must be between 1 and 1440 minutes", ErrValidation)
 	}
 	schema, document, currency, err := ValidateBillingSettings(
-		in.BillingSchema, in.BillingSchemaCustom, in.BillingCurrency, in.BillingRatePerGiB)
+		in.BillingSchema, in.BillingSchemaCustom, in.BillingCurrency, in.BillingRateInPerGiB, in.BillingRateOutPerGiB)
 	if err != nil {
 		return AppSettings{}, err
 	}
+	for _, retention := range []struct {
+		name string
+		days int
+	}{
+		{"jobs", in.PurgeJobsDays},
+		{"audits", in.PurgeAuditsDays},
+		{"billing", in.PurgeBillingDays},
+	} {
+		if retention.days < MinRetentionDays || retention.days > MaxRetentionDays {
+			return AppSettings{}, fmt.Errorf("%w: the %s retention must be between %d and %d days",
+				ErrValidation, retention.name, MinRetentionDays, MaxRetentionDays)
+		}
+	}
 	values := map[string]string{
-		models.SettingDefaultLocale:       in.DefaultLocale,
-		models.SettingDefaultTheme:        theme,
-		models.SettingSyncInterval:        strconv.Itoa(in.SyncIntervalMinutes),
-		models.SettingSyncTimeout:         strconv.Itoa(in.RunTimeoutMinutes),
-		models.SettingBillingSchema:       schema,
-		models.SettingBillingSchemaCustom: document,
-		models.SettingBillingRatePerGiB:   strconv.FormatFloat(in.BillingRatePerGiB, 'f', -1, 64),
-		models.SettingBillingCurrency:     currency,
+		models.SettingDefaultLocale:        in.DefaultLocale,
+		models.SettingDefaultTheme:         theme,
+		models.SettingSyncInterval:         strconv.Itoa(in.SyncIntervalMinutes),
+		models.SettingSyncTimeout:          strconv.Itoa(in.RunTimeoutMinutes),
+		models.SettingBillingSchema:        schema,
+		models.SettingBillingSchemaCustom:  document,
+		models.SettingBillingRateInPerGiB:  strconv.FormatFloat(in.BillingRateInPerGiB, 'f', -1, 64),
+		models.SettingBillingRateOutPerGiB: strconv.FormatFloat(in.BillingRateOutPerGiB, 'f', -1, 64),
+		models.SettingBillingCurrency:      currency,
+		models.SettingPurgeEnabled:         strconv.FormatBool(in.PurgeEnabled),
+		models.SettingPurgeJobsDays:        strconv.Itoa(in.PurgeJobsDays),
+		models.SettingPurgeAuditsDays:      strconv.Itoa(in.PurgeAuditsDays),
+		models.SettingPurgeBillingDays:     strconv.Itoa(in.PurgeBillingDays),
 	}
 	if err := s.settings.SetMany(ctx, values); err != nil {
 		return AppSettings{}, fmt.Errorf("services: saving settings: %w", err)

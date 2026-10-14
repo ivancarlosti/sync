@@ -231,11 +231,29 @@ const (
 	// SettingBillingSchemaCustom is the JSON document of the `custom` schema: the
 	// column labels, the unit and the optional per-unit price.
 	SettingBillingSchemaCustom = "billing_schema_custom"
-	// SettingBillingRatePerGiB is the price of one GiB used to compute a cost
-	// column; 0 leaves the report in bytes only.
+	// SettingBillingRatePerGiB is the legacy single price of one GiB: it is no
+	// longer written, only read as the fallback of the outbound rate so an
+	// instance configured before the inbound/outbound split keeps its price.
 	SettingBillingRatePerGiB = "billing_rate_per_gib"
+	// SettingBillingRateInPerGiB is the price of one GiB read from a source
+	// account; 0 is the common case (ingress is free) and leaves the inbound
+	// cost column at zero.
+	SettingBillingRateInPerGiB = "billing_rate_in_per_gib"
+	// SettingBillingRateOutPerGiB is the price of one GiB written to a
+	// destination account; with both rates at 0 the report stays in bytes only.
+	SettingBillingRateOutPerGiB = "billing_rate_out_per_gib"
 	// SettingBillingCurrency is the currency the cost column is labelled with.
 	SettingBillingCurrency = "billing_currency"
+	// SettingPurgeEnabled arms the automatic retention pass (and leaves the
+	// manual "purge now" actions available either way).
+	SettingPurgeEnabled = "purge_enabled"
+	// SettingPurgeJobsDays, SettingPurgeAuditsDays and SettingPurgeBillingDays
+	// are the ages, in days, past which the automatic pass erases a run, an
+	// audit report and a traffic day. Operators delete records under different
+	// legal constraints, so the three move independently.
+	SettingPurgeJobsDays    = "purge_jobs_days"
+	SettingPurgeAuditsDays  = "purge_audits_days"
+	SettingPurgeBillingDays = "purge_billing_days"
 )
 
 // ProviderConfigPrefix is the settings-key prefix holding credentials entered

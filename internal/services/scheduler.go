@@ -21,15 +21,23 @@ const (
 	// DefaultRefreshWindow refreshes an access token before it actually expires,
 	// so a scheduled run never has to refresh on its critical path.
 	DefaultRefreshWindow = 5 * time.Minute
+	// DefaultPurgeInterval is how often the retention policy of Admin > Settings
+	// > Purge is applied. Age is measured in days, so an hourly pass would only
+	// churn through the same rows: six hours keeps the tables bounded without
+	// turning the retention into a hot path.
+	DefaultPurgeInterval = 6 * time.Hour
 )
 
-// Scheduler is the in-process time source of Sync. It owns two loops:
+// Scheduler is the in-process time source of Sync. It owns three loops:
 //
 //   - the schedule loop starts every enabled job whose next_run_at elapsed;
 //   - the token loop renews the access tokens that expire inside the refresh
-//     window of every connected account.
+//     window of every connected account;
+//   - the retention loop applies the purge policy (runs, audits and traffic
+//     days older than the configured age) once at start-up and every
+//     DefaultPurgeInterval afterwards.
 //
-// Both loops are plain goroutines with a ticker, so running the binary twice
+// The loops are plain goroutines with a ticker, so running the binary twice
 // against the same database only causes jobs to be attempted twice (each
 // attempt is guarded by the per-job lease of SyncService).
 type Scheduler struct {
@@ -37,11 +45,13 @@ type Scheduler struct {
 	engine   *SyncService
 	tokens   *TokenManager
 	notifier *Notifier
+	purge    *PurgeService
 	now      func() time.Time
 
 	scheduleEvery time.Duration
 	tokenEvery    time.Duration
 	refreshWindow time.Duration
+	purgeEvery    time.Duration
 
 	mu      sync.Mutex
 	started bool
@@ -56,10 +66,12 @@ func NewScheduler(store *Store, engine *SyncService, tokens *TokenManager, notif
 		engine:        engine,
 		tokens:        tokens,
 		notifier:      notifier,
+		purge:         NewPurgeService(store),
 		now:           func() time.Time { return time.Now().UTC() },
 		scheduleEvery: DefaultScheduleInterval,
 		tokenEvery:    DefaultTokenInterval,
 		refreshWindow: DefaultRefreshWindow,
+		purgeEvery:    DefaultPurgeInterval,
 		stop:          make(chan struct{}),
 	}
 }
@@ -110,7 +122,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	s.started = true
 	s.mu.Unlock()
 
-	s.wg.Add(2)
+	s.wg.Add(3)
 	go func() {
 		defer s.wg.Done()
 		s.loop(ctx, "schedule", s.scheduleEvery, func(ctx context.Context) { s.RunDue(ctx) })
@@ -118,6 +130,13 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	go func() {
 		defer s.wg.Done()
 		s.loop(ctx, "tokens", s.tokenEvery, func(ctx context.Context) { s.RefreshTokens(ctx) })
+	}()
+	go func() {
+		defer s.wg.Done()
+		// The retention pass runs once at start-up as well: a container that is
+		// restarted more often than the interval would otherwise never purge.
+		s.RunRetention(ctx)
+		s.loop(ctx, "retention", s.purgeEvery, func(ctx context.Context) { s.RunRetention(ctx) })
 	}()
 	return nil
 }
@@ -201,6 +220,20 @@ func (s *Scheduler) RefreshTokens(ctx context.Context) int {
 		slog.Debug("refreshed expiring provider tokens", "accounts", refreshed)
 	}
 	return refreshed
+}
+
+// RunRetention applies the retention policy of Admin > Settings > Purge and
+// answers what the pass erased. It is the body of the retention loop, exported
+// so the API can force a pass and so tests can drive it deterministically; a
+// failure is logged and reported as an empty pass, because a retention problem
+// must never take the scheduler down.
+func (s *Scheduler) RunRetention(ctx context.Context) PurgeResult {
+	outcome, err := s.purge.Run(ctx)
+	if err != nil {
+		slog.Error("the retention pass failed", "error", err)
+		return PurgeResult{}
+	}
+	return outcome.Removed
 }
 
 // NextRunAt computes the next execution of a job: now plus its interval for an

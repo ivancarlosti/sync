@@ -5,7 +5,7 @@
 // in step: the next job form offers the schedule that was just set. The
 // maintenance card drives the same tasks the scheduler runs on a timer, which is
 // what makes a "why did nothing run?" question answerable from the interface.
-import { RefreshCw, Save, Wrench } from '@lucide/vue';
+import { RefreshCw, Save, Trash2, Wrench } from '@lucide/vue';
 import { computed, onMounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
@@ -17,6 +17,7 @@ import Input from '@/components/ui/Input.vue';
 import Label from '@/components/ui/Label.vue';
 import Select from '@/components/ui/Select.vue';
 import Spinner from '@/components/ui/Spinner.vue';
+import Switch from '@/components/ui/Switch.vue';
 import Textarea from '@/components/ui/Textarea.vue';
 import { useAction } from '@/composables/useAction';
 import {
@@ -25,6 +26,7 @@ import {
   settings as settingsApi,
   type AppSettings,
   type BillingSchema,
+  type PurgeTarget,
 } from '@/lib/api';
 import { asNumber } from '@/lib/forms';
 import { useAuthStore } from '@/stores/auth';
@@ -32,6 +34,9 @@ import { useFeedbackStore } from '@/stores/feedback';
 
 /** DEFAULT_KEEP is how many runs of every job the trim button keeps. */
 const DEFAULT_KEEP = 200;
+
+/** DEFAULT_RETENTION mirrors the server default of an emptied retention field. */
+const DEFAULT_RETENTION = 180;
 
 const { t, te } = useI18n();
 const auth = useAuthStore();
@@ -57,14 +62,29 @@ const form = reactive({
 
 /**
  * billingForm is the billing vocabulary: which schema labels the report, the
- * custom document behind the `custom` schema, and the price of one GiB (0 keeps
- * the report in bytes and hides the cost column).
+ * custom document behind the `custom` schema, and the price of one GiB in each
+ * direction (0 leaves that direction unpriced and hides its cost column).
  */
 const billingForm = reactive({
   schema: 'none',
   custom: '',
-  rate: '' as string | number,
+  rateIn: '' as string | number,
+  rateOut: '' as string | number,
   currency: 'USD',
+});
+
+/**
+ * purgeForm is the retention policy: whether the scheduler erases aged records on
+ * its own, the age of each kind of record, and the target of a manual pass. The
+ * manual age is applied once and saves nothing; zero applies the policy below.
+ */
+const purgeForm = reactive({
+  enabled: false,
+  jobsDays: '' as string | number,
+  auditsDays: '' as string | number,
+  billingDays: '' as string | number,
+  target: 'all' as PurgeTarget,
+  days: '' as string | number,
 });
 
 /** keep is how many runs the trim task leaves behind. */
@@ -75,6 +95,7 @@ const { busy: scheduling, run: runScheduler } = useAction();
 const { busy: refreshing, run: runTokens } = useAction();
 const { busy: pruningStates, run: runPruneStates } = useAction();
 const { busy: pruningRuns, run: runPruneRuns } = useAction();
+const { busy: purging, run: runPurge } = useAction();
 
 /** localeOptions names every shipped language in its own language. */
 const localeOptions = computed(() =>
@@ -111,6 +132,21 @@ const activeSchema = computed(() =>
   schemas.value.find((schema) => schema.id === billingForm.schema),
 );
 
+/** hasSchemaDefaults tells whether the schema ships indicative prices to apply. */
+const hasSchemaDefaults = computed(
+  () =>
+    (activeSchema.value?.default_rate_in_per_gib ?? 0) > 0 ||
+    (activeSchema.value?.default_rate_out_per_gib ?? 0) > 0,
+);
+
+/** purgeOptions names the targets a manual pass can erase. */
+const purgeOptions = computed(() => [
+  { value: 'all', label: t('admin.purgeTargetAll') },
+  { value: 'jobs', label: t('admin.purgeTargetJobs') },
+  { value: 'audits', label: t('admin.purgeTargetAudits') },
+  { value: 'billing', label: t('admin.purgeTargetBilling') },
+]);
+
 /** rawRows is the stored key/value list, sorted once for display. */
 const rawRows = computed(() =>
   Object.entries(raw.value)
@@ -134,8 +170,13 @@ async function load(): Promise<void> {
     form.sync_run_timeout_minutes = answer.settings.sync_run_timeout_minutes;
     billingForm.schema = answer.settings.billing_schema;
     billingForm.custom = answer.settings.billing_schema_custom || answer.billing_schema_default;
-    billingForm.rate = answer.settings.billing_rate_per_gib;
+    billingForm.rateIn = answer.settings.billing_rate_in_per_gib;
+    billingForm.rateOut = answer.settings.billing_rate_out_per_gib;
     billingForm.currency = answer.settings.billing_currency;
+    purgeForm.enabled = answer.settings.purge_enabled;
+    purgeForm.jobsDays = answer.settings.purge_jobs_days;
+    purgeForm.auditsDays = answer.settings.purge_audits_days;
+    purgeForm.billingDays = answer.settings.purge_billing_days;
   } catch (error) {
     failure.value = messageOf(error);
   } finally {
@@ -166,8 +207,13 @@ async function save(): Promise<void> {
     sync_run_timeout_minutes: asNumber(form.sync_run_timeout_minutes, 0),
     billing_schema: billingForm.schema,
     billing_schema_custom: billingForm.custom,
-    billing_rate_per_gib: asNumber(billingForm.rate, 0),
+    billing_rate_in_per_gib: asNumber(billingForm.rateIn, 0),
+    billing_rate_out_per_gib: asNumber(billingForm.rateOut, 0),
     billing_currency: billingForm.currency,
+    purge_enabled: purgeForm.enabled,
+    purge_jobs_days: asNumber(purgeForm.jobsDays, DEFAULT_RETENTION),
+    purge_audits_days: asNumber(purgeForm.auditsDays, DEFAULT_RETENTION),
+    purge_billing_days: asNumber(purgeForm.billingDays, DEFAULT_RETENTION),
   };
   const answer = await runSave(() => settingsApi.update(body), {
     success: t('admin.savedSettings'),
@@ -180,6 +226,20 @@ async function save(): Promise<void> {
     await auth.load();
     await loadRaw();
   }
+}
+
+/**
+ * applySchemaRates fills the two prices with the indicative list prices of the
+ * selected schema. They are never inherited automatically: the report only gets
+ * priced when an operator applies a price list on purpose.
+ */
+function applySchemaRates(): void {
+  const schema = activeSchema.value;
+  if (!schema) {
+    return;
+  }
+  billingForm.rateIn = schema.default_rate_in_per_gib;
+  billingForm.rateOut = schema.default_rate_out_per_gib;
 }
 
 /** scheduleNow runs the scheduler once and reports how many jobs it started. */
@@ -220,6 +280,29 @@ async function pruneRuns(): Promise<void> {
   );
   if (answer) {
     keep.value = answer.keep;
+  }
+}
+
+/**
+ * purgeNow applies the retention right away, to one target or to all three: the
+ * manual counterpart of the loop the scheduler runs. An explicit age is used as
+ * typed; zero applies the policy saved above, which is what the button sends by
+ * default.
+ */
+async function purgeNow(): Promise<void> {
+  const answer = await runPurge(
+    () => maintenance.purge(purgeForm.target, asNumber(purgeForm.days, 0)),
+    { failure: t('admin.purgeError') },
+  );
+  if (answer) {
+    feedback.success(
+      t('admin.purged', {
+        jobs: answer.removed.jobs,
+        audits: answer.removed.audits,
+        traffic: answer.removed.billing,
+      }),
+    );
+    await loadRaw();
   }
 }
 
@@ -319,12 +402,22 @@ onMounted(() => {
           <p class="text-sm text-muted-foreground">{{ t('admin.billingSchemaCustomHint') }}</p>
         </div>
 
-        <div class="grid gap-3 sm:grid-cols-2">
+        <div class="grid gap-3 sm:grid-cols-3">
           <div class="space-y-1.5">
-            <Label for="billing-rate">{{ t('admin.billingRate') }}</Label>
+            <Label for="billing-rate-in">{{ t('admin.billingRateIn') }}</Label>
             <Input
-              id="billing-rate"
-              v-model="billingForm.rate"
+              id="billing-rate-in"
+              v-model="billingForm.rateIn"
+              type="number"
+              step="0.0001"
+              min="0"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="billing-rate-out">{{ t('admin.billingRateOut') }}</Label>
+            <Input
+              id="billing-rate-out"
+              v-model="billingForm.rateOut"
               type="number"
               step="0.0001"
               min="0"
@@ -336,6 +429,82 @@ onMounted(() => {
           </div>
         </div>
         <p class="text-sm text-muted-foreground">{{ t('admin.billingRateHint') }}</p>
+        <div v-if="hasSchemaDefaults">
+          <Button variant="outline" size="sm" @click="applySchemaRates">
+            {{ t('admin.billingRateDefaults') }}
+          </Button>
+        </div>
+      </div>
+      <template #footer>
+        <Button :loading="saving" @click="save">
+          <Save class="h-4 w-4" aria-hidden="true" />
+          {{ saving ? t('common.saving') : t('common.save') }}
+        </Button>
+      </template>
+    </Card>
+
+    <Card :title="t('admin.retention')" :description="t('admin.retentionSubtitle')">
+      <div class="space-y-4">
+        <div class="flex items-start justify-between gap-4">
+          <div class="space-y-1">
+            <Label for="purge-enabled">{{ t('admin.purgeEnabled') }}</Label>
+            <p class="text-xs text-muted-foreground">{{ t('admin.purgeEnabledHint') }}</p>
+          </div>
+          <Switch
+            id="purge-enabled"
+            v-model="purgeForm.enabled"
+            :label="t('admin.purgeEnabled')"
+          />
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-3">
+          <div class="space-y-1.5">
+            <Label for="purge-jobs">{{ t('admin.purgeJobsDays') }}</Label>
+            <Input id="purge-jobs" v-model="purgeForm.jobsDays" type="number" numeric :min="1" />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="purge-audits">{{ t('admin.purgeAuditsDays') }}</Label>
+            <Input
+              id="purge-audits"
+              v-model="purgeForm.auditsDays"
+              type="number"
+              numeric
+              :min="1"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="purge-billing">{{ t('admin.purgeBillingDays') }}</Label>
+            <Input
+              id="purge-billing"
+              v-model="purgeForm.billingDays"
+              type="number"
+              numeric
+              :min="1"
+            />
+          </div>
+        </div>
+        <p class="text-sm text-muted-foreground">{{ t('admin.purgeDaysHint') }}</p>
+
+        <div class="flex flex-wrap items-end gap-2 border-t border-border pt-4">
+          <div class="space-y-1.5">
+            <Label for="purge-target">{{ t('admin.purgeTarget') }}</Label>
+            <Select
+              id="purge-target"
+              :model-value="purgeForm.target"
+              :options="purgeOptions"
+              :aria-label="t('admin.purgeTarget')"
+              @update:model-value="(value) => { purgeForm.target = value as PurgeTarget; }"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="purge-days" :hint="t('admin.purgeAgeHint')">{{ t('admin.purgeAge') }}</Label>
+            <Input id="purge-days" v-model="purgeForm.days" type="number" numeric :min="0" class="w-40" />
+          </div>
+          <Button variant="outline" :loading="purging" @click="purgeNow">
+            <Trash2 class="h-4 w-4" aria-hidden="true" />
+            {{ t('admin.purgeNow') }}
+          </Button>
+        </div>
       </div>
       <template #footer>
         <Button :loading="saving" @click="save">

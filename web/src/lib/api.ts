@@ -143,12 +143,30 @@ export interface AppSettings {
   billing_schema: string;
   /** billing_schema_custom is the JSON document of the `custom` schema. */
   billing_schema_custom: string;
-  /** billing_rate_per_gib prices one GiB; 0 leaves the report in bytes only. */
-  billing_rate_per_gib: number;
+  /**
+   * billing_rate_in_per_gib prices one GiB read from a source account; 0 is the
+   * common case (ingress is free) and leaves the inbound cost at zero.
+   */
+  billing_rate_in_per_gib: number;
+  /** billing_rate_out_per_gib prices one GiB written to a destination account. */
+  billing_rate_out_per_gib: number;
   billing_currency: string;
+  /** purge_enabled arms the automatic retention pass of the scheduler. */
+  purge_enabled: boolean;
+  /** purge_jobs_days is the age, in days, past which finished runs are erased. */
+  purge_jobs_days: number;
+  /** purge_audits_days is the age of a finished content-audit report. */
+  purge_audits_days: number;
+  /** purge_billing_days is the age of a traffic day of the billing report. */
+  purge_billing_days: number;
 }
 
-/** BillingSchema is the line-item vocabulary of the billing report. */
+/**
+ * BillingSchema is the line-item vocabulary of the billing report. The two rates
+ * price the report: inbound is what was read from a source account (0 is the
+ * common case, ingress is free) and outbound what was written to a destination
+ * account. With both at 0 the report stays in bytes and carries no cost.
+ */
 export interface BillingSchema {
   id: string;
   label: string;
@@ -159,7 +177,12 @@ export interface BillingSchema {
   cost_label: string;
   unit: string;
   currency?: string;
-  rate_per_gib: number;
+  rate_in_per_gib: number;
+  rate_out_per_gib: number;
+  /** default_rate_in_per_gib is the indicative list price the preset ships. */
+  default_rate_in_per_gib: number;
+  /** default_rate_out_per_gib is the indicative list price the preset ships. */
+  default_rate_out_per_gib: number;
   custom: boolean;
 }
 
@@ -828,6 +851,17 @@ export const notifications = {
     request<{ id: number; delivered: boolean }>({ url: `/notifications/${id}/test`, method: 'POST' }),
 };
 
+/** PurgeTarget is what a purge pass erases. */
+export type PurgeTarget = 'all' | 'jobs' | 'audits' | 'billing';
+
+/** PurgeOutcome is what a purge pass erased and the age it applied. */
+export interface PurgeOutcome {
+  target: string;
+  /** days is the age applied to each target, keyed by target name. */
+  days: Record<string, number>;
+  removed: { jobs: number; audits: number; billing: number };
+}
+
 export const maintenance = {
   runScheduler: () =>
     request<{ started: number[] }>({ url: '/maintenance/schedule/run', method: 'POST' }),
@@ -840,6 +874,18 @@ export const maintenance = {
       url: '/maintenance/runs/prune',
       method: 'POST',
       data: { keep },
+    }),
+  /**
+   * purge erases the records older than `days`; 0 applies the retention saved in
+   * Admin > Settings, which is what a "purge now" button sends. The pass is
+   * age-based (unlike pruneRuns, which counts): it never touches a run or an
+   * audit that is still going.
+   */
+  purge: (target: PurgeTarget = 'all', days = 0) =>
+    request<PurgeOutcome>({
+      url: '/maintenance/purge',
+      method: 'POST',
+      data: { target, days },
     }),
 };
 

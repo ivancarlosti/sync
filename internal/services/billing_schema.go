@@ -46,10 +46,21 @@ type BillingSchema struct {
 	CostLabel       string `json:"cost_label"`
 	// Unit is what the inbound/outbound columns are expressed in (`B` or `GiB`).
 	Unit string `json:"unit"`
-	// Currency and RatePerGiB drive the cost column; a zero rate means the report
-	// stays in bytes and has no cost.
-	Currency   string  `json:"currency,omitempty"`
-	RatePerGiB float64 `json:"rate_per_gib"`
+	// Currency, RateInPerGiB and RateOutPerGiB drive the cost columns. The two
+	// rates are the configured prices of one GiB in each direction and replace
+	// each other: inbound is what was read from a source account (0 is the
+	// common case, ingress is free) and outbound what was written to a
+	// destination account. With both at 0 the report stays in bytes and carries
+	// no cost at all.
+	Currency      string  `json:"currency,omitempty"`
+	RateInPerGiB  float64 `json:"rate_in_per_gib"`
+	RateOutPerGiB float64 `json:"rate_out_per_gib"`
+	// DefaultRateInPerGiB and DefaultRateOutPerGiB are the indicative list
+	// prices the preset ships with. They are never used to price a report: the
+	// settings screen offers them through "Reset to the schema defaults", so an
+	// operator applies a price list on purpose instead of inheriting one.
+	DefaultRateInPerGiB  float64 `json:"default_rate_in_per_gib"`
+	DefaultRateOutPerGiB float64 `json:"default_rate_out_per_gib"`
 	// Custom marks the operator's own mapping.
 	Custom bool `json:"custom"`
 }
@@ -72,7 +83,7 @@ func BillingSchemas() []BillingSchema {
 		{
 			ID:              BillingSchemaNone,
 			Label:           "None (bytes)",
-			Hint:            "Report the traffic in bytes, with no provider vocabulary.",
+			Hint:            "Report the traffic in bytes, with no provider vocabulary. No price: the report stays unpriced until one is typed.",
 			InboundLabel:    "Inbound bytes",
 			OutboundLabel:   "Outbound bytes",
 			OperationsLabel: "Operations",
@@ -82,37 +93,43 @@ func BillingSchemas() []BillingSchema {
 		{
 			ID:              BillingSchemaOCI,
 			Label:           "Oracle Cloud (OCI)",
-			Hint:            "Ingress and egress, as they appear on an OCI invoice.",
+			Hint:            "Ingress and egress, as they appear on an OCI invoice. Indicative defaults: ingress free, egress 0.0085 per GiB.",
 			InboundLabel:    "Ingress (GiB)",
 			OutboundLabel:   "Egress (GiB)",
 			OperationsLabel: "Requests",
 			CostLabel:       "Cost",
 			Unit:            "GiB",
+			// Indicative list price (USD per GiB): OCI does not bill ingress and
+			// bills egress from the first GiB. It is a starting point an operator
+			// applies on purpose, not a price this instance inherits.
+			DefaultRateOutPerGiB: 0.0085,
 		},
 		{
-			ID:              BillingSchemaAWS,
-			Label:           "Amazon Web Services",
-			Hint:            "Data transfer in and out, as on an AWS bill.",
-			InboundLabel:    "Data transfer in (GiB)",
-			OutboundLabel:   "Data transfer out (GiB)",
-			OperationsLabel: "Requests",
-			CostLabel:       "Data transfer cost",
-			Unit:            "GiB",
+			ID:                   BillingSchemaAWS,
+			Label:                "Amazon Web Services",
+			Hint:                 "Data transfer in and out, as on an AWS bill. Indicative defaults: ingress free, egress 0.09 per GiB.",
+			InboundLabel:         "Data transfer in (GiB)",
+			OutboundLabel:        "Data transfer out (GiB)",
+			OperationsLabel:      "Requests",
+			CostLabel:            "Data transfer cost",
+			Unit:                 "GiB",
+			DefaultRateOutPerGiB: 0.09,
 		},
 		{
-			ID:              BillingSchemaGCP,
-			Label:           "Google Cloud",
-			Hint:            "Ingress and egress, as on a GCP bill.",
-			InboundLabel:    "Ingress (GiB)",
-			OutboundLabel:   "Egress (GiB)",
-			OperationsLabel: "Operations",
-			CostLabel:       "Network cost",
-			Unit:            "GiB",
+			ID:                   BillingSchemaGCP,
+			Label:                "Google Cloud",
+			Hint:                 "Ingress and egress, as on a GCP bill. Indicative defaults: ingress free, egress 0.12 per GiB.",
+			InboundLabel:         "Ingress (GiB)",
+			OutboundLabel:        "Egress (GiB)",
+			OperationsLabel:      "Operations",
+			CostLabel:            "Network cost",
+			Unit:                 "GiB",
+			DefaultRateOutPerGiB: 0.12,
 		},
 		{
 			ID:              BillingSchemaCustom,
 			Label:           "Custom",
-			Hint:            "Type the line-item labels you need in the JSON document below.",
+			Hint:            "Type the line-item labels you need in the JSON document below. No default price: type your own in and out rates.",
 			InboundLabel:    "Inbound bytes",
 			OutboundLabel:   "Outbound bytes",
 			OperationsLabel: "Operations",
@@ -135,9 +152,12 @@ func BillingSchemaIDs() []string {
 }
 
 // ResolveBillingSchema returns the schema a report uses: the preset selected in
-// Admin > Settings with the configured rate and currency applied, or the
+// Admin > Settings with the configured rates and currency applied, or the
 // operator's custom mapping. An unknown value falls back to bare bytes, so a
 // report always renders.
+//
+// The preset's indicative defaults are left untouched: they are what the
+// settings screen offers to reset to, they never price a report on their own.
 func ResolveBillingSchema(settings AppSettings) BillingSchema {
 	schema := schemaOrDefault(strings.ToLower(strings.TrimSpace(settings.BillingSchema)))
 	if schema.ID == BillingSchemaCustom {
@@ -145,7 +165,8 @@ func ResolveBillingSchema(settings AppSettings) BillingSchema {
 			schema = custom
 		}
 	}
-	schema.RatePerGiB = settings.BillingRatePerGiB
+	schema.RateInPerGiB = settings.BillingRateInPerGiB
+	schema.RateOutPerGiB = settings.BillingRateOutPerGiB
 	schema.Currency = strings.ToUpper(strings.TrimSpace(settings.BillingCurrency))
 	return schema
 }
@@ -180,7 +201,7 @@ func ParseBillingSchemaDocument(document string, fallback BillingSchema) (Billin
 // ValidateBillingSettings checks the billing settings keys, so a report can never
 // be asked to render a vocabulary that does not exist. It returns the normalised
 // schema id, document and currency.
-func ValidateBillingSettings(schemaID, document, currency string, rate float64) (string, string, string, error) {
+func ValidateBillingSettings(schemaID, document, currency string, rateIn, rateOut float64) (string, string, string, error) {
 	id := strings.ToLower(strings.TrimSpace(schemaID))
 	if id == "" {
 		id = BillingSchemaNone
@@ -194,8 +215,11 @@ func ValidateBillingSettings(schemaID, document, currency string, rate float64) 
 			return "", "", "", err
 		}
 	}
-	if rate < 0 || rate > billingMaxRate {
-		return "", "", "", fmt.Errorf("%w: the price per GiB must be between 0 and %d", ErrValidation, billingMaxRate)
+	if rateIn < 0 || rateIn > billingMaxRate {
+		return "", "", "", fmt.Errorf("%w: the inbound price per GiB must be between 0 and %d", ErrValidation, billingMaxRate)
+	}
+	if rateOut < 0 || rateOut > billingMaxRate {
+		return "", "", "", fmt.Errorf("%w: the outbound price per GiB must be between 0 and %d", ErrValidation, billingMaxRate)
 	}
 	code := strings.ToUpper(strings.TrimSpace(currency))
 	if code == "" {
@@ -207,13 +231,31 @@ func ValidateBillingSettings(schemaID, document, currency string, rate float64) 
 	return id, document, code, nil
 }
 
-// Cost prices a byte count with the schema rate. The second return is false when
-// no rate is configured, which is what leaves the cost column out of a report.
-func (s BillingSchema) Cost(bytes int64) (float64, bool) {
-	if s.RatePerGiB <= 0 {
+// Priced reports whether the report carries a cost at all: with both rates at 0
+// the cost columns stay out of the screen and out of the CSV.
+func (s BillingSchema) Priced() bool {
+	return s.RateInPerGiB > 0 || s.RateOutPerGiB > 0
+}
+
+// CostInbound prices the bytes read from a source account. The second return is
+// false when no inbound rate is configured, which is the usual case: ingress is
+// free on the clouds this report is modelled after.
+func (s BillingSchema) CostInbound(bytes int64) (float64, bool) {
+	return priceBytes(bytes, s.RateInPerGiB)
+}
+
+// CostOutbound prices the bytes written to a destination account.
+func (s BillingSchema) CostOutbound(bytes int64) (float64, bool) {
+	return priceBytes(bytes, s.RateOutPerGiB)
+}
+
+// priceBytes is the one multiplication behind both directions: a byte count
+// times the price of one GiB, and false when that price is 0.
+func priceBytes(bytes int64, ratePerGiB float64) (float64, bool) {
+	if ratePerGiB <= 0 {
 		return 0, false
 	}
-	return float64(bytes) / billingGiB * s.RatePerGiB, true
+	return float64(bytes) / billingGiB * ratePerGiB, true
 }
 
 // Quantity renders a byte count in the schema unit: whole bytes for the default

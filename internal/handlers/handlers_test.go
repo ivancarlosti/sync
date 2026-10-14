@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -115,7 +116,10 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 		options.configure(cfg)
 	}
 
-	dsn := "file:" + strings.NewReplacer("/", "_", " ", "_").Replace(t.Name()) + "?mode=memory&cache=shared"
+	// The database is a file in a temporary directory with WAL and a busy
+	// timeout, like the fixture of the service tests: a shared cache in-memory
+	// database reports table locks the busy timeout cannot wait out.
+	dsn := "file:" + filepath.Join(t.TempDir(), "sync.db") + "?_journal_mode=WAL&_busy_timeout=5000"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		t.Fatalf("opening the test database: %v", err)
@@ -162,6 +166,7 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 		Sync:        engine,
 		Audit:       audit,
 		Scheduler:   services.NewScheduler(store, engine, tokens, notifier),
+		Purge:       services.NewPurgeService(store),
 		Assets:      testAssets(),
 		Info:        version.Get(),
 		Now:         testNow,
@@ -1561,6 +1566,37 @@ func TestMaintenanceEndpoints(t *testing.T) {
 	}](t, recorder); custom.Keep != 10 {
 		t.Errorf("keep = %d, want the requested 10", custom.Keep)
 	}
+
+	// The retention purge erases nothing on a fresh instance and answers the age
+	// it applied to each of the three targets.
+	recorder = call(t, server, http.MethodPost, "/api/maintenance/purge", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	purged := decodeJSON[services.PurgeOutcome](t, recorder)
+	if purged.Target != services.PurgeTargetAll || purged.Removed.Total() != 0 {
+		t.Errorf("purge answer = %+v, want all/0 on a fresh instance", purged)
+	}
+	for _, target := range services.PurgeTargets {
+		if purged.Days[target] != services.DefaultRetentionDays {
+			t.Errorf("purge days = %v, want the seeded %d days for %s", purged.Days, services.DefaultRetentionDays, target)
+		}
+	}
+
+	// A target may be purged on its own, with an explicit age.
+	recorder = call(t, server, http.MethodPost, "/api/maintenance/purge", map[string]any{"target": "jobs", "days": 30})
+	requireStatus(t, recorder, http.StatusOK)
+	scoped := decodeJSON[services.PurgeOutcome](t, recorder)
+	if len(scoped.Days) != 1 || scoped.Days[services.PurgeTargetJobs] != 30 {
+		t.Errorf("purge days = %v, want the jobs target alone at 30 days", scoped.Days)
+	}
+
+	// An unknown target and an age out of bounds are validation errors.
+	recorder = call(t, server, http.MethodPost, "/api/maintenance/purge", map[string]any{"target": "files"})
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
+
+	recorder = call(t, server, http.MethodPost, "/api/maintenance/purge", map[string]any{"target": "billing", "days": -1})
+	requireStatus(t, recorder, http.StatusBadRequest)
+	requireErrorCode(t, recorder, codeValidation)
 }
 
 // -----------------------------------------------------------------------------
@@ -1592,11 +1628,36 @@ func TestSettingsReadAndUpdate(t *testing.T) {
 	}
 
 	// An unsupported locale, theme or out-of-range number is refused.
+	base := func(extra map[string]any) map[string]any {
+		payload := map[string]any{
+			"default_locale":                "en-US",
+			"default_theme":                 "system",
+			"sync_default_interval_minutes": 30,
+			"sync_run_timeout_minutes":      60,
+			"billing_schema":                "none",
+			"billing_schema_custom":         "",
+			"billing_rate_in_per_gib":       0,
+			"billing_rate_out_per_gib":      0,
+			"billing_currency":              "USD",
+			"purge_enabled":                 true,
+			"purge_jobs_days":               180,
+			"purge_audits_days":             180,
+			"purge_billing_days":            180,
+		}
+		for key, value := range extra {
+			payload[key] = value
+		}
+		return payload
+	}
 	for name, payload := range map[string]map[string]any{
-		"locale":      {"default_locale": "xx-XX", "default_theme": "system", "sync_default_interval_minutes": 30, "sync_run_timeout_minutes": 60},
-		"theme":       {"default_locale": "en-US", "default_theme": "neon", "sync_default_interval_minutes": 30, "sync_run_timeout_minutes": 60},
-		"interval":    {"default_locale": "en-US", "default_theme": "system", "sync_default_interval_minutes": -1, "sync_run_timeout_minutes": 60},
-		"run timeout": {"default_locale": "en-US", "default_theme": "system", "sync_default_interval_minutes": 30, "sync_run_timeout_minutes": 0},
+		"locale":            base(map[string]any{"default_locale": "xx-XX"}),
+		"theme":             base(map[string]any{"default_theme": "neon"}),
+		"interval":          base(map[string]any{"sync_default_interval_minutes": -1}),
+		"run timeout":       base(map[string]any{"sync_run_timeout_minutes": 0}),
+		"inbound rate":      base(map[string]any{"billing_rate_in_per_gib": -1}),
+		"jobs retention":    base(map[string]any{"purge_jobs_days": 0}),
+		"audits retention":  base(map[string]any{"purge_audits_days": services.MaxRetentionDays + 1}),
+		"billing retention": base(map[string]any{"purge_billing_days": -5}),
 	} {
 		recorder = call(t, server, http.MethodPut, "/api/settings", payload)
 		if recorder.Code != http.StatusBadRequest {
@@ -1607,12 +1668,14 @@ func TestSettingsReadAndUpdate(t *testing.T) {
 	}
 
 	// A valid update is applied and echoed back.
-	recorder = call(t, server, http.MethodPut, "/api/settings", map[string]any{
+	recorder = call(t, server, http.MethodPut, "/api/settings", base(map[string]any{
 		"default_locale":                "pt-BR",
 		"default_theme":                 "dark",
 		"sync_default_interval_minutes": 15,
 		"sync_run_timeout_minutes":      45,
-	})
+		"purge_enabled":                 false,
+		"purge_jobs_days":               30,
+	}))
 	requireStatus(t, recorder, http.StatusOK)
 	updated := decodeJSON[struct {
 		Settings services.AppSettings `json:"settings"`
@@ -1622,6 +1685,12 @@ func TestSettingsReadAndUpdate(t *testing.T) {
 	}
 	if updated.Settings.SyncIntervalMinutes != 15 || updated.Settings.RunTimeoutMinutes != 45 {
 		t.Errorf("updated settings = %+v, want 15/45", updated.Settings)
+	}
+	if updated.Settings.PurgeEnabled || updated.Settings.PurgeJobsDays != 30 {
+		t.Errorf("updated settings = %+v, want the auto purge off and the 30 day retention", updated.Settings)
+	}
+	if updated.Settings.PurgeAuditsDays != 180 || updated.Settings.PurgeBillingDays != 180 {
+		t.Errorf("updated settings = %+v, want the untouched retentions", updated.Settings)
 	}
 
 	// The session view reports the new defaults, so a reload keeps them.
@@ -2886,10 +2955,10 @@ func TestBillingExportAndValidation(t *testing.T) {
 	if !strings.HasPrefix(body, "\ufeff") {
 		t.Fatal("the billing CSV must start with a UTF-8 BOM")
 	}
-	if !strings.Contains(body, "bucket,day,month,account_id,account_email,run_id,job_id,inbound,outbound,operations,total,cost,unit,currency") {
+	if !strings.Contains(body, "bucket,day,month,account_id,account_email,run_id,job_id,inbound,outbound,operations,total,cost,cost_in,cost_out,unit,currency") {
 		t.Fatalf("the CSV header is missing: %q", body)
 	}
-	if !strings.Contains(body, "2026-09-27,2026-09-27,,,,,,2048,2048,3,4096,,B,USD") {
+	if !strings.Contains(body, "2026-09-27,2026-09-27,,,,,,2048,2048,3,4096,,,,B,USD") {
 		t.Fatalf("the CSV row is missing or mislabelled: %q", body)
 	}
 
@@ -2923,8 +2992,13 @@ func TestBillingExportAndValidation(t *testing.T) {
 		"sync_run_timeout_minutes":      30,
 		"billing_schema":                "oci",
 		"billing_schema_custom":         "",
-		"billing_rate_per_gib":          0.01,
+		"billing_rate_in_per_gib":       1000,
+		"billing_rate_out_per_gib":      2000,
 		"billing_currency":              "usd",
+		"purge_enabled":                 true,
+		"purge_jobs_days":               180,
+		"purge_audits_days":             180,
+		"purge_billing_days":            180,
 	})
 	requireStatus(t, recorder, http.StatusOK)
 
@@ -2936,13 +3010,22 @@ func TestBillingExportAndValidation(t *testing.T) {
 	if priced.Schema.ID != services.BillingSchemaOCI || priced.Schema.Unit != "GiB" || priced.Schema.Currency != "USD" {
 		t.Fatalf("schema = %+v, want the priced OCI schema", priced.Schema)
 	}
+	if priced.Schema.RateInPerGiB != 1000 || priced.Schema.RateOutPerGiB != 2000 || !priced.Schema.Priced() {
+		t.Fatalf("schema = %+v, want the two configured rates", priced.Schema)
+	}
 	recorder = call(t, server, http.MethodGet, "/api/billing/export?from=2026-09-01&to=2026-09-30", nil)
 	requireStatus(t, recorder, http.StatusOK)
-	// The cost column prices the window with the configured rate (0.01 per GiB of
-	// the 4096 bytes of the two directions) and the quantities switch to GiB.
-	wantCost := strconv.FormatFloat(float64(4096)/(1024*1024*1024)*0.01, 'f', 6, 64)
-	if body = recorder.Body.String(); !strings.Contains(body, wantCost+",GiB,USD") {
-		t.Fatalf("the priced CSV is missing the cost and the unit: %q", body)
+	// Each direction is priced with its own rate (the window holds 2048 bytes
+	// inbound and 2048 outbound) and the quantities switch to GiB; `cost` is the
+	// sum of the two, which is what the column meant before the split.
+	perGiB := float64(2048) / (1024 * 1024 * 1024)
+	inCost := perGiB * 1000
+	outCost := perGiB * 2000
+	wantTail := "," + strconv.FormatFloat(inCost+outCost, 'f', 6, 64) +
+		"," + strconv.FormatFloat(inCost, 'f', 6, 64) +
+		"," + strconv.FormatFloat(outCost, 'f', 6, 64) + ",GiB,USD"
+	if body = recorder.Body.String(); !strings.Contains(body, wantTail) {
+		t.Fatalf("the priced CSV is missing the three cost columns (%q): %q", wantTail, body)
 	}
 
 	// An unknown schema is refused by the settings validation.
@@ -2953,8 +3036,13 @@ func TestBillingExportAndValidation(t *testing.T) {
 		"sync_run_timeout_minutes":      30,
 		"billing_schema":                "weekly",
 		"billing_schema_custom":         "",
-		"billing_rate_per_gib":          0,
+		"billing_rate_in_per_gib":       0,
+		"billing_rate_out_per_gib":      0,
 		"billing_currency":              "USD",
+		"purge_enabled":                 true,
+		"purge_jobs_days":               180,
+		"purge_audits_days":             180,
+		"purge_billing_days":            180,
 	})
 	requireStatus(t, recorder, http.StatusBadRequest)
 	requireErrorCode(t, recorder, codeValidation)

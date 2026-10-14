@@ -4,6 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/ivancarlosti/sync/internal/services"
 )
 
 // pruneInput is the payload of POST /api/maintenance/runs/prune.
@@ -80,6 +82,37 @@ func (s *Server) handleMaintenanceAudits(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"keep": input.Keep, "pruned": true})
+}
+
+// purgeInput is the payload of POST /api/maintenance/purge.
+type purgeInput struct {
+	// Target is one of `jobs`, `audits`, `billing` or `all` (the default).
+	Target string `json:"target"`
+	// Days is the age to erase past; 0 applies the configured retention of the
+	// target, which is what the "purge now" buttons send when they hold no
+	// explicit age.
+	Days int `json:"days"`
+}
+
+// handleMaintenancePurge answers POST /api/maintenance/purge: it applies the
+// retention of Admin > Settings > Purge to one target (or to all three of them)
+// right away, instead of waiting for the retention loop of the scheduler.
+//
+// It erases finished records only: a run or an audit that is still going is
+// never touched, whatever the age says.
+func (s *Server) handleMaintenancePurge(c *gin.Context) {
+	input := purgeInput{Target: services.PurgeTargetAll}
+	if c.Request.ContentLength > 0 {
+		if !decode(c, &input) {
+			return
+		}
+	}
+	outcome, err := s.deps.Purge.Purge(c.Request.Context(), input.Target, input.Days)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, outcome)
 }
 
 // keepRuns bounds mirror the retention the scheduler applies on its own.

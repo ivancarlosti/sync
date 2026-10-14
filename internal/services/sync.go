@@ -75,13 +75,18 @@ func (s *SyncService) Start(ctx context.Context, jobID uint, trigger models.Trig
 		s.release(job.ID)
 		return nil, err
 	}
+	// The goroutine keeps the pointer and rewrites the run as it advances (status,
+	// counters, message), so the caller receives its own snapshot: the row it was
+	// handed describes the run it just started, and the engine never writes into
+	// memory the answer is still using.
+	started := *run
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
 		defer s.release(job.ID)
 		s.execute(context.Background(), job, run, trigger)
 	}()
-	return run, nil
+	return &started, nil
 }
 
 // Run executes a job synchronously and returns the finished run. Tests and the

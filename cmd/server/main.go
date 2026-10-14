@@ -181,6 +181,7 @@ func build(cfg *config.Config, settings *database.Settings) handlers.Deps {
 		Sync:        syncService,
 		Audit:       auditService,
 		Scheduler:   services.NewScheduler(store, syncService, tokens, notifier),
+		Purge:       services.NewPurgeService(store),
 		Assets:      web.Dist(),
 		Info:        version.Get(),
 	}

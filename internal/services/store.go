@@ -203,16 +203,18 @@ func (s *Store) SaveJob(ctx context.Context, job *models.SyncJob) error {
 	return nil
 }
 
-// DeleteJob removes a job with its run history, its items and its file state.
+// DeleteJob removes a job definition and its file state, and keeps its run
+// history: the runs, their items and their traffic rows outlive the job, which
+// is what the delete dialog promises and what an operator needs when a job is
+// removed right after a failure. Only sync_files goes, because that state is
+// engine bookkeeping (it is what makes a re-created job resume correctly) and
+// nothing can ever read it again once the job row is gone.
+//
+// The history stays reachable: ListRuns(0) returns every run whatever its job,
+// and the run row carries job_name so an orphaned run still reads well.
 func (s *Store) DeleteJob(ctx context.Context, id uint) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("job_id = ?", id).Delete(&models.SyncFile{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("job_id = ?", id).Delete(&models.SyncItem{}).Error; err != nil {
-			return err
-		}
-		if err := tx.Where("job_id = ?", id).Delete(&models.SyncRun{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&models.SyncJob{}, id).Error
@@ -627,6 +629,85 @@ func (s *Store) PruneAudits(ctx context.Context, keep int) error {
 		return fmt.Errorf("services: pruning audits: %w", err)
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Age based retention
+// ---------------------------------------------------------------------------
+
+// PurgeRunsBefore deletes every finished run that started before the cutoff,
+// with its items and its traffic rows, and answers how many runs went. A run
+// still running is never touched: the engine is writing to it.
+//
+// Unlike PruneRuns (which keeps the newest N runs of every job) this is a plain
+// age rule, so it also erases the runs of a job that was deleted in between.
+func (s *Store) PurgeRunsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	var ids []uint
+	err := s.db.WithContext(ctx).Model(&models.SyncRun{}).
+		Where("started_at < ? AND status <> ?", cutoff, string(models.RunRunning)).
+		Pluck("id", &ids).Error
+	if err != nil {
+		return 0, fmt.Errorf("services: selecting the runs to purge: %w", err)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("run_id IN ?", ids).Delete(&models.SyncItem{}).Error; err != nil {
+			return err
+		}
+		// A traffic row only exists because of its run, so it goes with it.
+		if err := tx.Where("run_id IN ?", ids).Delete(&models.TrafficEntry{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id IN ?", ids).Delete(&models.SyncRun{}).Error
+	})
+	if err != nil {
+		return 0, fmt.Errorf("services: purging runs: %w", err)
+	}
+	return int64(len(ids)), nil
+}
+
+// PurgeAuditsBefore deletes every finished audit that started before the
+// cutoff, with its entries, and answers how many audits went.
+func (s *Store) PurgeAuditsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	var ids []uint
+	err := s.db.WithContext(ctx).Model(&models.AuditRun{}).
+		Where("started_at < ? AND status <> ?", cutoff, string(models.RunRunning)).
+		Pluck("id", &ids).Error
+	if err != nil {
+		return 0, fmt.Errorf("services: selecting the audits to purge: %w", err)
+	}
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("audit_id IN ?", ids).Delete(&models.AuditEntry{}).Error; err != nil {
+			return err
+		}
+		return tx.Where("id IN ?", ids).Delete(&models.AuditRun{}).Error
+	})
+	if err != nil {
+		return 0, fmt.Errorf("services: purging audits: %w", err)
+	}
+	return int64(len(ids)), nil
+}
+
+// PurgeTrafficBefore drops the traffic rows of the days before the cutoff and
+// answers how many rows went. It bounds the cost history on its own, so a
+// deployment that keeps its run history for years can still drop old invoices.
+//
+// The rows are matched on their indexed Day bucket (a UTC date), which is the
+// same column the report filters on; the day in progress is therefore never
+// touched, and a run that started just before midnight can leave the traffic of
+// the following day behind — one extra day of rows at the very most.
+func (s *Store) PurgeTrafficBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	day := cutoff.UTC().Format(models.TrafficDayFormat)
+	result := s.db.WithContext(ctx).Where("day < ?", day).Delete(&models.TrafficEntry{})
+	if result.Error != nil {
+		return 0, fmt.Errorf("services: purging traffic: %w", result.Error)
+	}
+	return result.RowsAffected, nil
 }
 
 // ---------------------------------------------------------------------------

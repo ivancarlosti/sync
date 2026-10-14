@@ -2,9 +2,10 @@
 // BillingView — the traffic the instance moved through its accounts.
 //
 // The report is aggregated in SQL by the server (see internal/handlers/billing.go):
-// this screen only chooses the window, the grouping and the vocabulary. The cost
-// column appears when a price per GiB is configured in Admin > Settings, so an
-// instance that does not bill anything shows plain bytes.
+// this screen only chooses the window, the grouping and the vocabulary. Each
+// direction carries its own rate, so the cost columns appear when a price is
+// configured in Admin > Settings: an instance that does not bill anything shows
+// plain bytes.
 import { Download, RefreshCw, Wallet } from '@lucide/vue';
 import { computed, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -52,20 +53,32 @@ const groupOptions = computed(() => [
   { value: 'run', label: t('billing.groupRun') },
 ]);
 
-/** priced is true when a rate is configured, which is what shows the cost column. */
-const priced = computed(() => (schema.value?.rate_per_gib ?? 0) > 0);
+/** rates are the configured prices of one GiB, one per direction. */
+const rates = computed(() => ({
+  in: schema.value?.rate_in_per_gib ?? 0,
+  out: schema.value?.rate_out_per_gib ?? 0,
+}));
+
+/** priced is true when a rate is configured, which is what shows the cost columns. */
+const priced = computed(() => rates.value.in > 0 || rates.value.out > 0);
+
+/** costInShown and costOutShown show a column only when its own direction is priced. */
+const costInShown = computed(() => rates.value.in > 0);
+const costOutShown = computed(() => rates.value.out > 0);
 
 /**
- * windowTotals adds the lines of the report per direction. The two directions are
- * summed here rather than read from the answer because a report line only carries
- * its own split.
+ * windowTotals adds the lines of the report per direction, with the cost of each
+ * of them. The two directions are summed here rather than read from the answer
+ * because a report line only carries its own split.
  */
 const windowTotals = computed(() => {
-  const sum = { inbound: 0, outbound: 0, operations: 0 };
+  const sum = { inbound: 0, outbound: 0, operations: 0, costIn: 0, costOut: 0 };
   for (const row of rows.value) {
     sum.inbound += row.inbound.bytes;
     sum.outbound += row.outbound.bytes;
     sum.operations += row.total.operations;
+    sum.costIn += priceOf(row.inbound.bytes, rates.value.in);
+    sum.costOut += priceOf(row.outbound.bytes, rates.value.out);
   }
   return sum;
 });
@@ -97,16 +110,35 @@ function bucket(row: BillingRow): string {
   return t('billing.allBuckets');
 }
 
-/** cost prices a byte total with the schema rate, in the schema currency. */
-function cost(value: number): string {
-  const rate = schema.value?.rate_per_gib ?? 0;
+/** priceOf prices a byte total with a rate per GiB. */
+function priceOf(bytes: number, rate: number): number {
+  return (bytes / GIB) * rate;
+}
+
+/** money renders an amount in the currency of the schema. */
+function money(amount: number): string {
   const currency = schema.value?.currency || 'USD';
-  const amount = (value / GIB) * rate;
   try {
     return new Intl.NumberFormat(locale.value, { style: 'currency', currency }).format(amount);
   } catch {
     return `${amount.toFixed(2)} ${currency}`;
   }
+}
+
+/** costInOf and costOutOf price one report line in a single direction. */
+function costInOf(row: BillingRow): string {
+  return money(priceOf(row.inbound.bytes, rates.value.in));
+}
+
+function costOutOf(row: BillingRow): string {
+  return money(priceOf(row.outbound.bytes, rates.value.out));
+}
+
+/** costOf prices both directions of a line, the sum the CSV `cost` column carries. */
+function costOf(row: BillingRow): string {
+  return money(
+    priceOf(row.inbound.bytes, rates.value.in) + priceOf(row.outbound.bytes, rates.value.out),
+  );
 }
 
 /** windowFrom is the inclusive start of the window the report asks for. */
@@ -186,7 +218,7 @@ onMounted(() => {
       <StatCard
         v-if="priced"
         :label="schema?.cost_label ?? t('billing.cost')"
-        :value="cost(windowTotals.inbound + windowTotals.outbound)"
+        :value="money(windowTotals.costIn + windowTotals.costOut)"
         :hint="t('billing.windowHint')"
         tone="warning"
       />
@@ -250,6 +282,12 @@ onMounted(() => {
               <th v-if="priced" scope="col" class="px-3 py-2 text-end font-medium">
                 {{ schema?.cost_label ?? t('billing.cost') }}
               </th>
+              <th v-if="costInShown" scope="col" class="px-3 py-2 text-end font-medium">
+                {{ t('billing.costIn') }}
+              </th>
+              <th v-if="costOutShown" scope="col" class="px-3 py-2 text-end font-medium">
+                {{ t('billing.costOut') }}
+              </th>
             </tr>
           </thead>
           <tbody class="divide-y divide-border">
@@ -261,7 +299,13 @@ onMounted(() => {
                 <span class="numeric">{{ count(row.total.operations) }}</span>
               </td>
               <td class="px-3 py-2 text-end font-medium"><span class="numeric">{{ bytes(row.total.bytes) }}</span></td>
-              <td v-if="priced" class="px-3 py-2 text-end"><span class="numeric">{{ cost(row.total.bytes) }}</span></td>
+              <td v-if="priced" class="px-3 py-2 text-end"><span class="numeric">{{ costOf(row) }}</span></td>
+              <td v-if="costInShown" class="px-3 py-2 text-end text-muted-foreground">
+                <span class="numeric">{{ costInOf(row) }}</span>
+              </td>
+              <td v-if="costOutShown" class="px-3 py-2 text-end text-muted-foreground">
+                <span class="numeric">{{ costOutOf(row) }}</span>
+              </td>
             </tr>
           </tbody>
           <tfoot class="border-t border-border bg-muted/30 font-medium">
@@ -274,7 +318,13 @@ onMounted(() => {
                 <span class="numeric">{{ bytes(windowTotals.inbound + windowTotals.outbound) }}</span>
               </td>
               <td v-if="priced" class="px-3 py-2 text-end">
-                <span class="numeric">{{ cost(windowTotals.inbound + windowTotals.outbound) }}</span>
+                <span class="numeric">{{ money(windowTotals.costIn + windowTotals.costOut) }}</span>
+              </td>
+              <td v-if="costInShown" class="px-3 py-2 text-end">
+                <span class="numeric">{{ money(windowTotals.costIn) }}</span>
+              </td>
+              <td v-if="costOutShown" class="px-3 py-2 text-end">
+                <span class="numeric">{{ money(windowTotals.costOut) }}</span>
               </td>
             </tr>
           </tfoot>

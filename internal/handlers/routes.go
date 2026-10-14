@@ -106,6 +106,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		maintenance.POST("/oauth/states/prune", s.handleMaintenanceOAuthStates)
 		maintenance.POST("/runs/prune", s.handleMaintenanceRuns)
 		maintenance.POST("/audits/prune", s.handleMaintenanceAudits)
+		maintenance.POST("/purge", s.handleMaintenancePurge)
 	}
 
 	router.NoRoute(s.spa())

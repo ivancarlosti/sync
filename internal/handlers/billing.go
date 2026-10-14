@@ -81,11 +81,15 @@ func (s *Server) handleBillingRuns(c *gin.Context) {
 
 // billingCSVHeader is the column order of the export. It is fixed and English (a
 // report is a data export, not a UI string): the billing schema decides the unit
-// of the two quantity columns and whether a cost column carries a value, never
+// of the two quantity columns and whether the cost columns carry a value, never
 // the shape of the file.
+//
+// cost is the sum of cost_in and cost_out, which is what keeps the column an
+// instance priced before the inbound/outbound split meant.
 var billingCSVHeader = []string{
 	"bucket", "day", "month", "account_id", "account_email", "run_id", "job_id",
-	"inbound", "outbound", "operations", "total", "cost", "unit", "currency",
+	"inbound", "outbound", "operations", "total", "cost", "cost_in", "cost_out",
+	"unit", "currency",
 }
 
 // handleExportBilling answers GET /api/billing/export: it streams the same rows
@@ -123,9 +127,25 @@ func (s *Server) handleExportBilling(c *gin.Context) {
 		return
 	}
 	for _, row := range rows {
-		cost := ""
-		if value, ok := schema.Cost(row.Total.Bytes); ok {
-			cost = strconv.FormatFloat(value, 'f', 6, 64)
+		// Each direction is priced with its own rate; a direction without a rate
+		// leaves its cell empty, and `cost` carries the sum of the two.
+		inCost, outCost := "", ""
+		totalCost := ""
+		if value, ok := schema.CostInbound(row.Inbound.Bytes); ok {
+			inCost = strconv.FormatFloat(value, 'f', 6, 64)
+		}
+		if value, ok := schema.CostOutbound(row.Outbound.Bytes); ok {
+			outCost = strconv.FormatFloat(value, 'f', 6, 64)
+		}
+		if schema.Priced() {
+			sum := 0.0
+			if value, ok := schema.CostInbound(row.Inbound.Bytes); ok {
+				sum += value
+			}
+			if value, ok := schema.CostOutbound(row.Outbound.Bytes); ok {
+				sum += value
+			}
+			totalCost = strconv.FormatFloat(sum, 'f', 6, 64)
 		}
 		record := []string{
 			billingBucket(row),
@@ -139,7 +159,9 @@ func (s *Server) handleExportBilling(c *gin.Context) {
 			schema.Quantity(row.Outbound.Bytes),
 			strconv.FormatInt(row.Total.Operations, 10),
 			schema.Quantity(row.Total.Bytes),
-			cost,
+			totalCost,
+			inCost,
+			outCost,
 			schema.Unit,
 			schema.Currency,
 		}

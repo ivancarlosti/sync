@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,12 +27,18 @@ import (
 // Test fixtures
 // -----------------------------------------------------------------------------
 
-// newTestStore opens a private in-memory SQLite database, migrates the real
-// schema and wraps it in a Store, so the sync engine is exercised against the
-// same tables it uses in production.
+// newTestStore opens a private SQLite database, migrates the real schema and
+// wraps it in a Store, so the sync engine is exercised against the same tables
+// it uses in production.
+//
+// The database is a file in a temporary directory rather than a shared cache
+// in-memory one: the table locks a shared cache takes are not covered by the
+// busy timeout, so a background writer (a run finishing while a test polls its
+// row) could fail with "database table is locked" and leave the row running.
+// WAL plus the busy timeout make the writer wait for the readers instead.
 func newTestStore(t *testing.T) *Store {
 	t.Helper()
-	dsn := "file:" + strings.NewReplacer("/", "_", " ", "_").Replace(t.Name()) + "?mode=memory&cache=shared"
+	dsn := "file:" + filepath.Join(t.TempDir(), "sync.db") + "?_journal_mode=WAL&_busy_timeout=5000"
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		t.Fatalf("opening the test database: %v", err)

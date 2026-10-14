@@ -255,13 +255,32 @@ func TestBillingSummaryGroups(t *testing.T) {
 // TestBillingSchemaResolution checks the presets, the custom document and the
 // cost/quantity maths of a report.
 func TestBillingSchemaResolution(t *testing.T) {
-	settings := AppSettings{BillingSchema: BillingSchemaOCI, BillingRatePerGiB: 0.01, BillingCurrency: "eur"}
+	settings := AppSettings{
+		BillingSchema:        BillingSchemaOCI,
+		BillingRateInPerGiB:  0.001,
+		BillingRateOutPerGiB: 0.01,
+		BillingCurrency:      "eur",
+	}
 	schema := ResolveBillingSchema(settings)
-	if schema.ID != BillingSchemaOCI || schema.Unit != "GiB" || schema.Currency != "EUR" || schema.RatePerGiB != 0.01 {
+	if schema.ID != BillingSchemaOCI || schema.Unit != "GiB" || schema.Currency != "EUR" {
 		t.Fatalf("schema = %+v, want the OCI preset priced in EUR", schema)
 	}
-	if cost, ok := schema.Cost(2 * 1024 * 1024 * 1024); !ok || cost != 0.02 {
-		t.Fatalf("cost = %v (%t), want 0.02 for 2 GiB", cost, ok)
+	if schema.RateInPerGiB != 0.001 || schema.RateOutPerGiB != 0.01 {
+		t.Fatalf("rates = %v/%v, want the configured 0.001/0.01", schema.RateInPerGiB, schema.RateOutPerGiB)
+	}
+	// The preset ships indicative defaults: they are offered by the settings
+	// screen and never price a report on their own.
+	if schema.DefaultRateOutPerGiB != 0.0085 || schema.DefaultRateInPerGiB != 0 {
+		t.Fatalf("defaults = %v/%v, want the OCI indicative list price", schema.DefaultRateInPerGiB, schema.DefaultRateOutPerGiB)
+	}
+	if !schema.Priced() {
+		t.Fatal("a priced schema must report Priced()")
+	}
+	if cost, ok := schema.CostInbound(1024 * 1024 * 1024); !ok || cost != 0.001 {
+		t.Fatalf("inbound cost = %v (%t), want 0.001 for 1 GiB", cost, ok)
+	}
+	if cost, ok := schema.CostOutbound(2 * 1024 * 1024 * 1024); !ok || cost != 0.02 {
+		t.Fatalf("outbound cost = %v (%t), want 0.02 for 2 GiB", cost, ok)
 	}
 	if quantity := schema.Quantity(1024 * 1024 * 1024); quantity != "1.000000" {
 		t.Fatalf("quantity = %q, want the GiB rendering", quantity)
@@ -272,11 +291,27 @@ func TestBillingSchemaResolution(t *testing.T) {
 	if bare.ID != BillingSchemaNone || bare.Unit != "B" {
 		t.Fatalf("bare = %+v, want the bare-bytes default", bare)
 	}
-	if _, ok := bare.Cost(4096); ok {
+	if bare.Priced() {
+		t.Fatal("a report without a rate must not be Priced()")
+	}
+	if _, ok := bare.CostOutbound(4096); ok {
 		t.Fatal("a report without a rate must not carry a cost")
+	}
+	if _, ok := bare.CostInbound(4096); ok {
+		t.Fatal("a report without an inbound rate must not carry an inbound cost")
 	}
 	if quantity := bare.Quantity(4096); quantity != "4096" {
 		t.Fatalf("quantity = %q, want the raw byte count", quantity)
+	}
+
+	// One direction may be priced while the other is free: that is the shape of
+	// every cloud invoice this ships a preset for.
+	outboundOnly := ResolveBillingSchema(AppSettings{BillingRateOutPerGiB: 0.09})
+	if !outboundOnly.Priced() {
+		t.Fatal("an outbound-only price must be Priced()")
+	}
+	if _, ok := outboundOnly.CostInbound(1024 * 1024 * 1024); ok {
+		t.Fatal("a free direction must not carry a cost")
 	}
 
 	// An unknown value falls back to the default instead of failing a report.
@@ -286,10 +321,11 @@ func TestBillingSchemaResolution(t *testing.T) {
 
 	// The custom document overrides only the fields it carries.
 	custom := ResolveBillingSchema(AppSettings{
-		BillingSchema:       BillingSchemaCustom,
-		BillingSchemaCustom: `{"label": "Acme", "inbound_label": "Ingress GiB", "unit": "GiB"}`,
-		BillingRatePerGiB:   0.5,
-		BillingCurrency:     "usd",
+		BillingSchema:        BillingSchemaCustom,
+		BillingSchemaCustom:  `{"label": "Acme", "inbound_label": "Ingress GiB", "unit": "GiB"}`,
+		BillingRateInPerGiB:  0.25,
+		BillingRateOutPerGiB: 0.5,
+		BillingCurrency:      "usd",
 	})
 	if custom.Label != "Acme" || custom.InboundLabel != "Ingress GiB" || custom.Unit != "GiB" {
 		t.Fatalf("custom = %+v, want the document values", custom)
@@ -297,18 +333,30 @@ func TestBillingSchemaResolution(t *testing.T) {
 	if custom.OutboundLabel == "" || !custom.Custom {
 		t.Fatalf("custom = %+v, want the omitted fields to keep their default", custom)
 	}
+	if custom.RateInPerGiB != 0.25 || custom.RateOutPerGiB != 0.5 || custom.Currency != "USD" {
+		t.Fatalf("custom = %+v, want the configured rates and currency", custom)
+	}
+	if custom.DefaultRateOutPerGiB != 0 || custom.DefaultRateInPerGiB != 0 {
+		t.Fatalf("custom = %+v, want no indicative default", custom)
+	}
 
 	// A malformed document is a validation error the settings form reports.
 	if _, err := ParseBillingSchemaDocument("{not json", schema); !errors.Is(err, ErrValidation) {
 		t.Fatalf("malformed document: err = %v, want ErrValidation", err)
 	}
-	if _, _, _, err := ValidateBillingSettings("weekly", "", "USD", 0); !errors.Is(err, ErrValidation) {
+	if _, _, _, err := ValidateBillingSettings("weekly", "", "USD", 0, 0); !errors.Is(err, ErrValidation) {
 		t.Fatalf("unknown schema: err = %v, want ErrValidation", err)
 	}
-	if _, _, _, err := ValidateBillingSettings(BillingSchemaOCI, "", "EUROS", -1); !errors.Is(err, ErrValidation) {
-		t.Fatalf("bad currency and rate: err = %v, want ErrValidation", err)
+	if _, _, _, err := ValidateBillingSettings(BillingSchemaOCI, "", "EUROS", 0, 0); !errors.Is(err, ErrValidation) {
+		t.Fatalf("bad currency: err = %v, want ErrValidation", err)
 	}
-	if id, _, currency, err := ValidateBillingSettings("", "", "", 0); err != nil || id != BillingSchemaNone || currency != "USD" {
+	if _, _, _, err := ValidateBillingSettings(BillingSchemaOCI, "", "USD", -1, 0); !errors.Is(err, ErrValidation) {
+		t.Fatalf("negative inbound rate: err = %v, want ErrValidation", err)
+	}
+	if _, _, _, err := ValidateBillingSettings(BillingSchemaOCI, "", "USD", 0, billingMaxRate+1); !errors.Is(err, ErrValidation) {
+		t.Fatalf("outbound rate above the bound: err = %v, want ErrValidation", err)
+	}
+	if id, _, currency, err := ValidateBillingSettings("", "", "", 0, 0); err != nil || id != BillingSchemaNone || currency != "USD" {
 		t.Fatalf("defaults = %q/%q (%v), want none/USD", id, currency, err)
 	}
 	if len(BillingSchemaIDs()) != 5 || len(BillingSchemas()) != 5 {

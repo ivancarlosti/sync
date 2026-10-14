@@ -54,6 +54,8 @@ type Deps struct {
 	Audit *services.AuditService
 	// Scheduler is used to force a scheduling pass or a token refresh.
 	Scheduler *services.Scheduler
+	// Purge applies the retention policy on demand (Admin > Settings > Purge).
+	Purge *services.PurgeService
 	// Assets is the embedded SPA (`web.Dist()`).
 	Assets fs.FS
 	// Info is the build metadata reported by /api/version.
@@ -128,6 +130,8 @@ func (d Deps) validate() error {
 		return errors.New("handlers: Audit is required")
 	case d.Scheduler == nil:
 		return errors.New("handlers: Scheduler is required")
+	case d.Purge == nil:
+		return errors.New("handlers: Purge is required")
 	case d.Assets == nil:
 		return errors.New("handlers: Assets is required (use web.Dist())")
 	}
