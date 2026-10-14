@@ -210,6 +210,7 @@
     "missingCapabilities": "This account was connected before these permissions existed: reconnect it to grant them.",
     "reconnect": "Reconnect",
     "reconnectHint": "Connecting the account again applies the permissions this version requests.",
+    "reconnectExpired": "The stored authorisation expired or was revoked. Reconnecting keeps the account, its jobs and its history; disconnecting would delete them.",
     "error_consent_required": "The provider refused the permissions. Grant the admin consent from the setup guide, then connect the account again.",
     "error_rate_limited": "The provider is throttling this account. Sync retries on its own; if it persists, wait a few minutes and run the job again."
   },

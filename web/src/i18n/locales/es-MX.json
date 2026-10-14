@@ -210,6 +210,7 @@
     "missingCapabilities": "Esta cuenta se conectó antes de que existieran estos permisos: vuelve a conectarla para concederlos.",
     "reconnect": "Reconectar",
     "reconnectHint": "Conectar la cuenta de nuevo aplica los permisos que solicita esta versión.",
+    "reconnectExpired": "La autorización guardada caducó o fue revocada. Reconectar conserva la cuenta, los trabajos y el historial; desconectarla los eliminaría.",
     "error_consent_required": "El proveedor rechazó los permisos. Concede el consentimiento de administrador desde la guía de configuración y vuelve a conectar la cuenta.",
     "error_rate_limited": "El proveedor está limitando las solicitudes de esta cuenta. Sync reintenta por su cuenta; si persiste, espera unos minutos y vuelve a ejecutar la tarea."
   },

@@ -87,6 +87,22 @@ function when(value: string | null | undefined): string {
   return formatDateTime(value, locale.value);
 }
 
+/**
+ * needsReconnect tells whether an account must be authorised again: either its
+ * stored grant predates the permissions this release asks for (needs_reconnect),
+ * or the provider rejected the stored token (status "error", e.g. a revoked or
+ * expired refresh token). Reconnecting reuses the same account row, so the jobs
+ * and their history are kept.
+ */
+function needsReconnect(account: ConnectedAccount): boolean {
+  return account.needs_reconnect || account.status === 'error';
+}
+
+/** reconnectHint explains, per row, why the reconnect is asked for. */
+function reconnectHint(account: ConnectedAccount): string {
+  return account.needs_reconnect ? t('accounts.reconnectHint') : t('accounts.reconnectExpired');
+}
+
 /** valueOf reads a single query parameter, tolerating the array form. */
 function valueOf(value: unknown): string {
   const first = Array.isArray(value) ? value[0] : value;
@@ -187,6 +203,11 @@ async function verify(account: ConnectedAccount): Promise<void> {
   });
   if (answer) {
     rows.value = rows.value.map((row) => (row.id === answer.id ? answer : row));
+  } else {
+    // A failed check marks the account on the server (a rejected refresh), so
+    // reload to surface the reconnect action it just enabled without a manual
+    // refresh of the page.
+    await load();
   }
   activeId.value = 0;
 }
@@ -338,6 +359,9 @@ onMounted(async () => {
                 <p v-if="account.last_error" class="mt-1 max-w-64 text-xs text-destructive">
                   {{ account.last_error }}
                 </p>
+                <p v-if="account.status === 'error'" class="mt-1 max-w-64 text-xs text-warning">
+                  {{ t('accounts.reconnectExpired') }}
+                </p>
               </td>
               <td class="px-4 py-3 text-muted-foreground" :title="account.scopes.join(', ')">
                 {{ t('accounts.scopesCount', { count: account.scopes.length }) }}
@@ -360,10 +384,10 @@ onMounted(async () => {
               <td class="px-4 py-3">
                 <div class="flex items-center justify-end gap-2">
                   <Button
-                    v-if="account.needs_reconnect"
+                    v-if="needsReconnect(account)"
                     variant="outline"
                     size="sm"
-                    :title="t('accounts.reconnectHint')"
+                    :title="reconnectHint(account)"
                     :loading="connecting === account.provider"
                     @click="connect(account.provider)"
                   >

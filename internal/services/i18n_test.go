@@ -54,6 +54,7 @@ var guideUIKeys = []string{
 	"accounts.missingCapabilities",
 	"accounts.reconnect",
 	"accounts.reconnectHint",
+	"accounts.reconnectExpired",
 	"accounts.error_consent_required",
 }
 

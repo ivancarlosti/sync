@@ -109,7 +109,11 @@ client id configured right now.
 `accountView` carries the derived permissions of the stored grant:
 `capabilities[]` (satisfied by `scopes`), `missing_capabilities[]` (requested by
 this release, not granted yet) and `needs_reconnect` (true when the second list is
-not empty).
+not empty). `status` is `connected` while the stored token works and `error` once a
+refresh was refused (with `last_error` holding the reason). The Accounts screen
+offers the same reconnect action for a missing capability and for an `error`
+status: reconnecting rotates the tokens of the existing row, so the jobs and their
+history are kept (only `DELETE /api/accounts/:id` deletes them).
 | `POST` | `/api/accounts/:id/verify` | validates the token against the provider → updated `accountView` |
 | `DELETE` | `/api/accounts/:id` | `{id, deleted_jobs}` — the jobs using the account are deleted too |
 | `GET` | `/api/accounts/:id/drives` | `{drives:[{id,name,kind,owner}]}` — the account's own drive first (the one `GET /me/drive` names), then the roots shared with it. A Microsoft personal account (MSA) also exposes internal bookkeeping drives in `/me/drives` for which Graph refuses the root (`400 ObjectHandle is Invalid`), so those are dropped |

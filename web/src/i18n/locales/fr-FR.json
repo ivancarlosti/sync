@@ -210,6 +210,7 @@
     "missingCapabilities": "Ce compte a été connecté avant l’existence de ces autorisations : reconnectez-le pour les accorder.",
     "reconnect": "Reconnecter",
     "reconnectHint": "Reconnecter le compte applique les autorisations demandées par cette version.",
+    "reconnectExpired": "L’autorisation stockée a expiré ou a été révoquée. Reconnecter conserve le compte, ses tâches et son historique ; le déconnecter les supprimerait.",
     "error_consent_required": "Le fournisseur a refusé les autorisations. Accordez le consentement administrateur depuis le guide de configuration, puis reconnectez le compte.",
     "error_rate_limited": "Le fournisseur limite les requêtes de ce compte. Sync réessaie de lui-même ; si cela persiste, patientez quelques minutes et relancez la tâche."
   },
