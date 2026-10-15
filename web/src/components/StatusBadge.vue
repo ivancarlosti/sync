@@ -21,6 +21,7 @@ const TONES: Record<string, BadgeTone> = {
   updated: 'success',
   inSync: 'success',
   folderCreated: 'success',
+  folder_created: 'success',
   tokensRefreshed: 'success',
   configured: 'success',
   environment: 'success',
@@ -41,6 +42,7 @@ const TONES: Record<string, BadgeTone> = {
   cancelled: 'muted',
   skipped: 'muted',
   deleted: 'muted',
+  folder_deleted: 'muted',
   anonymous: 'muted',
   // Informational labels that are not really states.
   manual: 'secondary',

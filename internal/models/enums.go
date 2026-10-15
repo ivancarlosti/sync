@@ -140,6 +140,7 @@ const (
 	ActionConflict      ItemAction = "conflict"
 	ActionFailed        ItemAction = "failed"
 	ActionFolderCreated ItemAction = "folder_created"
+	ActionFolderDeleted ItemAction = "folder_deleted"
 	ActionUnsupported   ItemAction = "unsupported"
 	ActionRenamed       ItemAction = "renamed"
 	ActionInSync        ItemAction = "in_sync"

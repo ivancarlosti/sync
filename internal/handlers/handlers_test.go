@@ -990,6 +990,10 @@ func TestJobLifecycle(t *testing.T) {
 	if job.SourceFolderID != providers.DriveRoot || job.DestinationFolderID != providers.DriveRoot {
 		t.Errorf("folder ids = %q/%q, want the drive root", job.SourceFolderID, job.DestinationFolderID)
 	}
+	// The payload omits the folder option: a fresh job mirrors the tree.
+	if !job.SyncEmptyFolders {
+		t.Error("a job created without sync_empty_folders must mirror the empty folders")
+	}
 	// Blank entries and duplicates are dropped by the encoder.
 	if len(job.ExcludePatterns) != 2 {
 		t.Errorf("exclude_patterns = %v, want the two normalised patterns", job.ExcludePatterns)
@@ -1030,6 +1034,54 @@ func TestJobLifecycle(t *testing.T) {
 	recorder = call(t, server, http.MethodGet, "/api/jobs/4242", nil)
 	requireStatus(t, recorder, http.StatusNotFound)
 	requireErrorCode(t, recorder, codeNotFound)
+}
+
+// TestJobSyncEmptyFoldersRoundTrip pins the per-job folder option: a payload that
+// turns it off must stay off across a re-read — the column carries a `default:true`,
+// so the store compensates for the substitution GORM performs on insert — and a
+// later update can turn it back on.
+func TestJobSyncEmptyFoldersRoundTrip(t *testing.T) {
+	server, store := newTestServer(t, models.AuthModeNone)
+	google := saveAccount(t, store, models.ProviderGoogle, "google-1", "g@example.com")
+	microsoft := saveAccount(t, store, models.ProviderMicrosoft, "ms-1", "m@example.com")
+
+	payload := jobPayload(google, microsoft)
+	payload["sync_empty_folders"] = false
+	recorder := call(t, server, http.MethodPost, "/api/jobs", payload)
+	requireStatus(t, recorder, http.StatusCreated)
+	created := decodeJSON[jobView](t, recorder)
+	if created.SyncEmptyFolders {
+		t.Error("sync_empty_folders = true, want the false the payload asked for")
+	}
+	if stored, err := store.GetJob(context.Background(), created.ID); err != nil {
+		t.Fatalf("loading the job: %v", err)
+	} else if stored.SyncEmptyFolders {
+		t.Error("the stored column must keep the option off")
+	}
+
+	// An update that omits the field leaves the stored value alone, and one that
+	// names it wins. The editor always sends the whole form, the request shape
+	// keeps both cases working.
+	id := strconv.FormatUint(uint64(created.ID), 10)
+	delete(payload, "sync_empty_folders")
+	payload["name"] = "Backup (quiet)"
+	recorder = call(t, server, http.MethodPut, "/api/jobs/"+id, payload)
+	requireStatus(t, recorder, http.StatusOK)
+	if updated := decodeJSON[jobView](t, recorder); updated.SyncEmptyFolders {
+		t.Error("an update that omits the field must keep the stored value")
+	}
+
+	payload["sync_empty_folders"] = true
+	recorder = call(t, server, http.MethodPut, "/api/jobs/"+id, payload)
+	requireStatus(t, recorder, http.StatusOK)
+	if updated := decodeJSON[jobView](t, recorder); !updated.SyncEmptyFolders {
+		t.Error("an update that names the field must apply it")
+	}
+	if stored, err := store.GetJob(context.Background(), created.ID); err != nil {
+		t.Fatalf("loading the job: %v", err)
+	} else if !stored.SyncEmptyFolders {
+		t.Error("the stored column must follow the update")
+	}
 }
 
 // TestJobStoresDriveLabels pins the drive display columns: the folder picker

@@ -39,6 +39,10 @@ type SyncJob struct {
 	ExcludePatterns string `gorm:"type:text" json:"-"`
 	// DeleteMissing propagates deletions instead of re-copying the file back.
 	DeleteMissing bool `gorm:"default:false" json:"delete_missing"`
+	// SyncEmptyFolders mirrors the folder tree itself, so a folder that holds no
+	// file travels too. The column defaults to true, which is the behaviour
+	// inherited by the rows stored before the option existed.
+	SyncEmptyFolders bool `gorm:"default:true" json:"sync_empty_folders"`
 	// IntervalMinutes is the automatic schedule; 0 means "manual only".
 	IntervalMinutes int  `gorm:"default:0" json:"interval_minutes"`
 	Enabled         bool `gorm:"default:true" json:"enabled"`
@@ -73,6 +77,7 @@ type SyncRun struct {
 	FilesDeleted     int   `json:"files_deleted"`
 	FilesSkipped     int   `json:"files_skipped"`
 	FoldersCreated   int   `json:"folders_created"`
+	FoldersDeleted   int   `json:"folders_deleted"`
 	Conflicts        int   `json:"conflicts"`
 	Errors           int   `json:"errors"`
 	BytesTransferred int64 `json:"bytes_transferred"`

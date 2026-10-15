@@ -86,6 +86,7 @@ const counters = computed(() => {
     { key: 'deleted', label: t('runs.deleted'), value: count(run.files_deleted) },
     { key: 'skipped', label: t('runs.skipped'), value: count(run.files_skipped) },
     { key: 'folders', label: t('runs.folders'), value: count(run.folders_created) },
+    { key: 'foldersDeleted', label: t('runs.foldersDeleted'), value: count(run.folders_deleted) },
     { key: 'conflicts', label: t('runs.conflicts'), value: count(run.conflicts) },
     { key: 'errors', label: t('runs.errors'), value: count(run.errors) },
     { key: 'bytes', label: t('runs.bytes'), value: size(run.bytes_transferred) },

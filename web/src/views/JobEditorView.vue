@@ -608,6 +608,19 @@ onMounted(load);
 
               <div class="flex items-start justify-between gap-4 rounded-md border border-border p-3">
                 <div class="space-y-1">
+                  <Label for="job-sync-empty-folders">{{ t('jobs.syncEmptyFolders') }}</Label>
+                  <p class="text-xs text-muted-foreground">{{ t('jobs.syncEmptyFoldersHint') }}</p>
+                </div>
+                <Switch
+                  id="job-sync-empty-folders"
+                  v-model="draft.sync_empty_folders"
+                  :disabled="saving"
+                  :label="t('jobs.syncEmptyFolders')"
+                />
+              </div>
+
+              <div class="flex items-start justify-between gap-4 rounded-md border border-border p-3">
+                <div class="space-y-1">
                   <Label for="job-delete-missing">{{ t('jobs.deleteMissing') }}</Label>
                   <p class="text-xs text-muted-foreground">{{ t('jobs.deleteMissingHint') }}</p>
                 </div>

@@ -87,7 +87,8 @@ account rotates the row (`uniqueIndex idx_account_identity` on
 | `direction` | `VARCHAR(32)` | `google_to_microsoft` \| `microsoft_to_google` \| `bidirectional` |
 | `conflict_policy` | `VARCHAR(32)` | `newest_wins` \| `source_wins` \| `destination_wins` \| `skip` |
 | `exclude_patterns` | `TEXT` | JSON array of globs, **not** serialised raw (the API returns the decoded array) |
-| `delete_missing` | `BOOLEAN` | propagate deletions instead of re-copying |
+| `delete_missing` | `BOOLEAN` | propagate deletions instead of re-copying; also removes the emptied folders |
+| `sync_empty_folders` | `BOOLEAN` | mirror folders that hold no file; default `true`, which is what the rows stored before the column existed inherit |
 | `interval_minutes` | `INT` | `0` = manual only, capped at `10080` (7 days) |
 | `enabled` | `BOOLEAN` | default `true` |
 | `last_run_at`, `next_run_at` | `DATETIME` (nullable) | next run recomputed on every save |
@@ -96,15 +97,15 @@ account rotates the row (`uniqueIndex idx_account_identity` on
 `sync_runs` — one row per execution (the audit trail and the source of the
 dashboard numbers). Counters are `files_scanned`, `files_created`,
 `files_updated`, `files_deleted`, `files_skipped`, `folders_created`,
-`conflicts`, `errors`, `bytes_transferred`; `status` is one of `running`,
-`success`, `partial`, `failed`, `cancelled`, `timeout` (the run hit its time
-budget, typically while a provider throttled it), `trigger` is `manual` or
+`folders_deleted`, `conflicts`, `errors`, `bytes_transferred`; `status` is one of
+`running`, `success`, `partial`, `failed`, `cancelled`, `timeout` (the run hit its
+time budget, typically while a provider throttled it), `trigger` is `manual` or
 `scheduled`, and `duration_ms` is computed from `started_at`/`finished_at`.
 
 `sync_items` — the per-file detail of a run: `run_id` + `job_id` (both indexed),
 `action` (`created`, `updated`, `deleted`, `skipped`, `conflict`, `failed`,
-`folder_created`, `unsupported`, `renamed`, `in_sync`), `path`, `size` and the
-`evidence` string that explains the decision.
+`folder_created`, `folder_deleted`, `unsupported`, `renamed`, `in_sync`), `path`,
+`size` and the `evidence` string that explains the decision.
 
 `sync_files` — **the engine state**: one row per path already in sync
 (`uniqueIndex idx_syncfile_job_path` on `job_id` + `path`) with the provider item

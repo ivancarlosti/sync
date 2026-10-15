@@ -50,6 +50,7 @@ type jobInput struct {
 	ConflictPolicy        string   `json:"conflict_policy"`
 	ExcludePatterns       []string `json:"exclude_patterns"`
 	DeleteMissing         bool     `json:"delete_missing"`
+	SyncEmptyFolders      *bool    `json:"sync_empty_folders"`
 	IntervalMinutes       int      `json:"interval_minutes"`
 	Enabled               *bool    `json:"enabled"`
 }
@@ -238,6 +239,12 @@ func (s *Server) applyJobInput(c *gin.Context, input jobInput, job *models.SyncJ
 	job.ConflictPolicy = string(policy)
 	job.ExcludePatterns = patterns
 	job.DeleteMissing = input.DeleteMissing
+	// The folder mirroring is on unless the client turns it off: a payload that
+	// omits the field (an older client, a script) keeps the value it already has,
+	// and a fresh job is seeded with true.
+	if input.SyncEmptyFolders != nil {
+		job.SyncEmptyFolders = *input.SyncEmptyFolders
+	}
 	job.IntervalMinutes = input.IntervalMinutes
 	job.Enabled = enabled
 	return nil
@@ -330,7 +337,7 @@ func (s *Server) handleCreateJob(c *gin.Context) {
 	if !decode(c, &input) {
 		return
 	}
-	job := models.SyncJob{Enabled: true}
+	job := models.SyncJob{Enabled: true, SyncEmptyFolders: true}
 	if err := s.applyJobInput(c, input, &job); err != nil {
 		fail(c, err)
 		return

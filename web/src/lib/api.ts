@@ -331,6 +331,7 @@ export interface SyncJob {
   conflict_policy: 'newest_wins' | 'source_wins' | 'destination_wins' | 'skip';
   exclude_patterns: string[];
   delete_missing: boolean;
+  sync_empty_folders: boolean;
   interval_minutes: number;
   enabled: boolean;
   running: boolean;
@@ -363,6 +364,7 @@ export interface JobPayload {
   conflict_policy: string;
   exclude_patterns: string[];
   delete_missing: boolean;
+  sync_empty_folders: boolean;
   interval_minutes: number;
   enabled: boolean;
 }
@@ -383,6 +385,7 @@ export interface SyncRun {
   files_deleted: number;
   files_skipped: number;
   folders_created: number;
+  folders_deleted: number;
   conflicts: number;
   errors: number;
   bytes_transferred: number;

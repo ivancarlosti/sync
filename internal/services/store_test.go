@@ -1,5 +1,6 @@
 // This file covers the store-side retention rules: what deleting a job keeps,
-// and the age based purge of runs, audits and traffic days (store.go).
+// and the age based purge of runs, audits and traffic days (store.go), plus the
+// compensation SaveJob makes for a bool column that carries a GORM default.
 //
 // The count based pruners (PruneRuns, PruneAudits) are exercised in billing_test.go
 // and audit_test.go; here it is the calendar that decides.
@@ -115,6 +116,56 @@ func countRows(t *testing.T, store *Store, model any, where string, args ...any)
 		t.Fatalf("counting the rows: %v", err)
 	}
 	return total
+}
+
+// TestSaveJobKeepsEmptyFoldersOff pins the compensation the store makes for the
+// GORM default of the sync_empty_folders column. A bool column tagged `default`
+// makes GORM substitute that default for the zero value on insert, so a job saved
+// with the option off would otherwise come back on; the value the caller asked
+// for is what a read returns, and an update still follows it.
+func TestSaveJobKeepsEmptyFoldersOff(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	job := seedJob(t, store, "quiet job")
+
+	if job.SyncEmptyFolders {
+		t.Fatal("saving the job changed the value the caller passed")
+	}
+	stored, err := store.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("loading the job: %v", err)
+	}
+	if stored.SyncEmptyFolders {
+		t.Error("the stored column = true, want the false the caller passed")
+	}
+
+	// Switching the option back on is an ordinary update.
+	job.SyncEmptyFolders = true
+	if err := store.SaveJob(ctx, job); err != nil {
+		t.Fatalf("saving the job: %v", err)
+	}
+	again, err := store.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("loading the job: %v", err)
+	}
+	if !again.SyncEmptyFolders {
+		t.Error("the update must turn the option back on")
+	}
+
+	// The column default is what a row written before the option existed
+	// inherits: an insert that does not name the column comes back on, which is
+	// the behaviour the migration keeps for the older jobs.
+	if err := store.db.WithContext(ctx).Exec(
+		"INSERT INTO sync_jobs (name) VALUES (?)", "legacy job").Error; err != nil {
+		t.Fatalf("inserting a legacy row: %v", err)
+	}
+	var legacy models.SyncJob
+	if err := store.db.WithContext(ctx).Where("name = ?", "legacy job").First(&legacy).Error; err != nil {
+		t.Fatalf("loading the legacy row: %v", err)
+	}
+	if !legacy.SyncEmptyFolders {
+		t.Error("a row written before the column existed must keep mirroring the folders")
+	}
 }
 
 // TestDeleteJobKeepsRunHistory pins the promise of the delete dialog: removing a

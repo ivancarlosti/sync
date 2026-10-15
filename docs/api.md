@@ -136,9 +136,9 @@ destination_account_id, source_drive_id, source_drive_name, source_drive_kind,
 source_drive_owner, source_folder_id, source_folder_path, destination_drive_id,
 destination_drive_name, destination_drive_kind, destination_drive_owner,
 destination_folder_id, destination_folder_path, direction, conflict_policy,
-delete_missing, interval_minutes, enabled, last_run_at, next_run_at, last_status,
-last_error, created_at, updated_at`) plus `exclude_patterns: string[]` and
-`running: boolean`.
+delete_missing, sync_empty_folders, interval_minutes, enabled, last_run_at,
+next_run_at, last_status, last_error, created_at, updated_at`) plus
+`exclude_patterns: string[]` and `running: boolean`.
 
 | Method | Path | Notes |
 |---|---|---|
@@ -174,6 +174,7 @@ Create/update payload:
   "conflict_policy": "newest_wins",
   "exclude_patterns": ["*.tmp", "cache/**"],
   "delete_missing": false,
+  "sync_empty_folders": true,
   "interval_minutes": 1440,
   "enabled": true
 }
@@ -201,6 +202,16 @@ the location — My Drive, a shared drive, an OneDrive or a SharePoint library �
 without a provider call. They are **optional**: a payload that omits them leaves
 the columns empty, and a job stored before they existed keeps rendering as its
 path alone. Values are clamped to the column widths (`191`/`32`/`191`).
+
+`delete_missing` propagates a deletion instead of re-copying the file back, and
+also deletes, on the side the job writes to, a folder the other side no longer
+has once nothing is left under it (`folder_deleted` in the run items).
+
+`sync_empty_folders` mirrors the folder tree itself, so a folder that holds no
+file is created on the other side too (`folder_created`). It is on by default and
+**optional** in the payload: a value that is omitted leaves the stored setting of
+an update alone — an older client keeps working — and starts a new job with
+`true`.
 
 ## 7. Runs
 

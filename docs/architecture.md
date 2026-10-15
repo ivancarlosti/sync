@@ -88,6 +88,14 @@ list source tree ──► list destination tree ──► plan per path ──�
   (e.g. `destination newer by 42s`).
 * **Transfer** streams a download and an upload; folders are created on demand
   (`folder_created`).
+* **Folder mirroring** (`sync_empty_folders`, on by default) runs before the
+  transfer and creates on each side every folder the other side lists and it does
+  not, so a folder that holds no file still travels. It only ever creates:
+  removals are the next bullet.
+* **Folder pruning** (`delete_missing`) runs after the transfer and deletes, on
+  the side the job writes to, the folders the other side no longer has once
+  nothing is left under them — no file, no item V1 cannot copy, no subfolder
+  (`folder_deleted`).
 * **Finalising** sets `success`, `partial` (some files failed), `failed`, or
   `timeout` when the run exhausts its time budget (a throttled provider is the
   usual cause; the run continues on the next slot) or `cancelled` when an operator

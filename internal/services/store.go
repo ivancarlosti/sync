@@ -196,8 +196,25 @@ func (s *Store) GetJob(ctx context.Context, id uint) (*models.SyncJob, error) {
 }
 
 // SaveJob inserts or updates a job.
+//
+// GORM replaces the zero value of a bool that carries a column default with that
+// default on INSERT, and writes the replacement back into the struct (see the
+// create callback of gorm.io/gorm). SyncEmptyFolders defaults to true, so a job
+// created with the option switched off would silently come back on. The value the
+// caller asked for is captured, written again with an UPDATE when the insert
+// substituted it, and restored in the struct so the caller keeps its own view of
+// the job (SQLite reads the updated row back into the model, other drivers do
+// not).
 func (s *Store) SaveJob(ctx context.Context, job *models.SyncJob) error {
+	emptyFolders := job.SyncEmptyFolders
 	if err := s.db.WithContext(ctx).Save(job).Error; err != nil {
+		return fmt.Errorf("services: saving job: %w", err)
+	}
+	if job.SyncEmptyFolders == emptyFolders {
+		return nil
+	}
+	job.SyncEmptyFolders = emptyFolders
+	if err := s.db.WithContext(ctx).Model(job).Update("sync_empty_folders", emptyFolders).Error; err != nil {
 		return fmt.Errorf("services: saving job: %w", err)
 	}
 	return nil

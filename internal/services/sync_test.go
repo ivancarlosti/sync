@@ -190,6 +190,34 @@ func (p *fakeProvider) resolve(path string) *fakeItem {
 	return current
 }
 
+// native stores an item the engine cannot transfer (a Google document), which is
+// what the listing of a real drive reports for it.
+func (p *fakeProvider) native(path string, modified time.Time) *fakeItem {
+	item := p.add(path, "", modified)
+	item.item.NativeDoc = true
+	item.item.MimeType = "application/vnd.google-apps.document"
+	return item
+}
+
+// folderPaths lists every folder of the tree as "relative/path", which is what
+// the empty-folder assertions compare against (paths lists files only).
+func (p *fakeProvider) folderPaths() map[string]bool {
+	out := map[string]bool{}
+	var walk func(parentID, prefix string)
+	walk = func(parentID, prefix string) {
+		for _, item := range p.items {
+			if item.parentID != parentID || item.item.ID == providers.DriveRoot || !item.item.IsDir {
+				continue
+			}
+			relative := joinPath(prefix, item.item.Name)
+			out[relative] = true
+			walk(item.item.ID, relative)
+		}
+	}
+	walk(providers.DriveRoot, "")
+	return out
+}
+
 // remove deletes a path from the tree, which is how a test simulates an edit
 // made directly in the cloud.
 func (p *fakeProvider) remove(path string) {
@@ -388,6 +416,17 @@ func (p *fakeProvider) Delete(ctx context.Context, creds providers.Credentials, 
 	item, ok := p.items[itemID]
 	if !ok {
 		return fmt.Errorf("item %s: %w", itemID, providers.ErrNotFound)
+	}
+	if item.item.IsDir {
+		// The real providers refuse a folder that still holds something (Drive
+		// answers 400 to the deletion of a non-empty folder), so the fake does
+		// too: it is what makes the deepest-first order of the folder pass
+		// observable from a test.
+		for _, child := range p.items {
+			if child.parentID == item.item.ID {
+				return fmt.Errorf("folder %s is not empty", itemID)
+			}
+		}
 	}
 	delete(p.items, item.item.ID)
 	return nil
@@ -1194,6 +1233,225 @@ func TestEnginePropagatesSourceUpdate(t *testing.T) {
 	row := env.statePaths(t)["report.txt"]
 	if row.Size != int64(len("second version, longer")) {
 		t.Errorf("the state row was not refreshed: %+v", row)
+	}
+}
+
+// TestEngineMirrorsEmptyFolders covers the sync_empty_folders option: the folders
+// that hold no file travel too, so both trees match even where nothing has to be
+// copied.
+func TestEngineMirrorsEmptyFolders(t *testing.T) {
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
+	env.job.SyncEmptyFolders = true
+	env.saveJob(t)
+
+	env.google.folder(providers.DriveRoot, "empty")
+	env.google.add("docs/plan.md", "# plan", base)
+	env.google.folder(env.google.resolve("docs").item.ID, "2026")
+
+	run := env.run(t)
+	if run.FoldersCreated != 3 {
+		t.Errorf("FoldersCreated = %d, want 3 (docs, docs/2026 and empty)", run.FoldersCreated)
+	}
+	folders := env.msft.folderPaths()
+	for _, path := range []string{"docs", "docs/2026", "empty"} {
+		if !folders[path] {
+			t.Errorf("the destination is missing the folder %q, got %v", path, folders)
+		}
+	}
+	if action := actionOf(env.items(t, run.ID), "empty"); action != string(models.ActionFolderCreated) {
+		t.Errorf("the action of the empty folder = %q, want folder_created", action)
+	}
+	if got := env.msft.paths()["docs/plan.md"]; got != "# plan" {
+		t.Errorf("the file = %q, want it copied", got)
+	}
+	// The folders are created once: a second run finds them all in place.
+	again := env.run(t)
+	if again.FoldersCreated != 0 {
+		t.Errorf("the second run created %d folders, want 0", again.FoldersCreated)
+	}
+}
+
+// TestEngineSkipsEmptyFoldersWhenDisabled verifies the option is a choice: with
+// it off only the folders a copied file needs are created.
+func TestEngineSkipsEmptyFoldersWhenDisabled(t *testing.T) {
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
+
+	env.google.folder(providers.DriveRoot, "empty")
+	env.google.add("docs/plan.md", "# plan", base)
+
+	run := env.run(t)
+	if run.FoldersCreated != 1 {
+		t.Errorf("FoldersCreated = %d, want 1 (the folder of the file)", run.FoldersCreated)
+	}
+	if folders := env.msft.folderPaths(); folders["empty"] {
+		t.Errorf("an empty folder must not travel while the option is off: %v", folders)
+	}
+}
+
+// TestEngineMirrorsEmptyFoldersBack verifies the mirroring follows the direction
+// of the job: a bidirectional run brings an empty folder of the destination back
+// to the source.
+func TestEngineMirrorsEmptyFoldersBack(t *testing.T) {
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	env := newTestEnv(t, models.DirectionBidirectional, models.ConflictNewestWins)
+	env.job.SyncEmptyFolders = true
+	env.saveJob(t)
+
+	env.google.add("shared/kept.txt", "kept", base)
+	env.msft.folder(providers.DriveRoot, "from-microsoft")
+
+	run := env.run(t)
+	if run.FoldersCreated != 2 {
+		t.Errorf("FoldersCreated = %d, want 2 (shared and from-microsoft)", run.FoldersCreated)
+	}
+	if !env.msft.folderPaths()["shared"] {
+		t.Errorf("the folder of the source was not created on the destination")
+	}
+	if !env.google.folderPaths()["from-microsoft"] {
+		t.Errorf("the empty folder of the destination was not created on the source: %v",
+			env.google.folderPaths())
+	}
+}
+
+// TestEngineKeepsFoldersWhenMirroringIsOff verifies a one-way job whose option is
+// off never creates a folder the file pass does not need.
+func TestEngineKeepsFoldersWhenMirroringIsOff(t *testing.T) {
+	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
+	env.google.folder(providers.DriveRoot, "empty")
+
+	run := env.run(t)
+	if run.FoldersCreated != 0 {
+		t.Errorf("FoldersCreated = %d, want 0", run.FoldersCreated)
+	}
+	if folders := env.msft.folderPaths(); len(folders) != 0 {
+		t.Errorf("the destination must stay empty, got %v", folders)
+	}
+}
+
+// TestEngineDeletesEmptiedFolders covers the folder half of the delete-missing
+// option: a folder the source no longer has, and that holds nothing any more, is
+// removed from the destination — after the file it held was deleted.
+func TestEngineDeletesEmptiedFolders(t *testing.T) {
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
+	env.job.SyncEmptyFolders = true
+	env.job.DeleteMissing = true
+	env.saveJob(t)
+
+	env.google.add("docs/2026/plan.md", "# plan", base)
+	env.google.folder(providers.DriveRoot, "keep")
+	env.google.folder(providers.DriveRoot, "solo")
+	env.run(t)
+
+	fileID := env.msft.resolve("docs/2026/plan.md").item.ID
+	emptiedID := env.msft.resolve("docs/2026").item.ID
+
+	// The folder that held the file goes away with it, and so does the one that
+	// never held anything.
+	env.google.remove("docs/2026")
+	env.google.remove("solo")
+	run := env.run(t)
+
+	if run.FilesDeleted != 1 {
+		t.Errorf("FilesDeleted = %d, want 1", run.FilesDeleted)
+	}
+	if run.FoldersDeleted != 2 {
+		t.Errorf("FoldersDeleted = %d, want 2 (docs/2026 and solo)", run.FoldersDeleted)
+	}
+	folders := env.msft.folderPaths()
+	if folders["docs/2026"] || folders["solo"] {
+		t.Errorf("the emptied folders must be gone, got %v", folders)
+	}
+	if !folders["docs"] || !folders["keep"] {
+		t.Errorf("docs and keep must survive, got %v", folders)
+	}
+	items := env.items(t, run.ID)
+	for _, path := range []string{"docs/2026", "solo"} {
+		if action := actionOf(items, path); action != string(models.ActionFolderDeleted) {
+			t.Errorf("the action of %q = %q, want folder_deleted", path, action)
+		}
+	}
+	// The provider refuses to delete a folder that still holds something, so a
+	// wrong order would have failed the run; the calls prove the order anyway.
+	position := func(call string) int {
+		for index, entry := range env.msft.calls {
+			if entry == call {
+				return index
+			}
+		}
+		return -1
+	}
+	if position("delete:"+fileID) >= position("delete:"+emptiedID) {
+		t.Errorf("the file must be deleted before its folder, calls = %v", env.msft.calls)
+	}
+}
+
+// TestEngineKeepsFoldersHoldingSomething verifies the guard of the folder
+// deletion: a folder that still holds a file the engine never copied, or an item
+// it cannot transfer, is never removed.
+func TestEngineKeepsFoldersHoldingSomething(t *testing.T) {
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
+	env.job.DeleteMissing = true
+	env.saveJob(t)
+
+	// A file uploaded by hand into a folder the source does not have.
+	env.msft.add("manual/uploaded.txt", "by hand", base)
+	// A native document: the engine cannot copy it, so it must not discard it
+	// through the folder that holds it either.
+	env.msft.native("native/doc.gdoc", base)
+
+	run := env.run(t)
+	if run.FoldersDeleted != 0 {
+		t.Errorf("FoldersDeleted = %d, want 0", run.FoldersDeleted)
+	}
+	folders := env.msft.folderPaths()
+	for _, path := range []string{"manual", "native"} {
+		if !folders[path] {
+			t.Errorf("the folder %q holds content and must survive, got %v", path, folders)
+		}
+	}
+	if got := env.msft.paths()["manual/uploaded.txt"]; got != "by hand" {
+		t.Errorf("the untracked file = %q, want it untouched", got)
+	}
+}
+
+// TestEngineKeepsFoldersWithoutDeleteMissing verifies the folder deletion belongs
+// to the delete-missing option and nothing else.
+func TestEngineKeepsFoldersWithoutDeleteMissing(t *testing.T) {
+	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
+	env.msft.folder(providers.DriveRoot, "solo")
+
+	run := env.run(t)
+	if run.FoldersDeleted != 0 {
+		t.Errorf("FoldersDeleted = %d, want 0 without delete_missing", run.FoldersDeleted)
+	}
+	if !env.msft.folderPaths()["solo"] {
+		t.Error("a folder must not be removed while delete_missing is off")
+	}
+}
+
+// TestEngineFolderDeletionRenewsToken verifies a folder deletion that hits an
+// expired access token renews it and retries instead of failing the folder.
+func TestEngineFolderDeletionRenewsToken(t *testing.T) {
+	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
+	env.job.DeleteMissing = true
+	env.saveJob(t)
+
+	env.msft.folder(providers.DriveRoot, "solo")
+	env.msft.denied = true
+
+	run := env.run(t)
+	if run.FoldersDeleted != 1 {
+		t.Errorf("FoldersDeleted = %d, want 1", run.FoldersDeleted)
+	}
+	if env.msft.refreshes == 0 {
+		t.Error("the folder deletion must renew the token instead of failing")
+	}
+	if env.msft.folderPaths()["solo"] {
+		t.Error("the folder must be gone after the renewed token")
 	}
 }
 

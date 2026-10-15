@@ -88,6 +88,7 @@ export function payloadFromJob(job: SyncJob, overrides: Partial<JobPayload> = {}
     conflict_policy: job.conflict_policy,
     exclude_patterns: [...job.exclude_patterns],
     delete_missing: job.delete_missing,
+    sync_empty_folders: job.sync_empty_folders,
     interval_minutes: job.interval_minutes,
     enabled: job.enabled,
     ...overrides,
@@ -116,6 +117,7 @@ export function newJobPayload(): JobPayload {
     conflict_policy: '',
     exclude_patterns: [],
     delete_missing: false,
+    sync_empty_folders: true,
     interval_minutes: 0,
     enabled: true,
   };
