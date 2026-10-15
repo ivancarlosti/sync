@@ -13,7 +13,6 @@ is what a product shipped in RTL needs) with 2 px strokes on a 24×24 grid.
 | `web/public/favicon.ico` | 16/32/48 | `<link rel="alternate icon">` for browsers without SVG icons |
 | `web/public/apple-touch-icon.png` | 180×180 | iOS home screen (opaque rounded square) |
 | `web/public/robots.txt` | — | keeps crawlers out of `/api/` and the private screens |
-| `web/src/assets/logo.svg`, `logo-icon.svg` | vector | in-app usage where a Vite-managed asset is preferable (theme-aware contexts) |
 
 `index.html` also declares the theme colours
 (`#ffffff` light / `#0b1120` dark) and `color-scheme: light dark`, which is what
@@ -34,10 +33,10 @@ an opaque rounded square) and `favicon.ico` (multi-resolution) into `web/public`
 
 ## 3. Theme tokens
 
-Colours are HSL channel triplets in CSS custom properties
-(`web/src/style.css`), consumed by Tailwind through `hsl(var(--token))`
-(`web/tailwind.config.js`), so a component says `bg-primary/90` and both themes
-follow.
+Colours are HSL channel triplets in CSS custom properties (`web/src/style.css`),
+surfaced to Tailwind as utility tokens by the `@theme inline` block of that same
+file (`--color-primary: hsl(var(--primary))`), so a component says
+`bg-primary/90` and both themes follow.
 
 | Token | Light | Dark | Meaning |
 |---|---|---|---|

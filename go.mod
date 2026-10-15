@@ -2,14 +2,19 @@ module github.com/ivancarlosti/sync
 
 go 1.27.1
 
+// toolchain pins the build to the Go release that carries the net/http, http2,
+// textproto and crypto/tls fixes (GO-2026-6603/6610/6611/6612/6613/6617),
+// which live in the standard library and therefore ship inside the binary.
+toolchain go1.27.2
+
 require (
 	github.com/containrrr/shoutrrr v0.8.0
 	github.com/gin-gonic/gin v1.12.0
 	github.com/joho/godotenv v1.5.1
 	github.com/microsoft/kiota-abstractions-go v1.11.1
-	github.com/microsoft/kiota-http-go v1.5.6
+	github.com/microsoft/kiota-http-go v1.5.7
 	github.com/microsoft/kiota-serialization-json-go v1.1.4
-	github.com/microsoftgraph/msgraph-sdk-go v1.103.0
+	github.com/microsoftgraph/msgraph-sdk-go v1.104.0
 	github.com/microsoftgraph/msgraph-sdk-go-core v1.4.1
 	golang.org/x/oauth2 v0.37.0
 	gorm.io/driver/mysql v1.6.0
@@ -64,9 +69,9 @@ require (
 	go.opentelemetry.io/otel/metric v1.46.0 // indirect
 	go.opentelemetry.io/otel/trace v1.46.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
-	golang.org/x/crypto v0.57.0 // indirect
-	golang.org/x/net v0.59.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
-	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/crypto v0.58.0 // indirect
+	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/protobuf v1.36.10 // indirect
 )
