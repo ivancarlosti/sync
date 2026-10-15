@@ -140,6 +140,13 @@ which also derives the capability badges: `capabilities` (satisfied by the store
 grant) and `missing_capabilities` / `needs_reconnect` (requested by this release,
 not yet granted → reconnect).
 
+`Sites.ReadWrite.All` and every directory scope of the Microsoft row are **work or
+school** permissions. A personal Microsoft account (an MSA) is a tenant of its own
+and can never be granted them, so the accounts API reports those capabilities in
+`not_applicable_capabilities` — greyed out, with no reconnect offered — instead of
+reporting a reconnect that cannot deliver them (`account_kind: "personal"` says
+why; see `docs/providers.md` §4).
+
 The four OpenID Connect scopes (`openid`, `profile`, `email`, `offline_access`)
 are requested but never used to **prove** a capability. Microsoft Entra ID grants
 them without reporting them back — the token response `scope` value carries the
@@ -149,8 +156,9 @@ them `informational` (`providers.Permission.Informational`) and the splitter
 tolerates that encoding (`providers.SplitScopes`). Without both, an account
 connected with the current permission set would be reported as needing a
 reconnect it cannot fix. A red *files* badge on a Microsoft account therefore
-always means `User.Read`, `Files.ReadWrite.All` or `Sites.ReadWrite.All` is
-missing from the grant.
+always means `User.Read` or `Files.ReadWrite.All` is missing from the grant — or,
+on a work or school account, `Sites.ReadWrite.All`, which a personal account can
+never hold and which is therefore not part of its applicable table.
 
 ## 4. Redirect URIs
 

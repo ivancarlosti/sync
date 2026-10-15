@@ -55,6 +55,7 @@ account rotates the row (`uniqueIndex idx_account_identity` on
 | `provider_account_id` | `VARCHAR(191)` | `provider_account_id` | part of the unique index |
 | `email`, `display_name` | `VARCHAR(191)` | same names | `email` is indexed |
 | `avatar_url` | `VARCHAR(512)` | `avatar_url` | |
+| `kind` | `VARCHAR(16)` | `kind`, omitted when empty | `personal` \| `work` — the family of the account as the provider reported it (`providers.AccountKind`). Empty for a provider that cannot tell, and an empty value filters no permission out, so rows written before the column existed behave exactly as they did. Never cleared by a classification that failed |
 | `access_token`, `refresh_token` | `TEXT` | **never serialised** (`json:"-"`) | AES-GCM `v1:` ciphertext |
 | `token_type` | `VARCHAR(32)` | **never serialised** | |
 | `scopes` | `TEXT` | `scopes` | space separated, exposed as an array |

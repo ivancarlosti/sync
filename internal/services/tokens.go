@@ -17,6 +17,8 @@ import (
 //
 // Nothing else in the code base reads connected_accounts.access_token or
 // refresh_token, which is what keeps "tokens are encrypted at rest" true.
+// AccountKind is the one extra decryption, and it only reads the claims of the
+// access token to name the account kind; nothing is refreshed or written there.
 type TokenManager struct {
 	store    *Store
 	registry *providers.Registry
@@ -89,6 +91,36 @@ func (m *TokenManager) Resolve(ctx context.Context, accountID uint) (ProviderSes
 		}
 	}
 	return ProviderSession{Account: account, Provider: provider, Credentials: creds, Tokens: tokens}, nil
+}
+
+// AccountKind names the kind of the account behind a stored token — a personal
+// Microsoft account versus a work or school one — without a provider call, a
+// refresh or a write. The access token is decrypted (the second of the only two
+// readers of connected_accounts.access_token, the other being Resolve) and handed
+// to the provider's classifier (see providers.AccountClassifier).
+//
+// Unknown is the honest answer for a provider that does not classify accounts, a
+// row that cannot be decrypted and a token that carries no readable claim; the
+// caller then keeps every permission applicable, which is exactly the behaviour
+// an account had before kinds existed. The answer is a display hint for the
+// per-kind permission split, never an authorization decision.
+func (m *TokenManager) AccountKind(account *models.ConnectedAccount) providers.AccountKind {
+	if account == nil {
+		return providers.AccountKindUnknown
+	}
+	implementation, err := m.registry.Get(models.ProviderName(account.Provider))
+	if err != nil {
+		return providers.AccountKindUnknown
+	}
+	classifier, ok := implementation.(providers.AccountClassifier)
+	if !ok {
+		return providers.AccountKindUnknown
+	}
+	access, err := m.box.Decrypt(account.AccessToken)
+	if err != nil || access == "" {
+		return providers.AccountKindUnknown
+	}
+	return classifier.AccountKindOf(&providers.Tokens{AccessToken: access})
 }
 
 // Reissue forces a renewal of the access token of an account and persists it.

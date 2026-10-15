@@ -33,6 +33,15 @@ var _ providers.ScopeCatalog = (*Provider)(nil)
 // without reporting them back in the token response `scope` value — which only
 // carries the Graph resource scopes — so requiring them would mark every account
 // that connects today as "connected before these permissions existed".
+//
+// A personal Microsoft account (an MSA) cannot hold the directory scopes at all,
+// because it is a tenant of its own and not a member of a directory
+// (see account_kind.go): Entra ID never grants them and Graph never reports them
+// back, so a reconnect cannot change the answer. Those rows therefore carry
+// Kinds: workAccounts, and providers.ApplicablePermissions moves them out of the
+// table of a personal account — where the Accounts screen shows them as not
+// applicable instead of missing. Scopes() still requests the full table, because
+// the kind of the account is unknown until the flow comes back.
 func (p *Provider) Permissions() []providers.Permission {
 	return []providers.Permission{
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: "offline_access", Informational: true},
@@ -41,31 +50,31 @@ func (p *Provider) Permissions() []providers.Permission {
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: "email", Informational: true},
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("User.Read")},
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("Files.ReadWrite.All")},
-		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("Sites.ReadWrite.All")},
+		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("Sites.ReadWrite.All"), Kinds: workAccounts},
 
-		{Capability: providers.CapabilityUsers, Title: "users", Scope: graphScope("User.Read.All"), AdminConsent: true},
-		{Capability: providers.CapabilityUsers, Title: "users", Scope: graphScope("User.ReadWrite.All"), AdminConsent: true},
+		{Capability: providers.CapabilityUsers, Title: "users", Scope: graphScope("User.Read.All"), AdminConsent: true, Kinds: workAccounts},
+		{Capability: providers.CapabilityUsers, Title: "users", Scope: graphScope("User.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
 
 		// Distribution lists are Microsoft 365 groups, so creating and renaming
 		// them is a group write; Directory.ReadWrite.All is what allows creating
 		// the object and reading the tenant-wide catalogue it lives in.
-		{Capability: providers.CapabilityGroups, Title: "groups", Scope: graphScope("Group.ReadWrite.All"), AdminConsent: true},
-		{Capability: providers.CapabilityGroups, Title: "groups", Scope: graphScope("Directory.ReadWrite.All"), AdminConsent: true},
+		{Capability: providers.CapabilityGroups, Title: "groups", Scope: graphScope("Group.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
+		{Capability: providers.CapabilityGroups, Title: "groups", Scope: graphScope("Directory.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
 
-		{Capability: providers.CapabilityMembers, Title: "members", Scope: graphScope("GroupMember.ReadWrite.All"), AdminConsent: true},
+		{Capability: providers.CapabilityMembers, Title: "members", Scope: graphScope("GroupMember.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
 
-		{Capability: providers.CapabilityDomains, Title: "domains", Scope: graphScope("Domain.Read.All"), AdminConsent: true},
+		{Capability: providers.CapabilityDomains, Title: "domains", Scope: graphScope("Domain.Read.All"), AdminConsent: true, Kinds: workAccounts},
 
 		// Administrative units are the closest Graph equivalent of the Google
 		// organisational units the same screen manages.
-		{Capability: providers.CapabilityOrgUnits, Title: "orgunits", Scope: graphScope("AdministrativeUnit.ReadWrite.All"), AdminConsent: true},
+		{Capability: providers.CapabilityOrgUnits, Title: "orgunits", Scope: graphScope("AdministrativeUnit.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
 
-		{Capability: providers.CapabilityRoles, Title: "roles", Scope: graphScope("RoleManagement.Read.All"), AdminConsent: true},
+		{Capability: providers.CapabilityRoles, Title: "roles", Scope: graphScope("RoleManagement.Read.All"), AdminConsent: true, Kinds: workAccounts},
 
 		// Organization.Read.All lists the subscribed SKUs; the write scope is what
 		// assigns or removes a licence.
-		{Capability: providers.CapabilityLicenses, Title: "licenses", Scope: graphScope("Organization.Read.All"), AdminConsent: true},
-		{Capability: providers.CapabilityLicenses, Title: "licenses", Scope: graphScope("LicenseAssignment.ReadWrite.All"), AdminConsent: true},
+		{Capability: providers.CapabilityLicenses, Title: "licenses", Scope: graphScope("Organization.Read.All"), AdminConsent: true, Kinds: workAccounts},
+		{Capability: providers.CapabilityLicenses, Title: "licenses", Scope: graphScope("LicenseAssignment.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
 	}
 }
 
@@ -90,6 +99,10 @@ const graphResource = "https://graph.microsoft.com/"
 func graphScope(permission string) string {
 	return graphResource + permission
 }
+
+// workAccounts is the set of account kinds that can hold a directory scope: a
+// work or school account, never a personal Microsoft account.
+var workAccounts = []providers.AccountKind{providers.AccountKindWork}
 
 // AdminConsentURL implements providers.ConsentGranter: the tenant-wide consent
 // endpoint, carrying the same scope list as the authorization request so the

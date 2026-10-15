@@ -231,6 +231,12 @@ func TestGraphRewritesTheMeSentinel(t *testing.T) {
 	if account.ID != "user-1" || account.Name != "Ada Lovelace" || account.Email != "ada@contoso.com" {
 		t.Errorf("Account = %+v, want the document served for /me", account)
 	}
+	// The account kind: this fixture's token carries no readable claim, so Account
+	// falls back to the account's own drive — the same probe SearchSites uses —
+	// whose driveType is a personal one here (see account_kind.go).
+	if account.Kind != providers.AccountKindPersonal {
+		t.Errorf("Account.Kind = %q, want personal", account.Kind)
+	}
 
 	drives, err := provider.Drives(context.Background(), providers.Credentials{}, tokens)
 	if err != nil {
@@ -242,6 +248,9 @@ func TestGraphRewritesTheMeSentinel(t *testing.T) {
 
 	want := []string{
 		"https://graph.microsoft.com/v1.0/me",
+		// The kind probe of Account: the fixture's access token carries no
+		// readable claim, so the own drive answers it.
+		"https://graph.microsoft.com/v1.0/me/drive",
 		"https://graph.microsoft.com/v1.0/me/drive",
 		"https://graph.microsoft.com/v1.0/me/drives",
 	}

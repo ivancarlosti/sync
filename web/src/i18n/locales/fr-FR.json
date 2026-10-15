@@ -208,6 +208,7 @@
     "error_unknown": "La connexion a échoué.",
     "capabilities": "Capacités",
     "missingCapabilities": "Ce compte a été connecté avant l’existence de ces autorisations : reconnectez-le pour les accorder.",
+    "notApplicableCapabilities": "Non applicable : un compte Microsoft personnel ne peut pas recevoir les autorisations d’annuaire.",
     "reconnect": "Reconnecter",
     "reconnectHint": "Reconnecter le compte applique les autorisations demandées par cette version.",
     "reconnectExpired": "L’autorisation stockée a expiré ou a été révoquée. Reconnecter conserve le compte, ses tâches et son historique ; le déconnecter les supprimerait.",
@@ -526,7 +527,7 @@
         "admin_role_required": "Le compte connecté doit avoir un rôle d’administrateur : une autorisation accordée à l’application ne fait pas de l’utilisateur connecté un administrateur.",
         "license_required": "Les autorisations de licences et de rôles ne renvoient des données que sur une édition payante de Google Workspace.",
         "tenant_scope": "Connectez plusieurs annuaires avec une inscription multi-tenant : laissez l’id de tenant sur common, chaque administrateur d’annuaire accorde une fois pour le sien, et le consentement affiché ici est celui du dernier annuaire qui a terminé le parcours.",
-        "work_accounts_only": "Les autorisations d’annuaire ne peuvent pas être accordées à des comptes Microsoft personnels : les comptes OneDrive personnels ne sont plus connectables."
+        "work_accounts_only": "Les autorisations d’annuaire ne peuvent pas être accordées à des comptes Microsoft personnels : un compte personnel se connecte avec les seules autorisations de fichiers et les écrans d’annuaire lui restent inaccessibles."
       },
       "steps": {
         "google": {

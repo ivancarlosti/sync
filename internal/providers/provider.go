@@ -84,12 +84,49 @@ func (t *Tokens) TimeToLive(now time.Time) time.Duration {
 	return 0
 }
 
+// AccountKind names the family of account behind a connection, when the provider
+// can tell them apart: a personal Microsoft account (an MSA, `@outlook.com`) on
+// one side, a work or school account on the other. The zero value means "not
+// known" and is not a third family — every check below keeps the whole permission
+// table applicable for it, which is exactly the behaviour that existed before the
+// kind was reported at all.
+//
+// It is deliberately not the Drive.Kind vocabulary: a drive is `personal` or
+// `business`, an account is `personal` or `work`.
+type AccountKind string
+
+const (
+	// AccountKindUnknown is the kind of an account no signal could classify.
+	AccountKindUnknown AccountKind = ""
+	// AccountKindPersonal is a personal Microsoft account (an MSA).
+	AccountKindPersonal AccountKind = "personal"
+	// AccountKindWork is a work or school account, i.e. an account of a tenant.
+	AccountKindWork AccountKind = "work"
+)
+
 // Account is the remote identity behind a token set.
 type Account struct {
 	ID        string
 	Email     string
 	Name      string
 	AvatarURL string
+	// Kind is the family of the account, when the provider can tell: it decides
+	// which permissions are applicable to it (see Permission.Kinds). Empty means
+	// the provider did not say, and nothing is filtered out then.
+	Kind AccountKind
+}
+
+// AccountClassifier is implemented by providers that can name the kind of the
+// account a token set belongs to from the token itself, without calling the
+// provider API. Microsoft reads the tenant claim of the access token, which is
+// what an account connected before the kind existed is classified with — no
+// network round trip, no write (see services.TokenManager.AccountKind).
+//
+// The answer is a display hint, never an authorization decision: the claim is
+// read, not signature-checked, and every real operation still goes through the
+// provider with the token it was handed.
+type AccountClassifier interface {
+	AccountKindOf(tokens *Tokens) AccountKind
 }
 
 // Drive is a named root the operator can browse and pick a folder from. For
@@ -272,6 +309,13 @@ type Permission struct {
 	// SplitScopes) — so requiring them would report a freshly connected account
 	// as missing permissions it already holds.
 	Informational bool `json:"informational,omitempty"`
+	// Kinds lists the account kinds that can hold this scope; empty means every
+	// kind, which is the common case. A scope only a work or school account can
+	// hold (the Microsoft Graph directory permissions) is what
+	// ApplicablePermissions moves out of the table of a personal account, so the
+	// accounts screen reports those capabilities as not applicable instead of
+	// reporting a grant that can never be completed.
+	Kinds []AccountKind `json:"kinds,omitempty"`
 }
 
 // ScopeCatalog is implemented by providers that publish their permission table.
@@ -351,20 +395,31 @@ func CapabilitiesOf(permissions []Permission, granted []string) []Capability {
 // the feature, so a grant that does not carry them still satisfies the
 // capability (see Permission.Informational).
 func HasCapability(permissions []Permission, granted []string, capability Capability) bool {
-	declared := false
+	if !DeclaresCapability(permissions, capability) {
+		return false
+	}
 	for _, permission := range permissions {
-		if permission.Capability != capability {
-			continue
-		}
-		declared = true
-		if permission.Informational {
+		if permission.Capability != capability || permission.Informational {
 			continue
 		}
 		if !containsScope(granted, permission.Scope) {
 			return false
 		}
 	}
-	return declared
+	return true
+}
+
+// DeclaresCapability reports whether a permission table has any declaration for a
+// capability, whatever the grant is. A table without a declaration for it cannot
+// prove it (see HasCapability), which is what lets a capability be reported as
+// outside an account's reach rather than missing.
+func DeclaresCapability(permissions []Permission, capability Capability) bool {
+	for _, permission := range permissions {
+		if permission.Capability == capability {
+			return true
+		}
+	}
+	return false
 }
 
 // MissingCapabilities returns the capabilities of a table that a grant does not
@@ -378,6 +433,87 @@ func MissingCapabilities(permissions []Permission, granted []string) []Capabilit
 		missing = append(missing, capability)
 	}
 	return missing
+}
+
+// CapabilityReport is what a permission table says about one account, in display
+// order: what the account holds, what it is missing and what it can never apply
+// to. Only Missing is actionable.
+type CapabilityReport struct {
+	// Granted is satisfied by the stored grant.
+	Granted []Capability
+	// Missing is declared by the applicable permissions and not covered by the
+	// grant, so a reconnection can still add it.
+	Missing []Capability
+	// NotApplicable is outside what this kind of account can hold at all: no
+	// reconnection changes that (see AccountKind).
+	NotApplicable []Capability
+}
+
+// ReportCapabilities builds the capability report of an account from the split of
+// its provider's permission table (ApplicablePermissions) and the scopes that were
+// granted.
+//
+// The two halves of the table are read together because a capability can be
+// declared by both. CapabilityFiles on a personal Microsoft account is the case in
+// point: it holds through OneDrive even though the SharePoint library scope behind
+// the same capability can never be granted, so it stays granted instead of being
+// reported twice — once green and once greyed out. A capability neither half
+// declares is reported missing, which is what an unpublished capability always
+// was.
+func ReportCapabilities(applicable, notApplicable []Permission, granted []string) CapabilityReport {
+	report := CapabilityReport{
+		Granted:       []Capability{},
+		Missing:       []Capability{},
+		NotApplicable: []Capability{},
+	}
+	for _, capability := range ProviderCapabilities {
+		switch {
+		case !DeclaresCapability(applicable, capability) && DeclaresCapability(notApplicable, capability):
+			report.NotApplicable = append(report.NotApplicable, capability)
+		case HasCapability(applicable, granted, capability):
+			report.Granted = append(report.Granted, capability)
+		default:
+			report.Missing = append(report.Missing, capability)
+		}
+	}
+	return report
+}
+
+// ApplicablePermissions splits a permission table for an account of a given kind:
+// the permissions the account can hold, and the ones it can never hold. The
+// second list is what the accounts screen renders as "not applicable" — a
+// personal Microsoft account cannot be granted the directory permissions, so
+// reporting them as missing would promise a reconnect that cannot deliver them.
+//
+// Both slices are never nil, and an unknown kind keeps the whole table
+// applicable: an account the provider could not classify behaves exactly as it
+// did before the kind existed.
+func ApplicablePermissions(permissions []Permission, kind AccountKind) (applicable, notApplicable []Permission) {
+	applicable = make([]Permission, 0, len(permissions))
+	notApplicable = []Permission{}
+	for _, permission := range permissions {
+		if AppliesToKind(permission, kind) {
+			applicable = append(applicable, permission)
+			continue
+		}
+		notApplicable = append(notApplicable, permission)
+	}
+	return applicable, notApplicable
+}
+
+// AppliesToKind reports whether an account of this kind can hold a scope. A
+// permission that names no kind applies to every kind, and so does every
+// permission of the unknown kind.
+func AppliesToKind(permission Permission, kind AccountKind) bool {
+	if kind == AccountKindUnknown || len(permission.Kinds) == 0 {
+		return true
+	}
+	for _, candidate := range permission.Kinds {
+		if candidate == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // normalizeScope lowercases a scope and drops the Graph resource prefix, so a

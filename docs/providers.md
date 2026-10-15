@@ -49,8 +49,16 @@ type SiteResolver interface {
 // is the single source of truth for Scopes(), the setup guide and the capability
 // badges of the accounts screen.
 type ScopeCatalog interface {
-    Permissions() []Permission // {Capability, Title, Scope, AdminConsent}
+    Permissions() []Permission // {Capability, Title, Scope, AdminConsent, Informational, Kinds}
     ConsoleURLs() map[string]string
+}
+
+// Optional capability: providers that can name the family of the account a token
+// set belongs to — personal (an MSA) or work — from the token itself, without a
+// provider call. Microsoft reads the tenant claim of its access tokens, which is
+// what decides which permissions are applicable to an account.
+type AccountClassifier interface {
+    AccountKindOf(tokens *Tokens) AccountKind
 }
 
 // Optional capability: providers whose permissions are granted tenant-wide.
@@ -216,6 +224,7 @@ prefix stripped (`copy: "permissions"` — `User.Read`, `Files.ReadWrite.All`, �
 | Shortcuts / links | marked `unsupported`, never followed | links are skipped the same way |
 | Deletion | `DELETE /files/:id` (permanent) | `DELETE /drives/:drive/items/:id` (OneDrive/SharePoint still keep the item in the recycle bin) |
 | Progress while uploading | resumable upload for large files | upload session for large files (`upload.go`) |
+| Account kind | n/a — a Google account is a Google account | `personal` (an MSA) vs `work`, read from the `tid` claim (or the tenant segment of `iss`) of the access token, falling back to the own drive's `driveType` when the token carries no readable claim (`account_kind.go`). Stored on the account row as `kind` and reported as `account_kind`, it decides which permissions are applicable to the account (`Permission.Kinds`, `providers.ApplicablePermissions`) |
 
 Both providers answer `IsNotFound(err) == true` for a remote item that vanished,
 which is how a deletion detected during a run is distinguished from a failure.
@@ -227,10 +236,14 @@ problem (403), and never confuses the two.
 ## 5. What the UI shows
 
 * **Accounts** — one row per connected account: provider, e-mail, status, granted
-  permissions, capability badges (the ones the stored grant satisfies, plus the
-  ones the current release asks for on top of it), expiry, last refresh and last
-  synchronisation, with *Check the token*, *Reconnect* (only when a permission is
-  missing) and *Disconnect* actions.
+  permissions, capability badges — the ones the stored grant satisfies, the ones
+  outside what that kind of account can hold (greyed out: the directory
+  permissions on a personal Microsoft account, with a one-line explanation, see
+  `accounts.notApplicableCapabilities`) and the ones the current release asks for
+  on top of it (red) — expiry, last refresh and last synchronisation, with *Check
+  the token*, *Reconnect* (only when an **applicable** permission is missing) and
+  *Disconnect* actions. Only the red group is actionable, so a personal account
+  never shows a reconnect alert that could not change anything.
 * **Job editor** — the folder browser calls
   `GET /api/accounts/:id/drives` then
   `GET /api/accounts/:id/drives/:drive/items?folder_id=…`; folders come first,
@@ -281,5 +294,6 @@ problem (403), and never confuses the two.
 | Microsoft: the *files* badge is red right after connecting, and reconnecting changes nothing | the grant is missing a **Graph** permission — `User.Read`, `Files.ReadWrite.All` or `Sites.ReadWrite.All`. The four OpenID Connect scopes are `informational` and never gate the badge (Entra does not report them back) | grant the missing Graph permission (admin consent for the tenant), then reconnect |
 | SharePoint libraries missing | `Sites.ReadWrite.All` not granted, no admin consent, or the library belongs to a site the signed-in user cannot reach | grant the scope and reconnect; the picker also accepts a pasted SharePoint URL (the manual fallback of the site field) |
 | SharePoint missing on a **personal** Microsoft account, with the "only one OneDrive" hint | an MSA has no site collection at all: its directory holds no `Microsoft.FileServices` address and Graph answers `/sites` with *This API is not supported for MSA accounts* | nothing to fix — the API answers an empty list instead of an error, and an intra-account job (OneDrive → OneDrive) covers what the account does have |
+| the directory badges of a **personal** Microsoft account are greyed out (*Not applicable*) | an MSA can never be granted the directory scopes: it is a tenant of its own, not a member of a directory, so no consent screen offers them and a reconnect returns the same grant | nothing to fix — the account is fully usable for files (its OneDrive badges stay green); the directory screens need a work or school account |
 | `ObjectHandle is Invalid` (`400 invalidRequest`) when browsing the destination | the picker opened a **bookkeeping** drive of a personal account (`ODCMetadataArchive`, `Bundles_*`), which Microsoft tags `driveType: personal` like the real OneDrive, but whose root cannot be listed | update to a release that resolves the own drive through `/me/drive`; a job stored against such a drive must be re-pointed at the OneDrive with the folder picker |
 | Google native docs never copied | by design in V1 (`unsupported`) | export them manually, or keep them out of the source folder |

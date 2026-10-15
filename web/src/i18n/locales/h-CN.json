@@ -208,6 +208,7 @@
     "error_unknown": "连接失败。",
     "capabilities": "权限能力",
     "missingCapabilities": "此账号在这些权限存在之前已连接：重新连接即可授予。",
+    "notApplicableCapabilities": "不适用：个人 Microsoft 账号无法获得目录权限。",
     "reconnect": "重新连接",
     "reconnectHint": "重新连接账号会应用此版本所申请的权限。",
     "reconnectExpired": "存储的授权已过期或被撤销。重新连接会保留账户、任务和记录；断开连接则会删除它们。",
@@ -526,7 +527,7 @@
         "admin_role_required": "所连接的账号必须具有管理员角色：授予应用的权限不会让登录用户成为管理员。",
         "license_required": "许可证与角色权限仅在付费的 Google Workspace 版本中返回数据。",
         "tenant_scope": "使用多租户应用注册即可连接多个目录：租户 ID 保持 common，每个目录的管理员为该目录授予一次同意，此处显示的同意来自最后完成流程的目录。",
-        "work_accounts_only": "目录权限无法授予个人 Microsoft 账号，因此个人 OneDrive 账号不再支持连接。"
+        "work_accounts_only": "目录权限无法授予个人 Microsoft 账号：个人账号连接后仅具备文件权限，目录相关页面对其不可用。"
       },
       "steps": {
         "google": {

@@ -369,9 +369,16 @@ onMounted(async () => {
                   class="mt-1"
                   :capabilities="account.capabilities"
                   :missing="account.missing_capabilities"
+                  :not-applicable="account.not_applicable_capabilities"
                 />
                 <p v-if="account.needs_reconnect" class="mt-1 max-w-64 text-xs text-warning">
                   {{ t('accounts.missingCapabilities') }}
+                </p>
+                <p
+                  v-if="account.not_applicable_capabilities.length"
+                  class="mt-1 max-w-64 text-xs"
+                >
+                  {{ t('accounts.notApplicableCapabilities') }}
                 </p>
               </td>
               <td class="px-4 py-3 text-muted-foreground">{{ when(account.expires_at) }}</td>

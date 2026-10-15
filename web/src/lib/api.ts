@@ -260,10 +260,23 @@ export interface ConnectedAccount {
   email: string;
   display_name: string;
   avatar_url: string;
+  /**
+   * account_kind is the family of the account when the provider can tell them
+   * apart ("personal" or "work"), and is absent when it cannot. A personal
+   * Microsoft account can never hold the directory permissions, which the API
+   * then reports as not applicable instead of missing.
+   */
+  account_kind?: 'personal' | 'work';
   scopes: string[];
   /** Capabilities the stored grant satisfies, and the ones it misses. */
   capabilities: Capability[];
   missing_capabilities: Capability[];
+  /**
+   * not_applicable_capabilities cannot be granted to this account at all: no
+   * reconnection changes that, so they are not missing and must not read as an
+   * error.
+   */
+  not_applicable_capabilities: Capability[];
   /** needs_reconnect is true when the provider now asks for more permissions. */
   needs_reconnect: boolean;
   status: 'connected' | 'error';

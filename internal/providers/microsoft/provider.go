@@ -431,6 +431,9 @@ func (p *Provider) Account(ctx context.Context, _ providers.Credentials, tokens 
 	if account.ID == "" {
 		return nil, fmt.Errorf("microsoft graph: the token does not expose an account identity")
 	}
+	// The kind decides which permissions are applicable to the account (see
+	// permissions.go); it is best effort, so a probe that fails leaves it unknown.
+	account.Kind = p.accountKind(ctx, client, tokens)
 	return account, nil
 }
 

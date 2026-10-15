@@ -40,6 +40,14 @@ the *stored* grant satisfies (`capabilities`) and which the current release asks
 for on top of it (`missing_capabilities`, `needs_reconnect`), which is what the
 Accounts screen renders as badges.
 
+A **personal** Microsoft account (an MSA, `@outlook.com`) can never hold the
+directory permissions at all: it is a tenant of its own, not a member of a
+directory, so Entra ID has no grant to give and no consent screen offers them.
+`GET /api/accounts` therefore reports those capabilities in
+`not_applicable_capabilities` for such an account — out of reach, not missing —
+next to `account_kind: "personal"`, which says why. The account itself is fully
+usable: it connects, syncs its own OneDrive and browses its folders.
+
 Two things a permission does **not** buy:
 
 * **A role.** Granting an application the right to manage users does not make the
@@ -169,10 +177,13 @@ connection to a directory that has not consented yet still fails with
 
 ### 3.3 Notes
 
-* Personal Microsoft accounts cannot be granted directory permissions, so a
-  personal OneDrive can no longer be connected once Sync requests the directory
-  scopes. This is a consequence of the always-on scope set, not a limitation of
-  the flow.
+* Personal Microsoft accounts (MSAs) cannot be granted directory permissions, so
+  Sync receives the file scopes alone for them (`User.Read`,
+  `Files.ReadWrite.All` and the four OpenID Connect ones). The account connects and
+  syncs its OneDrive normally: the directory capabilities are reported as
+  `not_applicable_capabilities` — out of reach, with no reconnect offered for them
+  (§1, §5) — and `Sites.ReadWrite.All` belongs to that group too, because Graph
+  refuses `/sites` for an MSA.
 * Admin consent unlocks the *application*; the signed-in user still needs the
   role. A `403 Forbidden` from Graph after a successful consent almost always
   means "wrong role", not "missing consent".
@@ -208,7 +219,7 @@ answers everything the screen renders:
 | `configured` | an OAuth client is usable (environment or Admin > Providers) |
 | `redirect_uri` | the exact URL to register |
 | `console_urls` | the console deep links (`drive_api`, `admin_api`, `licensing_api`, `entra_apps`, `entra_authentication`, `entra_credentials`, `entra_api_permissions`, `graph_permissions`) |
-| `permissions[]` | the permission table: `capability`, `title` (i18n suffix), `scope`, `admin_consent`, `informational` (requested for the protocol, proves no capability — see §3.3) |
+| `permissions[]` | the permission table: `capability`, `title` (i18n suffix), `scope`, `admin_consent`, `informational` (requested for the protocol, proves no capability — see §3.3), `kinds` (the account kinds that can hold the scope: absent means every kind, `["work"]` on the directory scopes and `Sites.ReadWrite.All`, which a personal Microsoft account can never be granted — see §1) |
 | `scopes[]` | the permission scopes in request order — the OAuth request joins them with a space (`scope` parameter); the guide renders them comma-separated, which is what the Google consent screen's *Manually add scopes* box expects |
 | `capabilities[]` | the capabilities the table unlocks |
 | `admin_consent_required` | the provider has a tenant-wide consent step (Microsoft) |
@@ -240,6 +251,14 @@ When a release adds a permission:
 
 File synchronisation keeps working the whole time: the missing capabilities only
 affect the operations that need them, and the engine never calls one.
+
+The caveat of the Microsoft table belongs here too: a permission an account can
+never hold is **not** a missing permission. On a personal Microsoft account the
+directory scopes fall in that group, so `GET /api/accounts` reports them in
+`not_applicable_capabilities` (greyed out, with a one-line explanation) rather than
+in `missing_capabilities`, and *Reconnect* is not offered for them — the reconnect
+would come back with exactly the same grant. `admin.guide.warnings.work_accounts_only`
+is the setup-guide wording of that limit.
 
 The four OpenID Connect scopes never appear here: they are declared
 `informational`, because Entra ID grants them without echoing them in the token

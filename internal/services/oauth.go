@@ -254,6 +254,11 @@ func (o *OAuthService) Complete(ctx context.Context, provider models.ProviderNam
 		account.DisplayName = remote.Name
 	}
 	account.AvatarURL = remote.AvatarURL
+	if remote.Kind != providers.AccountKindUnknown {
+		// Never cleared, for the same reason refreshIdentity keeps it: the
+		// per-kind permission split needs it (see providers.Permission.Kinds).
+		account.Kind = string(remote.Kind)
+	}
 	if err := o.tokens.Persist(ctx, account, tokens); err != nil {
 		return nil, err
 	}

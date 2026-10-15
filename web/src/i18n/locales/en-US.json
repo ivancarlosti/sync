@@ -208,6 +208,7 @@
     "error_unknown": "The connection failed.",
     "capabilities": "Capabilities",
     "missingCapabilities": "This account was connected before these permissions existed: reconnect it to grant them.",
+    "notApplicableCapabilities": "Not applicable: a personal Microsoft account cannot be granted the directory permissions.",
     "reconnect": "Reconnect",
     "reconnectHint": "Connecting the account again applies the permissions this version requests.",
     "reconnectExpired": "The stored authorisation expired or was revoked. Reconnecting keeps the account, its jobs and its history; disconnecting would delete them.",
@@ -526,7 +527,7 @@
         "admin_role_required": "The account you connect must hold an administrator role: a permission granted to the application does not make the signed-in user an administrator.",
         "license_required": "The licence and role permissions only return data on a paid Google Workspace edition.",
         "tenant_scope": "Connect several directories with a multi-tenant app registration: keep the tenant id as common, every directory administrator consents once for their own directory, and the consent shown here is the one of the last directory that completed the flow.",
-        "work_accounts_only": "Directory permissions cannot be granted to personal Microsoft accounts, so personal OneDrive accounts can no longer be connected."
+        "work_accounts_only": "Directory permissions cannot be granted to personal Microsoft accounts: a personal account connects with the file permissions only, and the directory screens stay unavailable to it."
       },
       "steps": {
         "google": {

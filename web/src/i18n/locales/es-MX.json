@@ -208,6 +208,7 @@
     "error_unknown": "La conexión falló.",
     "capabilities": "Capacidades",
     "missingCapabilities": "Esta cuenta se conectó antes de que existieran estos permisos: vuelve a conectarla para concederlos.",
+    "notApplicableCapabilities": "No aplicable: una cuenta personal de Microsoft no puede recibir los permisos de directorio.",
     "reconnect": "Reconectar",
     "reconnectHint": "Conectar la cuenta de nuevo aplica los permisos que solicita esta versión.",
     "reconnectExpired": "La autorización guardada caducó o fue revocada. Reconectar conserva la cuenta, los trabajos y el historial; desconectarla los eliminaría.",
@@ -526,7 +527,7 @@
         "admin_role_required": "La cuenta que conectes debe tener un rol de administrador: un permiso concedido a la aplicación no convierte al usuario que inicia sesión en administrador.",
         "license_required": "Los permisos de licencias y de roles solo devuelven datos en una edición de pago de Google Workspace.",
         "tenant_scope": "Conecta varios directorios con un registro multiinquilino: deja el id de inquilino en common, cada administrador del directorio concede una vez para el suyo y el consentimiento que se ve aquí es el del último directorio que completó el proceso.",
-        "work_accounts_only": "Los permisos de directorio no se pueden conceder a cuentas personales de Microsoft, así que las cuentas personales de OneDrive ya no se pueden conectar."
+        "work_accounts_only": "Los permisos de directorio no se pueden conceder a cuentas personales de Microsoft: una cuenta personal se conecta solo con los permisos de archivos y las pantallas de directorio quedan fuera de su alcance."
       },
       "steps": {
         "google": {

@@ -26,6 +26,14 @@ type ConnectedAccount struct {
 	Email             string `gorm:"size:191;index" json:"email"`
 	DisplayName       string `gorm:"size:191" json:"display_name"`
 	AvatarURL         string `gorm:"size:512" json:"avatar_url"`
+	// Kind is the family of the account (personal versus work or school) as the
+	// provider last reported it, i.e. providers.AccountKind. It decides which
+	// permissions are applicable to the account (see providers.Permission.Kinds),
+	// is left empty by a provider that cannot tell, and an empty value filters
+	// nothing out, so rows written before the column existed keep behaving the
+	// same. The API reports it as account_kind (see handlers.accountViewOf), which
+	// also derives it from the stored token when this column is empty.
+	Kind string `gorm:"size:16" json:"kind,omitempty"`
 	// AccessToken/RefreshToken hold AES-GCM ciphertext, never a raw token, and
 	// are therefore never serialised to the API (json:"-").
 	AccessToken  string     `gorm:"type:text" json:"-"`

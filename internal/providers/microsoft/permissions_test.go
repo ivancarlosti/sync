@@ -143,6 +143,60 @@ func TestOnlyTheOIDCScopesAreInformational(t *testing.T) {
 	}
 }
 
+// TestPersonalAccountsKeepOnlyTheScopesTheyCanHold pins the split decision A of
+// the capability report: on a personal Microsoft account the directory scopes (and
+// the SharePoint library scope) are not part of the table at all, so a reconnect is
+// never asked for over permissions that account can never be granted — while the
+// scopes a personal account really receives still prove the files capability.
+func TestPersonalAccountsKeepOnlyTheScopesTheyCanHold(t *testing.T) {
+	provider := New()
+	applicable, notApplicable := providers.ApplicablePermissions(provider.Permissions(), providers.AccountKindPersonal)
+
+	// The grant of a personal account: the OneDrive scopes, and the four OpenID
+	// Connect ones Entra ID never reports back (see Permissions).
+	granted := providers.SplitScopes("https://graph.microsoft.com/User.Read " +
+		"https://graph.microsoft.com/Files.ReadWrite.All offline_access openid profile email")
+	report := providers.ReportCapabilities(applicable, notApplicable, granted)
+
+	if len(report.Granted) != 1 || report.Granted[0] != providers.CapabilityFiles {
+		t.Fatalf("granted = %v, want only files", report.Granted)
+	}
+	if len(report.Missing) != 0 {
+		t.Fatalf("a personal account is asked to reconnect for %v", report.Missing)
+	}
+
+	// Everything the account cannot hold — the 11 directory scopes behind these
+	// seven capabilities, and nothing else: files is reachable through OneDrive.
+	want := []providers.Capability{
+		providers.CapabilityUsers,
+		providers.CapabilityGroups,
+		providers.CapabilityMembers,
+		providers.CapabilityDomains,
+		providers.CapabilityOrgUnits,
+		providers.CapabilityRoles,
+		providers.CapabilityLicenses,
+	}
+	if len(report.NotApplicable) != len(want) {
+		t.Fatalf("notApplicable = %v, want %v", report.NotApplicable, want)
+	}
+	for i, capability := range want {
+		if report.NotApplicable[i] != capability {
+			t.Fatalf("notApplicable = %v, want %v", report.NotApplicable, want)
+		}
+	}
+
+	// A work or school account is unaffected: the whole table applies to it, so
+	// the same grant is reported exactly as it was before kinds existed.
+	work, workNotApplicable := providers.ApplicablePermissions(provider.Permissions(), providers.AccountKindWork)
+	if len(workNotApplicable) != 0 || len(work) != len(provider.Permissions()) {
+		t.Fatalf("work account: %d applicable and %d not applicable scopes, want all and none",
+			len(work), len(workNotApplicable))
+	}
+	if missing := providers.MissingCapabilities(work, granted); len(missing) != len(providers.ProviderCapabilities) {
+		t.Fatalf("work account missing = %v, want every capability", missing)
+	}
+}
+
 // TestAdminConsentURLCarriesTheContract pins the tenant-wide consent URL: the
 // consented directory, the client, the registered callback, the same scope list
 // as the authorization request and the state that ties the callback to this flow.

@@ -189,6 +189,83 @@ func TestIsConsentRequired(t *testing.T) {
 	}
 }
 
+// TestApplicablePermissionsSplitsByAccountKind pins the rule that keeps a
+// personal account from showing a permission it can never hold as missing: the
+// table is split per permission, because one capability can be declared by both
+// grantable and non-grantable scopes.
+func TestApplicablePermissionsSplitsByAccountKind(t *testing.T) {
+	table := []Permission{
+		{Capability: CapabilityFiles, Title: "files", Scope: "files.read"},
+		{Capability: CapabilityFiles, Title: "files", Scope: "files.write", Kinds: []AccountKind{AccountKindWork}},
+		{Capability: CapabilityUsers, Title: "users", Scope: "users.read", Kinds: []AccountKind{AccountKindWork}},
+	}
+
+	applicable, notApplicable := ApplicablePermissions(table, AccountKindPersonal)
+	if len(applicable) != 1 || applicable[0].Scope != "files.read" {
+		t.Fatalf("applicable = %+v, want the one scope every kind can hold", applicable)
+	}
+	if len(notApplicable) != 2 || notApplicable[0].Scope != "files.write" {
+		t.Fatalf("notApplicable = %+v, want the two work-only scopes", notApplicable)
+	}
+
+	// files keeps being judged by its applicable half: it is granted as soon as
+	// its only grantable scope is. users — declared by the non applicable half
+	// alone — is out of reach instead of missing, and the capabilities this small
+	// table never mentions are reported missing exactly as they were before kinds
+	// existed.
+	report := ReportCapabilities(applicable, notApplicable, []string{"files.read"})
+	if fmt.Sprint(report.Granted) != fmt.Sprint([]Capability{CapabilityFiles}) {
+		t.Fatalf("granted = %v, want files", report.Granted)
+	}
+	if fmt.Sprint(report.NotApplicable) != fmt.Sprint([]Capability{CapabilityUsers}) {
+		t.Fatalf("notApplicable = %v, want users alone", report.NotApplicable)
+	}
+	undeclared := []Capability{
+		CapabilityGroups, CapabilityMembers, CapabilityDomains,
+		CapabilityOrgUnits, CapabilityRoles, CapabilityLicenses,
+	}
+	if fmt.Sprint(report.Missing) != fmt.Sprint(undeclared) {
+		t.Fatalf("missing = %v, want %v", report.Missing, undeclared)
+	}
+
+	// Without that scope files is missing — not out of reach.
+	report = ReportCapabilities(applicable, notApplicable, nil)
+	wantMissing := append([]Capability{CapabilityFiles}, undeclared...)
+	if fmt.Sprint(report.Missing) != fmt.Sprint(wantMissing) {
+		t.Fatalf("missing = %v, want %v", report.Missing, wantMissing)
+	}
+}
+
+// TestApplicablePermissionsKeepsUnknownKindsWhole guards the fallback of a
+// provider that cannot classify an account: the whole table stays applicable and
+// nothing is reported as not applicable, which is exactly how accounts behaved
+// before kinds existed.
+func TestApplicablePermissionsKeepsUnknownKindsWhole(t *testing.T) {
+	table := testPermissions()
+	applicable, notApplicable := ApplicablePermissions(table, AccountKindUnknown)
+	if fmt.Sprint(applicable) != fmt.Sprint(table) {
+		t.Fatalf("applicable = %+v, want the whole table", applicable)
+	}
+	if len(notApplicable) != 0 {
+		t.Fatalf("notApplicable = %+v, want none", notApplicable)
+	}
+	// With no non applicable half the report is the one the screen always had:
+	// granted plus missing, and nothing greyed out.
+	for _, granted := range [][]string{nil, {"files.read"}, {"files.read", "files.write"}} {
+		report := ReportCapabilities(applicable, notApplicable, granted)
+		if len(report.NotApplicable) != 0 {
+			t.Fatalf("granted %v: notApplicable = %v, want none", granted, report.NotApplicable)
+		}
+		if fmt.Sprint(report.Granted) != fmt.Sprint(CapabilitiesOf(table, granted)) ||
+			fmt.Sprint(report.Missing) != fmt.Sprint(MissingCapabilities(table, granted)) {
+			t.Fatalf("granted %v: report = %+v, want the plain capability lists", granted, report)
+		}
+	}
+	if !AppliesToKind(Permission{Scope: "users.read", Kinds: []AccountKind{AccountKindWork}}, AccountKindUnknown) {
+		t.Fatal("a work-only scope does not apply to the unknown kind")
+	}
+}
+
 // TestAuthErrorNeverLeaksAToken guards the shape of the message shown as
 // technical detail: code and description only.
 func TestAuthErrorNeverLeaksAToken(t *testing.T) {

@@ -17,18 +17,32 @@ import (
 // are never part of it: the model already hides them (`json:"-"`), and this view
 // documents the contract (see docs/api.md).
 type accountView struct {
-	ID                uint     `json:"id"`
-	Provider          string   `json:"provider"`
-	ProviderAccountID string   `json:"provider_account_id"`
-	Email             string   `json:"email"`
-	DisplayName       string   `json:"display_name"`
-	AvatarURL         string   `json:"avatar_url"`
-	Scopes            []string `json:"scopes"`
+	ID                uint   `json:"id"`
+	Provider          string `json:"provider"`
+	ProviderAccountID string `json:"provider_account_id"`
+	Email             string `json:"email"`
+	DisplayName       string `json:"display_name"`
+	AvatarURL         string `json:"avatar_url"`
+	// AccountKind names the family of the account ("personal" or "work") when a
+	// signal could tell them apart — the connection that stored it, or the access
+	// token of an account connected before kinds existed (see accountViewOf) — and
+	// is omitted when none could. It is what explains an otherwise puzzling
+	// account: a personal Microsoft account cannot be granted the directory
+	// permissions at all, so those capabilities are reported as not applicable
+	// instead of missing.
+	AccountKind string   `json:"account_kind,omitempty"`
+	Scopes      []string `json:"scopes"`
 	// Capabilities lists the features the stored grant satisfies, and
 	// MissingCapabilities the ones the provider now requests but this grant does
 	// not cover, so the UI can explain what a reconnection adds.
 	Capabilities        []providers.Capability `json:"capabilities"`
 	MissingCapabilities []providers.Capability `json:"missing_capabilities"`
+	// NotApplicableCapabilities cannot be granted to this account at all: the
+	// permissions behind them are outside what its kind of account can hold (the
+	// Microsoft Graph directory permissions on a personal account). They are
+	// neither satisfied nor missing, and no reconnection can change that, which is
+	// why they are reported apart from MissingCapabilities.
+	NotApplicableCapabilities []providers.Capability `json:"not_applicable_capabilities"`
 	// NeedsReconnect is true when the account was connected with fewer
 	// permissions than the provider asks for today.
 	NeedsReconnect bool       `json:"needs_reconnect"`
@@ -65,46 +79,89 @@ type itemView struct {
 }
 
 // newAccountView converts a stored account into its API representation.
-// permissions is the permission table of its provider (providers.Catalog); when
-// it is missing the capability lists stay empty instead of guessing.
-func newAccountView(account models.ConnectedAccount, permissions []providers.Permission) accountView {
+// permissions is the part of its provider's permission table the account can hold
+// and notApplicable the part it can never hold (both from
+// providers.ApplicablePermissions); when they are missing — a provider this build
+// does not ship — the capability lists stay empty instead of guessing. The caller
+// is expected to have resolved account.Kind already (see accountViewOf), which is
+// what this function reports verbatim.
+//
+// Only the applicable permissions decide NeedsReconnect: asking the operator to
+// reconnect an account over permissions its kind of account can never hold would
+// offer a fix that cannot work.
+func newAccountView(account models.ConnectedAccount, permissions, notApplicable []providers.Permission) accountView {
 	granted := providers.SplitScopes(account.Scopes)
 	view := accountView{
-		ID:                  account.ID,
-		Provider:            account.Provider,
-		ProviderAccountID:   account.ProviderAccountID,
-		Email:               account.Email,
-		DisplayName:         account.DisplayName,
-		AvatarURL:           account.AvatarURL,
-		Scopes:              granted,
-		Capabilities:        []providers.Capability{},
-		MissingCapabilities: []providers.Capability{},
-		Status:              account.Status,
-		LastError:           account.LastError,
-		ExpiresAt:           account.ExpiresAt,
-		RefreshedAt:         account.RefreshedAt,
-		LastSyncedAt:        account.LastSyncedAt,
-		CreatedAt:           account.CreatedAt,
-		UpdatedAt:           account.UpdatedAt,
+		ID:                        account.ID,
+		Provider:                  account.Provider,
+		ProviderAccountID:         account.ProviderAccountID,
+		Email:                     account.Email,
+		DisplayName:               account.DisplayName,
+		AvatarURL:                 account.AvatarURL,
+		AccountKind:               account.Kind,
+		Scopes:                    granted,
+		Capabilities:              []providers.Capability{},
+		MissingCapabilities:       []providers.Capability{},
+		NotApplicableCapabilities: []providers.Capability{},
+		Status:                    account.Status,
+		LastError:                 account.LastError,
+		ExpiresAt:                 account.ExpiresAt,
+		RefreshedAt:               account.RefreshedAt,
+		LastSyncedAt:              account.LastSyncedAt,
+		CreatedAt:                 account.CreatedAt,
+		UpdatedAt:                 account.UpdatedAt,
 	}
-	if permissions == nil {
+	if permissions == nil && notApplicable == nil {
 		return view
 	}
-	view.Capabilities = providers.CapabilitiesOf(permissions, granted)
-	view.MissingCapabilities = providers.MissingCapabilities(permissions, granted)
-	view.NeedsReconnect = len(view.MissingCapabilities) > 0
+	report := providers.ReportCapabilities(permissions, notApplicable, granted)
+	view.Capabilities = report.Granted
+	view.MissingCapabilities = report.Missing
+	view.NotApplicableCapabilities = report.NotApplicable
+	view.NeedsReconnect = len(report.Missing) > 0
 	return view
 }
 
-// permissionsFor returns the permission table of a provider, so the API can
-// report what a stored grant covers. A provider this build does not ship (a row
-// left behind by another build) yields nil.
-func (s *Server) permissionsFor(provider string) []providers.Permission {
-	implementation, err := s.deps.Registry.Get(models.ProviderName(provider))
+// accountViewOf builds the API representation of a stored account: it resolves the
+// kind of the account (the column the provider wrote, or the stored access token
+// when no connection reported one), splits the permission table by what that kind
+// can hold, and fills the view. Both the list and the "test this account" answer go
+// through it, so a card never shows a different report than the list behind it.
+func (s *Server) accountViewOf(account models.ConnectedAccount) accountView {
+	account.Kind = string(s.accountKind(account))
+	applicable, notApplicable := s.accountPermissions(account)
+	return newAccountView(account, applicable, notApplicable)
+}
+
+// accountPermissions returns the permission table of an account, split by what it
+// can hold: the permissions applicable to its kind of account, and the ones the
+// kind can never be granted. A provider this build does not ship (a row left
+// behind by another build) yields two nil tables, so the API reports no
+// capability at all instead of guessing.
+func (s *Server) accountPermissions(account models.ConnectedAccount) (applicable, notApplicable []providers.Permission) {
+	implementation, err := s.deps.Registry.Get(models.ProviderName(account.Provider))
 	if err != nil {
-		return nil
+		return nil, nil
 	}
-	return providers.Catalog(implementation)
+	table := providers.Catalog(implementation)
+	if table == nil {
+		return nil, nil
+	}
+	return providers.ApplicablePermissions(table, s.accountKind(account))
+}
+
+// accountKind resolves the family of an account (personal versus work or school)
+// that the permission split above turns on: the kind the provider stored on the
+// connection, or, for an account connected before kinds existed, the one read
+// from the stored access token. The fallback is free — no provider call, no
+// refresh, no write (see services.TokenManager.AccountKind) — and an account
+// neither source can classify keeps every permission applicable, exactly as it
+// behaved before kinds existed.
+func (s *Server) accountKind(account models.ConnectedAccount) providers.AccountKind {
+	if kind := providers.AccountKind(account.Kind); kind != providers.AccountKindUnknown {
+		return kind
+	}
+	return s.deps.Tokens.AccountKind(&account)
 }
 
 // newItemView converts a provider item, marking the types V1 does not transfer.
@@ -130,7 +187,7 @@ func (s *Server) handleListAccounts(c *gin.Context) {
 	}
 	views := make([]accountView, 0, len(accounts))
 	for _, account := range accounts {
-		views = append(views, newAccountView(account, s.permissionsFor(account.Provider)))
+		views = append(views, s.accountViewOf(account))
 	}
 	c.JSON(http.StatusOK, gin.H{"accounts": views})
 }
@@ -178,7 +235,7 @@ func (s *Server) handleVerifyAccount(c *gin.Context) {
 		fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, newAccountView(*account, s.permissionsFor(account.Provider)))
+	c.JSON(http.StatusOK, s.accountViewOf(*account))
 }
 
 // refreshIdentity copies the remote profile onto the stored account. The account
@@ -192,6 +249,12 @@ func refreshIdentity(account *models.ConnectedAccount, remote *providers.Account
 	}
 	if remote.AvatarURL != "" {
 		account.AvatarURL = remote.AvatarURL
+	}
+	if remote.Kind != providers.AccountKindUnknown {
+		// Never cleared: a provider that cannot classify an account this time
+		// must not discard the kind an earlier connection reported, because the
+		// per-kind permission split depends on it (see providers.Permission.Kinds).
+		account.Kind = string(remote.Kind)
 	}
 }
 

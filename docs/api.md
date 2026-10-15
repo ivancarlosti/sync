@@ -109,7 +109,15 @@ client id configured right now.
 `accountView` carries the derived permissions of the stored grant:
 `capabilities[]` (satisfied by `scopes`), `missing_capabilities[]` (requested by
 this release, not granted yet) and `needs_reconnect` (true when the second list is
-not empty). `status` is `connected` while the stored token works and `error` once a
+not empty). `account_kind` is `personal` or `work` when the provider could tell the
+two apart — Microsoft reads the tenant claim of the *stored* access token, so an
+account connected before the field existed is classified without a Graph call —
+and is omitted when no signal could classify it. The third list,
+`not_applicable_capabilities[]`, holds the capabilities the account can never be
+granted: on a personal Microsoft account (an MSA) the directory permissions are
+outside what the account can hold, so they are neither satisfied nor missing, and
+`needs_reconnect` ignores them — reconnecting could not deliver them. `status` is
+`connected` while the stored token works and `error` once a
 refresh was refused (with `last_error` holding the reason). The Accounts screen
 offers the same reconnect action for a missing capability and for an `error`
 status: reconnecting rotates the tokens of the existing row, so the jobs and their

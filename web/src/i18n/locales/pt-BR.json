@@ -208,6 +208,7 @@
     "error_unknown": "A conexão falhou.",
     "capabilities": "Recursos",
     "missingCapabilities": "Esta conta foi conectada antes destas permissões existirem: reconecte-a para concedê-las.",
+    "notApplicableCapabilities": "Não se aplica: uma conta pessoal da Microsoft não pode receber as permissões de diretório.",
     "reconnect": "Reconectar",
     "reconnectHint": "Conectar a conta novamente aplica as permissões que esta versão solicita.",
     "reconnectExpired": "A autorização armazenada expirou ou foi revogada. Reconectar mantém a conta, as tarefas e o histórico; desconectar iria apagá-los.",
@@ -526,7 +527,7 @@
         "admin_role_required": "A conta que você conectar precisa ter um papel de administrador: uma permissão concedida à aplicação não torna o usuário conectado um administrador.",
         "license_required": "As permissões de licença e de funções só retornam dados em uma edição paga do Google Workspace.",
         "tenant_scope": "Conecte vários diretórios com um registro multilocatário: mantenha o id de locatário como common, cada administrador do diretório concede uma vez para o seu e o consentimento mostrado aqui é o do último diretório que concluiu o fluxo.",
-        "work_accounts_only": "Permissões de diretório não podem ser concedidas a contas pessoais da Microsoft, então contas pessoais do OneDrive não podem mais ser conectadas."
+        "work_accounts_only": "Permissões de diretório não podem ser concedidas a contas pessoais da Microsoft: uma conta pessoal conecta apenas com as permissões de arquivos e as telas de diretório ficam indisponíveis para ela."
       },
       "steps": {
         "google": {
