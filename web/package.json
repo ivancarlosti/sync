@@ -12,7 +12,8 @@
     "typecheck": "node scripts/check-i18n.mjs && vue-tsc --noEmit && vue-tsc --noEmit -p tsconfig.node.json",
     "build": "npm run typecheck && vite build",
     "postbuild": "node scripts/restore-dist-placeholder.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "screenshots": "node scripts/capture-screenshots.mjs"
   },
   "dependencies": {
     "@lucide/vue": "1.48.0",

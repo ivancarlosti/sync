@@ -65,6 +65,130 @@
 * **One container** — the SPA is embedded in the Go binary; the only external
   dependency is MySQL/MariaDB.
 
+## Interface
+
+Every screen below is one route of the Vue SPA the Go binary serves: no second
+process, no asset server. They were captured on a running instance in the default
+light theme and in `en-US` (each screen also ships in dark mode and in the other
+six languages, Arabic included), filled with a small demo dataset — three
+connected accounts, four jobs, a week of runs and a week of traffic — so the
+numbers are illustrative, not a benchmark.
+
+### Sign in and overview
+
+**Sign in** — `AUTH_METHOD=account` asks for the credential pair from the
+environment; `none` opens the dashboard directly and `keycloak` replaces the form
+with the OIDC button. Google reCAPTCHA, when configured, appears on this form.
+
+![Sign in](docs/screenshots/01-login.png)
+
+**Dashboard** — the counters of the selected window (24 hours, 7 days, 30 days or
+the whole history), the most recent runs, and the health of the instance.
+
+![Dashboard](docs/screenshots/02-dashboard.png)
+
+### Accounts and jobs
+
+**Accounts** — one row per connected account: the permissions the stored grant
+actually satisfies, what a reconnection would add (a personal Microsoft account
+can never hold the directory ones, so they are reported separately), the token
+expiry and the last synchronisation.
+
+![Accounts](docs/screenshots/03-accounts.png)
+
+**Jobs** — the source and destination of every job, its direction and conflict
+policy, a schedule preview, the outcome of the last run and the next slot;
+running, enabling, editing and deleting happen in place.
+
+![Jobs](docs/screenshots/04-jobs.png)
+
+**New job** — a four step wizard (details, source, destination, options) where
+the direction follows the provider pair the operator picks.
+
+![New job](docs/screenshots/05-job-new.png)
+
+**Job editor** — the same wizard for an existing job, with the picked drives and
+folders, the exclude patterns and the interval the job was saved with.
+
+![Job editor](docs/screenshots/06-job-editor.png)
+
+### Runs, audit and billing
+
+**Runs** — the log of everything the engine copied, filterable by job, with a
+banner while a run is in flight and the counters of each execution (scanned,
+created, updated, deleted, skipped, conflicts, errors and the bytes moved).
+
+![Runs](docs/screenshots/07-runs.png)
+
+**Run detail** — the counters of one run, the traffic it moved per account, and
+every file decision with the reason the engine recorded: the `evidence` field the
+API returns, so "why did this file move?" has an answer months later.
+
+![Run detail](docs/screenshots/08-run-detail.png)
+
+**Audit** — point at an account, a folder and a depth, and walk the tree to see
+what it really holds; the completed reports stay in the history and download as
+CSV.
+
+![Audit](docs/screenshots/09-audit.png)
+
+**Audit report** — the tree with the exact size of every folder, the folders
+whose children were not listed, and the totals the report was computed from (a
+depth limit trims the listing, never the totals).
+
+![Audit report](docs/screenshots/10-audit-report.png)
+
+**Billing** — the traffic the instance moved, by day, month, account or run,
+priced with the line-item vocabulary of an invoice (OCI here; AWS, GCP and a
+custom mapping are available) and both rates from *Administration → Settings*.
+
+![Billing](docs/screenshots/11-billing.png)
+
+**Notifications** — one card per channel (SMTP, webhook, or any
+[shoutrrr](https://containrrr.dev/shoutrrr/) URL) with the events it subscribes
+to, the outcome of the last delivery and a button that sends a test through it.
+
+![Notifications](docs/screenshots/12-notifications.png)
+
+### Administration
+
+**Providers** — the OAuth client of each provider, either typed here (stored
+encrypted, overriding the environment) or inherited from it, with the redirect
+URI that has to be registered in the provider console.
+
+![Providers](docs/screenshots/13-providers.png)
+
+**Setup guide** — the walkthrough that produces that client: the console steps,
+the exact redirect URI and the exact permission list with copy buttons, plus what
+each permission unlocks and why an administrator decision is needed.
+
+![Setup guide](docs/screenshots/14-setup-guide.png)
+
+**API** — personal access tokens for the REST API (`read` or `read` + `write`),
+with their expiry, the last address that used them and the request count; the
+secret itself is shown once, at creation.
+
+![API](docs/screenshots/15-api-tokens.png)
+
+**Settings** — the defaults proposed to every operator (language, theme,
+schedule, run timeout), the billing vocabulary and prices, and how long runs,
+audit reports and traffic days are kept.
+
+![Settings](docs/screenshots/16-settings.png)
+
+**About** — build metadata, the providers compiled into this binary, the shipped
+languages and a live health check of the database.
+
+![About](docs/screenshots/17-about.png)
+
+**Not found** — an unknown route (and every API error) is answered with a message
+and a way back, rather than a blank page.
+
+![Not found](docs/screenshots/18-not-found.png)
+
+The set is regenerated with `npm run screenshots` from `web/`, against a running
+instance (see [docs/development.md](docs/development.md)).
+
 <!-- NEXT -->
 ## Quick start (Docker Compose)
 

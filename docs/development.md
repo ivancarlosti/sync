@@ -77,6 +77,28 @@ frontend build.
 `/api` (target `VITE_DEV_API`, default `http://127.0.0.1:3000`), which keeps the
 session cookie on one origin.
 
+### Screenshots (the README gallery)
+
+```bash
+cd web && npm run screenshots   # against a running instance, from web/
+```
+
+`web/scripts/capture-screenshots.mjs` signs in through the API, drives the
+Chrome/Chromium already installed on the machine over the DevTools Protocol
+(`--headless=new`, so no browser automation dependency is added) and writes
+`docs/screenshots/*.png` at device pixel ratio 2, full page. It reads
+`SCREENSHOT_BASE_URL` (default `http://localhost:3000`), `SCREENSHOT_LOGIN`,
+`SCREENSHOT_PASSWORD`, `SCREENSHOT_DIR`, `SCREENSHOT_DPR` and
+`SCREENSHOT_MAX_HEIGHT`; `CHROME_BIN` overrides the browser it looks for.
+
+The screens it visits, the select values it sets and the dialogs it opens are the
+`STEPS` constant of that script, so a screen added to the SPA is added to the
+gallery with one entry — keep the two lists in step with the `## Interface`
+section of the README. The captures show whatever the instance holds, so point it
+at an instance with a few accounts, jobs and runs: a fresh one is all empty
+states. The committed files are re-encoded through an 8-bit adaptive palette
+(~⅓ of the truecolor weight), which the script's header documents.
+
 ## 4. Tests
 
 ```bash
