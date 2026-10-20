@@ -8,6 +8,7 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"net/url"
 	"os"
@@ -25,6 +26,34 @@ var SupportedLocales = []string{"en-US", "pt-BR", "es-MX", "fr-FR", "h-CN", "hi-
 
 // SupportedThemes lists the theme preferences the SPA understands.
 var SupportedThemes = []string{"light", "dark", "system"}
+
+// minSecretLength is the shortest password accepted by Validate. It is longer
+// than the historic 8 characters: ACCOUNT_PASSWORD is the only credential
+// protecting an instance and the shipped template used "admin123", which is
+// exactly 8 characters.
+const minSecretLength = 12
+
+// publishedEncryptionKeys are master keys that were committed to this
+// repository (docker/.env and docker/.env.example). They must be considered
+// public forever: git history keeps them, and anyone who has one can decrypt
+// the stored provider tokens, forge an administrator session cookie and forge
+// OAuth `state` values because both HMAC keys are derived from the master key.
+var publishedEncryptionKeys = []string{
+	"S1SbU3fXJy7l0zF95oQa3oHgAEF09hGqkaLcwLmQ88Q=",
+	"base64_32bytes_key_generate_openssl_rand_32",
+}
+
+// publishedPlaceholders are passwords and client secrets that were published in
+// this repository (the environment templates and the screenshot script). They
+// are rejected wherever a secret is configured.
+var publishedPlaceholders = []string{
+	"admin123",
+	"changeme",
+	"password",
+	"password123",
+	"secret",
+	"yoursecret",
+}
 
 // ProviderCredentials holds the OAuth client of one provider. Values may come
 // from the environment or be overridden at runtime through Admin > Providers
@@ -169,7 +198,8 @@ func Load() (*Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	// Validation already proved the key is 32 bytes of entropy.
+	// Validation already proved the key parses to 32 bytes; SetEncryptionKey
+	// derives the session and state HMAC keys from it.
 	if err := cfg.SetEncryptionKey(cfg.EncryptionKey); err != nil {
 		return nil, err
 	}
@@ -196,8 +226,12 @@ func (c *Config) Validate() error {
 		add(`LOG_LEVEL must be one of "debug", "info", "warn", "error" (got %q)`, c.LogLevel)
 	}
 
-	if _, err := crypto.ParseKey(c.EncryptionKey); err != nil {
-		add("%v", err)
+	key, keyErr := crypto.ParseKey(c.EncryptionKey)
+	switch {
+	case keyErr != nil:
+		add("%v", keyErr)
+	case isPublishedEncryptionKey(c.EncryptionKey, key):
+		add("ENCRYPTION_KEY is a publicly known example value; generate a private key with `openssl rand -base64 32`")
 	}
 
 	if c.Database.Host == "" {
@@ -211,6 +245,8 @@ func (c *Config) Validate() error {
 	}
 	if c.Database.Password == "" {
 		add("DB_PASSWORD is required (use a real password, even for a local database)")
+	} else if isPublishedPlaceholder(c.Database.Password) {
+		add("DB_PASSWORD is a publicly known default; choose a unique password")
 	}
 	if c.Database.Port <= 0 || c.Database.Port > 65535 {
 		add("DB_PORT must be between 1 and 65535 (got %d)", c.Database.Port)
@@ -224,11 +260,21 @@ func (c *Config) Validate() error {
 		if c.AccountLogin == "" {
 			add("ACCOUNT_LOGIN is required when AUTH_METHOD=account")
 		}
-		if len(c.AccountPassword) < 8 {
-			add("ACCOUNT_PASSWORD must be at least 8 characters when AUTH_METHOD=account (got %d)", len(c.AccountPassword))
+		switch {
+		case c.AccountPassword == "":
+			add("ACCOUNT_PASSWORD is required when AUTH_METHOD=account")
+		case isPublishedPlaceholder(c.AccountPassword):
+			add("ACCOUNT_PASSWORD is a publicly known default; choose a unique password")
+		case len(c.AccountPassword) < minSecretLength:
+			add("ACCOUNT_PASSWORD must be at least %d characters when AUTH_METHOD=account (got %d)", minSecretLength, len(c.AccountPassword))
+		case strings.EqualFold(c.AccountPassword, c.AccountLogin):
+			add("ACCOUNT_PASSWORD must differ from ACCOUNT_LOGIN")
 		}
 		if (c.RecaptchaClientID == "") != (c.RecaptchaClientSecret == "") {
 			add("RECAPTCHA_CLIENTID and RECAPTCHA_CLIENTSECRET must be set together (or both empty to disable the captcha)")
+		}
+		if isPublishedPlaceholder(c.RecaptchaClientSecret) {
+			add("RECAPTCHA_CLIENTSECRET is a publicly known placeholder; paste the secret from the reCAPTCHA console")
 		}
 	case models.AuthModeKeycloak:
 		if c.Keycloak.BaseURL == "" {
@@ -242,6 +288,8 @@ func (c *Config) Validate() error {
 		}
 		if c.Keycloak.ClientSecret == "" {
 			add("KEYCLOAK_CLIENT_SECRET is required when AUTH_METHOD=keycloak")
+		} else if isPublishedPlaceholder(c.Keycloak.ClientSecret) {
+			add("KEYCLOAK_CLIENT_SECRET is a publicly known placeholder; paste the client secret from Keycloak")
 		}
 		if len(c.Keycloak.Accounts) == 0 {
 			add("KEYCLOAK_ACCOUNTS must list at least one e-mail or domain allowed to log in (use * to allow every authenticated user)")
@@ -251,8 +299,14 @@ func (c *Config) Validate() error {
 	if c.Google.ClientID != "" && c.Google.ClientSecret == "" {
 		add("GOOGLE_CLIENT_SECRET is required because GOOGLE_CLIENT_ID is set")
 	}
+	if isPublishedPlaceholder(c.Google.ClientSecret) {
+		add("GOOGLE_CLIENT_SECRET is a publicly known placeholder; paste the secret from the Google console")
+	}
 	if c.Microsoft.ClientID != "" && c.Microsoft.ClientSecret == "" {
 		add("MICROSOFT_CLIENT_SECRET is required because MICROSOFT_CLIENT_ID is set")
+	}
+	if isPublishedPlaceholder(c.Microsoft.ClientSecret) {
+		add("MICROSOFT_CLIENT_SECRET is a publicly known placeholder; paste the secret from the Entra portal")
 	}
 
 	if !contains(SupportedLocales, c.DefaultLocale) {
@@ -266,6 +320,40 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("invalid configuration (%d problem(s)):\n  - %s", len(problems), strings.Join(problems, "\n  - "))
 	}
 	return nil
+}
+
+// isPublishedEncryptionKey reports whether raw is one of the master keys
+// published in this repository. The decoded bytes are compared as well, so
+// re-encoding a published key (base64 to hex, for example) does not bypass the
+// check.
+func isPublishedEncryptionKey(raw string, key []byte) bool {
+	trimmed := strings.TrimSpace(raw)
+	for _, published := range publishedEncryptionKeys {
+		if strings.EqualFold(trimmed, published) {
+			return true
+		}
+		publishedKey, err := crypto.ParseKey(published)
+		if err == nil && bytes.Equal(key, publishedKey) {
+			return true
+		}
+	}
+	return false
+}
+
+// isPublishedPlaceholder reports whether value is a password or client secret
+// that was published in this repository. The comparison is case-insensitive and
+// ignores surrounding whitespace.
+func isPublishedPlaceholder(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	for _, published := range publishedPlaceholders {
+		if strings.EqualFold(trimmed, published) {
+			return true
+		}
+	}
+	return false
 }
 
 // Address is the listen address of the HTTP server.

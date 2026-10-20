@@ -22,6 +22,7 @@ import (
 	"github.com/ivancarlosti/sync/internal/config"
 	"github.com/ivancarlosti/sync/internal/database"
 	"github.com/ivancarlosti/sync/internal/handlers"
+	"github.com/ivancarlosti/sync/internal/models"
 	"github.com/ivancarlosti/sync/internal/notify"
 	"github.com/ivancarlosti/sync/internal/providers"
 	"github.com/ivancarlosti/sync/internal/providers/google"
@@ -62,6 +63,10 @@ func run() error {
 		return err
 	}
 	slog.SetDefault(newLogger(cfg.LogLevel))
+	if cfg.AuthMethod == models.AuthModeNone {
+		// `none` trusts every visitor: make it impossible to miss in the logs.
+		slog.Warn("AUTH_METHOD=none: every visitor is an administrator; use it only on a trusted network or behind an authenticating proxy")
+	}
 
 	// The context is cancelled by SIGINT/SIGTERM, which stops the scheduler and
 	// the sync runs in flight before the process exits.

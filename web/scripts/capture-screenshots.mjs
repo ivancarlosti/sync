@@ -29,7 +29,7 @@
  * Environment:
  *   SCREENSHOT_BASE_URL   origin of a running instance (default http://localhost:3000)
  *   SCREENSHOT_LOGIN      login of that instance      (default admin@example.com)
- *   SCREENSHOT_PASSWORD   its password                (default admin123)
+ *   SCREENSHOT_PASSWORD   its password                (required, no default)
  *   SCREENSHOT_DIR        output directory            (default ../../docs/screenshots)
  *   SCREENSHOT_DPR        device pixel ratio          (default 2)
  *   SCREENSHOT_MAX_HEIGHT tallest clip in CSS pixels  (default 2700)
@@ -43,7 +43,9 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 const BASE_URL = (process.env.SCREENSHOT_BASE_URL ?? 'http://localhost:3000').replace(/\/+$/, '');
 const LOGIN = process.env.SCREENSHOT_LOGIN ?? 'admin@example.com';
-const PASSWORD = process.env.SCREENSHOT_PASSWORD ?? 'admin123';
+// The password has no default on purpose: a shipped credential would be a
+// public login for every instance that runs this script.
+const PASSWORD = process.env.SCREENSHOT_PASSWORD ?? '';
 const OUT_DIR = resolve(
   process.env.SCREENSHOT_DIR ?? join(import.meta.dirname, '..', '..', 'docs', 'screenshots'),
 );
@@ -244,6 +246,11 @@ async function waitUntil(session, expression, timeoutMs = 15000) {
 // ---------------------------------------------------------------------------
 
 async function main() {
+  if (PASSWORD === '') {
+    throw new Error(
+      'SCREENSHOT_PASSWORD is required: set it to the password of SCREENSHOT_LOGIN on the target instance',
+    );
+  }
   await mkdir(OUT_DIR, { recursive: true });
   const profile = join(process.env.TMPDIR ?? '/tmp', `sync-screenshots-${process.pid}`);
   await rm(profile, { recursive: true, force: true });

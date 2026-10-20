@@ -50,6 +50,7 @@ export PATH=$HOME/.local/goroot/bin:$PATH
 go build ./...            # compile everything
 go vet ./...              # static checks
 go test ./...             # unit + handler tests (in-memory SQLite, no database needed)
+cp docker/.env.example .env   # first run only; fill in the required secrets
 go run ./cmd/server       # needs .env (or the environment) and a reachable database
 
 # frontend (from web/)
@@ -89,7 +90,8 @@ Chrome/Chromium already installed on the machine over the DevTools Protocol
 (`--headless=new`, so no browser automation dependency is added) and writes
 `docs/screenshots/*.png` at device pixel ratio 2, full page. It reads
 `SCREENSHOT_BASE_URL` (default `http://localhost:3000`), `SCREENSHOT_LOGIN`,
-`SCREENSHOT_PASSWORD`, `SCREENSHOT_DIR`, `SCREENSHOT_DPR` and
+`SCREENSHOT_PASSWORD` (**required**: the script aborts without it, there is no
+default credential), `SCREENSHOT_DIR`, `SCREENSHOT_DPR` and
 `SCREENSHOT_MAX_HEIGHT`; `CHROME_BIN` overrides the browser it looks for.
 
 The screens it visits, the select values it sets and the dialogs it opens are the

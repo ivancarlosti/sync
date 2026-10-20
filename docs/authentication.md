@@ -39,7 +39,9 @@ the operator to `/login?redirect_to=…&auth_error=unauthorized`.
 `AuthService.Open()` is true and every request carries the open identity
 (`method: none`, `admin: true`). Nothing else changes: the same endpoints, the
 same guards. Use it only where the network itself is the authentication
-(VPN, private subnet) or behind a proxy that authenticates.
+(VPN, private subnet) or behind a proxy that authenticates. The server logs a
+warning at boot (`AUTH_METHOD=none: every visitor is an administrator; …`) so an
+accidental open instance is visible in `docker compose logs`.
 
 The login page recognises the mode (`open: true`) and offers an "Open the
 dashboard" button instead of a form.
@@ -58,8 +60,11 @@ dashboard" button instead of a form.
    a rejected answer → `403 forbidden`. The widget is rendered by the SPA only
    when the session view reports `captcha.enabled` with a `site_key`.
 3. **Credentials** — `login` and `password` are compared with
-   `crypto/subtle.ConstantTimeCompare`, so timing never leaks. A mismatch answers
-   `401 unauthorized` (*"invalid credentials"*) and counts as a failure.
+   `crypto/subtle.ConstantTimeCompare`, so timing never leaks. `ACCOUNT_PASSWORD`
+   must have at least 12 characters, differ from `ACCOUNT_LOGIN` and must not be
+   a publicly known default (`admin123`, `changeme`, `password`, …): the boot
+   refuses to start otherwise. A mismatch answers `401 unauthorized` (*"invalid
+   credentials"*) and counts as a failure.
 4. **Success** — the signed cookie is set and the response is the session view of
    the *new* session (no second round trip).
 
@@ -174,6 +179,11 @@ curl -s -H 'Authorization: Bearer sync_1a2b3c4d.…' \
 
 * The session cookie is signed, not encrypted: it contains an e-mail and a
   display name, never a token and never a password.
+* The signature and the OAuth `state` HMAC both derive from `ENCRYPTION_KEY`
+  (`crypto.DeriveKey`). Whoever knows the key can mint an administrator session,
+  forge a `state` and decrypt the stored provider tokens — so a value that was
+  ever committed, shipped as a default or shared between instances must be
+  rotated. The boot rejects the keys that were published in this repository.
 * Key rotation: rotating `ENCRYPTION_KEY` invalidates sessions (they are signed
   with a derived key) and makes stored tokens unreadable.
 * Sessions cannot be revoked centrally without a restart; use a short

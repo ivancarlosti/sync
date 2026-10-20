@@ -2,15 +2,16 @@
 
 Every value Sync needs is an environment variable. `internal/config` is the only
 package that reads the environment: it parses `.env` (current working directory,
-then `docker/.env`), applies the process environment on top, validates everything
-and either returns a usable `*config.Config` or one error listing **all** problems
-at once.
+then `docker/.env`; both are created locally from `docker/.env.example` and are
+gitignored), applies the process environment on top, validates everything and
+either returns a usable `*config.Config` or one error listing **all** problems at
+once.
 
 ## 1. Where the values come from
 
 | Source | When it applies |
 |---|---|
-| `docker/.env` (copied from `.env.example`) | `docker compose up` passes it through `env_file:` |
+| `docker/.env` (created locally from `docker/.env.example`) | `docker compose up` passes it through `env_file:`; never commit it |
 | `.env` in the working directory | local `go run ./cmd/server` (loaded with `godotenv`) |
 | real environment variables | container orchestrators; **always win** over the files |
 | Admin > Settings (database) | the four editable settings: default locale, default theme, default interval, run timeout — they override the environment for the SPA, never for the boot checks |
@@ -55,7 +56,7 @@ stops the scheduler and lets running sync jobs reach their final state.
 | `DB_PORT` | `3306` | |
 | `DB_DATABASE` | — (**required**) | Database name; it must exist and be writable. |
 | `DB_USERNAME` | — | Can be empty only if the server allows it. |
-| `DB_PASSWORD` | — | |
+| `DB_PASSWORD` | — | Required; the published default `secret` is rejected. |
 | `DB_SSL` | `false` | `true` adds `tls=skip-verify` to the DSN (typical for managed services). |
 
 The DSN always sets `charset=utf8mb4`, `parseTime=True`, `loc=UTC`,
@@ -66,16 +67,16 @@ connections, one hour lifetime, ten minutes idle timeout.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `ENCRYPTION_KEY` | — (**required**) | Master key for AES-256-GCM. Accepted notations, all equal to 32 bytes: base64 (standard / raw / URL, 44 or 43 chars), 64 hex chars, or exactly 32 raw ASCII characters. Generate with `openssl rand -base64 32`. Changing it makes the stored tokens and channel secrets unreadable → reconnect the accounts and re-enter the secrets. |
-| `AUTH_METHOD` | `account` | `none` (open instance, every visitor is an administrator), `account` (one login/password from the environment), `keycloak` (OIDC). See [authentication.md](authentication.md). |
+| `ENCRYPTION_KEY` | — (**required**) | Master key for AES-256-GCM. Accepted notations, all equal to 32 bytes: base64 (standard / raw / URL, 44 or 43 chars), 64 hex chars, or exactly 32 raw ASCII characters. Generate with `openssl rand -base64 32`. The keys that were published in this repository are rejected at boot. This key also derives the session and OAuth `state` HMAC keys, so a leaked value means forgeable sessions and decryptable tokens. Changing it makes the stored tokens and channel secrets unreadable → reconnect the accounts and re-enter the secrets. |
+| `AUTH_METHOD` | `account` | `none` (open instance, every visitor is an administrator; a warning is logged at boot), `account` (one login/password from the environment), `keycloak` (OIDC). See [authentication.md](authentication.md). |
 | `ACCOUNT_LOGIN` | — | Required in `account` mode. |
-| `ACCOUNT_PASSWORD` | — | Required in `account` mode. Compared in constant time. |
+| `ACCOUNT_PASSWORD` | — | Required in `account` mode: at least 12 characters, different from the login, and not a published default (`admin123`, `changeme`, `password`, ...). Compared in constant time. |
 | `RECAPTCHA_CLIENTID` | — | Optional; with `RECAPTCHA_CLIENTSECRET` it enables Google reCAPTCHA on the login form. |
 | `RECAPTCHA_CLIENTSECRET` | — | Optional. |
 | `KEYCLOAK_BASE_URL` | — | Required in `keycloak` mode, e.g. `https://sso.example.com`. |
 | `KEYCLOAK_REALM` | — | Required in `keycloak` mode. Issuer = `<base>/realms/<realm>`. |
 | `KEYCLOAK_CLIENT_ID` | — | Required in `keycloak` mode. |
-| `KEYCLOAK_CLIENT_SECRET` | — | Required in `keycloak` mode. |
+| `KEYCLOAK_CLIENT_SECRET` | — | Required in `keycloak` mode; the published placeholder `YOURSECRET` is rejected. |
 | `KEYCLOAK_REDIRECT_URI` | `APP_URL/api/auth/callback` | Derived when empty. Register it as a valid redirect URI in Keycloak. |
 | `KEYCLOAK_ACCOUNTS` | — | Allow-list, space or comma separated: `*` (everyone), `you@example.com`, `example.com` or `@example.com` (whole domain). An empty list denies every login. |
 | `NOTIFY_ALLOW_PRIVATE_TARGETS` | `false` | Lets a `webhook` notification channel point at an address that is not publicly routable. A channel is stored in the database and delivered by the worker inside this container, so with the default the destination has to be a public address: `http://127.0.0.1:3000/…`, `http://db:3306/…`, `http://169.254.169.254/…` and a name that resolves to a loopback, private (RFC 1918 / `fc00::/7`), link-local, carrier-grade NAT (`100.64.0.0/10`, Tailscale) or otherwise reserved address are all refused. Set `true` to deliver to your own network (Gotify, ntfy, Home Assistant, another container, a Tailscale address). See [notifications.md](notifications.md). |
@@ -109,13 +110,16 @@ existing row.
 | `APP_URL` not absolute | `APP_URL must be an absolute URL including the scheme (got "…")` |
 | `LOG_LEVEL` unknown | `LOG_LEVEL must be one of "debug", "info", "warn", "error" (got "…")` |
 | `ENCRYPTION_KEY` missing/unusable | `ENCRYPTION_KEY is empty; generate one with 'openssl rand -base64 32'` / `… key must be 32 bytes` |
+| `ENCRYPTION_KEY` published in this repository | `ENCRYPTION_KEY is a publicly known example value; generate a private key with 'openssl rand -base64 32'` (the old `docker/.env` key, the old template placeholder, or the same 32 bytes re-encoded) |
 | `DB_HOST` missing | `DB_HOST is required (the database is external; docker users usually set host.docker.internal)` |
 | `DB_DATABASE` / `DB_USERNAME` / `DB_PASSWORD` missing | `DB_DATABASE is required` / `DB_USERNAME is required` / `DB_PASSWORD is required (use a real password, even for a local database)` |
+| secret published in this repository | `DB_PASSWORD is a publicly known default; choose a unique password` — also for `ACCOUNT_PASSWORD` and the client secrets (`admin123`, `changeme`, `password`, `secret`, `YOURSECRET`, …) |
 | `DB_PORT` out of range | `DB_PORT must be between 1 and 65535 (got 0)` |
 | `AUTH_METHOD` unknown | `AUTH_METHOD must be one of "none", "account" or "keycloak" (got "…")` |
-| `account` mode | `ACCOUNT_LOGIN is required when AUTH_METHOD=account` · `ACCOUNT_PASSWORD must be at least 8 characters when AUTH_METHOD=account (got N)` · `RECAPTCHA_CLIENTID and RECAPTCHA_CLIENTSECRET must be set together (or both empty to disable the captcha)` |
+| `account` mode | `ACCOUNT_LOGIN is required when AUTH_METHOD=account` · `ACCOUNT_PASSWORD is required when AUTH_METHOD=account` · `ACCOUNT_PASSWORD must be at least 12 characters when AUTH_METHOD=account (got N)` · `ACCOUNT_PASSWORD must differ from ACCOUNT_LOGIN` · `RECAPTCHA_CLIENTID and RECAPTCHA_CLIENTSECRET must be set together (or both empty to disable the captcha)` |
 | `keycloak` mode | one line per missing value: `KEYCLOAK_BASE_URL is required when AUTH_METHOD=keycloak` (same for `KEYCLOAK_REALM`, `KEYCLOAK_CLIENT_ID`, `KEYCLOAK_CLIENT_SECRET`) plus `KEYCLOAK_ACCOUNTS must list at least one e-mail or domain allowed to log in (use * to allow every authenticated user)` |
 | provider client half set | `GOOGLE_CLIENT_SECRET is required because GOOGLE_CLIENT_ID is set` (same for Microsoft) |
+| provider secret placeholder | `GOOGLE_CLIENT_SECRET is a publicly known placeholder; paste the secret from the Google console` (same for Microsoft) |
 | `DEFAULT_LOCALE` / `DEFAULT_THEME` unknown | `DEFAULT_LOCALE must be one of en-US, pt-BR, es-MX, fr-FR, h-CN, hi-IN, ar-SA (got "xx")` · `DEFAULT_THEME must be one of light, dark, system (got "…")` |
 | database unreachable | `database: cannot open <host>:<port>/<name>: …` or `database: ping failed (check DB_HOST/DB_PORT/DB_USERNAME/DB_PASSWORD)` |
 
@@ -139,15 +143,23 @@ ENCRYPTION_KEY=<openssl rand -base64 32>
 DB_HOST=host.docker.internal
 DB_DATABASE=sync
 DB_USERNAME=sync
-DB_PASSWORD=<password>
+DB_PASSWORD=<unique password>
 AUTH_METHOD=account
 ACCOUNT_LOGIN=admin@example.com
-ACCOUNT_PASSWORD=<password>
+ACCOUNT_PASSWORD=<at least 12 characters, unique>
 ```
 
 Everything else has a default. Adding `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
 (or configuring them in Admin > Providers) is what makes the Connect page offer
 Google Drive; the same applies to Microsoft 365.
+
+> **Upgrading from a release that tracked `docker/.env`:** back that file up
+> before pulling — it is no longer tracked, so git removes it from the working
+> tree. If the instance ever used the shipped values (`S1SbU3fX…`,
+> `base64_32bytes_key_generate_openssl_rand_32`, `admin123`, `secret`), rotate
+> `ENCRYPTION_KEY`, `ACCOUNT_PASSWORD`, `DB_PASSWORD` and the OAuth client
+> secrets: they are public in the git history. Rotating `ENCRYPTION_KEY` makes
+> the stored tokens unreadable, so reconnect the provider accounts afterwards.
 
 ## 10. Runtime changes
 

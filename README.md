@@ -197,12 +197,15 @@ README's compose file assumes `host.docker.internal`) and one secret key.
 
 ```bash
 cd docker
-cp .env.example .env          # then edit it
+cp .env.example .env          # then fill in the required secrets
 openssl rand -base64 32       # paste the result into ENCRYPTION_KEY
 
 docker compose up -d
 docker compose logs -f
 ```
+
+The template deliberately ships no usable secrets: the instance refuses to start
+while `ENCRYPTION_KEY`, `ACCOUNT_PASSWORD` or `DB_PASSWORD` are empty.
 
 Open `http://<host>:3000` (or the `APP_URL` you configured). With
 `AUTH_METHOD=account` sign in with `ACCOUNT_LOGIN`/`ACCOUNT_PASSWORD`; with
@@ -223,7 +226,7 @@ DB_USERNAME=sync
 DB_PASSWORD=<password>
 AUTH_METHOD=account
 ACCOUNT_LOGIN=admin@example.com
-ACCOUNT_PASSWORD=<at least 8 characters>
+ACCOUNT_PASSWORD=<at least 12 characters, unique>
 ```
 
 Everything else has a default. Adding `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`
@@ -253,6 +256,7 @@ Every variable, its default and its validation message:
 ```bash
 export PATH=$HOME/.local/goroot/bin:$PATH   # if Go is installed locally
 go test ./...                               # self-contained: in-memory SQLite
+cp docker/.env.example .env                 # then fill in the required secrets
 go run ./cmd/server                         # reads .env / the environment
 
 cd web
@@ -290,9 +294,19 @@ Details, conventions and the test layout: [docs/development.md](docs/development
 
 ## Security notes
 
-* Secrets are encrypted with AES-256-GCM; keep `ENCRYPTION_KEY` out of the image
-  and out of the repository (use a secret manager or an env file with restricted
-  permissions). Changing it invalidates stored tokens.
+* `ENCRYPTION_KEY` is the root of every secret: it encrypts the stored provider
+  tokens, SMTP passwords and webhook secrets with AES-256-GCM, and it derives the
+  HMAC keys of the session cookie and of the OAuth `state` values
+  (`crypto.DeriveKey`). Anyone who learns it can decrypt a database dump, forge
+  an administrator session and forge OAuth state. Generate a private value per
+  instance (`openssl rand -base64 32`), never reuse one from the documentation,
+  the template or a public repository, and keep it out of the image. Changing it
+  invalidates stored tokens, so reconnect the accounts afterwards.
+* No `.env` file is tracked: `docker/.env.example` is the only template, and it
+  intentionally contains no usable key or password. If an instance ever ran with
+  an old shipped default (`docker/.env`, the template key, `admin123`), rotate
+  `ENCRYPTION_KEY` and the operator password now: those values are public in the
+  git history.
 * Sessions are signed, stateless cookies (7 days, `HttpOnly`, `SameSite=Lax`,
   `Secure` when `APP_URL` is HTTPS); every answer carries a Content-Security
   Policy, `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`.
