@@ -33,7 +33,7 @@ RUN rm -rf dist && npm run build
 # -----------------------------------------------------------------------------
 # Stage 2 — backend (Go + Gin + GORM)
 # -----------------------------------------------------------------------------
-FROM golang:1.27.2-alpine AS builder
+FROM golang:1.27.3-alpine AS builder
 
 ARG VERSION=dev
 ARG COMMIT=unknown

@@ -1,11 +1,14 @@
 module github.com/ivancarlosti/sync
 
-go 1.27.1
-
-// toolchain pins the build to the Go release that carries the net/http, http2,
-// textproto and crypto/tls fixes (GO-2026-6603/6610/6611/6612/6613/6617),
-// which live in the standard library and therefore ship inside the binary.
-toolchain go1.27.2
+// The go directive pins the build to the Go release that carries the net/http,
+// http2, textproto and crypto/tls fixes (GO-2026-6603/6610/6611/6612/6613/6617)
+// and the crypto/x509 distrust list for known-compromised intermediate CAs
+// (GO-2026-6809 / CVE-2026-111943). They live in the standard library and
+// therefore ship inside the binary. Pinning the patch here makes a
+// GOTOOLCHAIN=local build with a vulnerable 1.27.0-1.27.2 SDK fail instead of
+// silently producing an affected binary, while GOTOOLCHAIN=auto upgrades an
+// older SDK to >= 1.27.3.
+go 1.27.3
 
 require (
 	github.com/containrrr/shoutrrr v0.8.0

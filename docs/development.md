@@ -4,7 +4,7 @@
 
 | Tool | Version used by this repository |
 |---|---|
-| Go | `go 1.27.1` + `toolchain go1.27.2` (`go.mod`); the Dockerfile builds with `golang:1.27.2-alpine` |
+| Go | `go 1.27.3` (`go.mod`); the Dockerfile builds with `golang:1.27.3-alpine` |
 | Node | `^20.19.0 || >=22.12.0` (`web/package.json` → `engines.node`), the floor Vite 8 declares; the Dockerfile builds with `node:22-alpine` |
 | npm | ships with Node; `npm ci` in `web/` |
 | Frontend | Vue 3 + Vite 8 + **Tailwind CSS 4**, which is CSS-first: the design tokens live in `@theme` inside `web/src/style.css` and there is no `tailwind.config.js` or `postcss.config.js` |
