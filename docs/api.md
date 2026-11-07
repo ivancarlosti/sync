@@ -287,6 +287,45 @@ The CSV columns are
 mime_type`, prefixed with a UTF-8 BOM so a spreadsheet opens accented paths
 correctly.
 
+### 8.1 Activity logs
+
+These are **not** the content audits above: they are the stored activity the
+providers report (see [audit-logs.md](audit-logs.md)). The rows come from the
+collector's local copy, so the list is one table over both clouds and survives
+the retention of the vendors.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/audit-logs` | `{events:[auditLogView], total, limit, offset, cursors:[auditLogCursor]}` |
+| `GET` | `/api/audit-logs/export` | `text/csv; charset=utf-8` download, same filters, capped at 5000 rows (`X-Total-Count` carries the filtered total) |
+| `GET` | `/api/audit-logs/cursors` | `{cursors:[auditLogCursor]}` — the position and health of every feed |
+
+Query parameters of the list and the export (every one optional):
+
+| Parameter | Meaning |
+|---|---|
+| `provider` | `microsoft` \| `google` |
+| `org_id` | the tenant (Microsoft) or Workspace domain (Google) |
+| `action` | `create` \| `delete` \| `update` \| `move` \| `share` \| `login` \| `other` |
+| `target` | `file` \| `folder` \| `user` \| `group` \| `site` \| `drive` \| `other` |
+| `actor` | exact actor e-mail |
+| `search` | substring of the actor e-mail or the object name |
+| `from`, `to` | RFC3339 or `YYYY-MM-DD`; a date-only `to` means the end of that day |
+| `limit`, `offset` | pagination of the list (`limit` default 50, max 500) |
+
+An unknown value is a **400** (`validation`), never a silently empty page.
+
+`auditLogView` = `{id, provider, source, remote_id, org_id, action, target,
+actor_email, actor_name?, actor_id?, target_name?, target_id?, drive_id?,
+site_id?, occurred_at}`. `source` is the feed the record came from (`directory`,
+`unified`, `drive`, `user_accounts`, `groups`, `admin`, `login`). The vendor
+document is stored but **never serialised**.
+
+`auditLogCursor` = `{provider, org_id, stream, cursor?, last_event_at?,
+last_run_at?, healthy, needs_consent, last_error?}`: `healthy` is false when the
+last pass failed, and `needs_consent` marks the one failure an operator can fix
+with a grant.
+
 ## 9. Notifications
 
 | Method | Path | Payload / answer |
@@ -374,6 +413,8 @@ bucket,day,month,account_id,account_email,run_id,job_id,inbound,outbound,operati
 | `POST` | `/api/maintenance/oauth/states/prune` | `{removed}` |
 | `POST` | `/api/maintenance/runs/prune` | `{keep}` (default 200, 1…10000) → `{keep, pruned:true}` |
 | `POST` | `/api/maintenance/audits/prune` | `{keep}` (default 50, 1…10000) → `{keep, pruned:true}` |
+| `POST` | `/api/maintenance/auditlogs/collect` | `{organisations, streams, failed, events, duration_ms, errors?}` — one activity-feed pass right now (see [audit-logs.md](audit-logs.md)) |
+| `POST` | `/api/maintenance/purge` | `{target}` ∈ `all` \| `jobs` \| `audits` \| `billing` \| `auditlogs`, optional `{days}` → `PurgeOutcome` |
 
 ## 11. Worked examples
 

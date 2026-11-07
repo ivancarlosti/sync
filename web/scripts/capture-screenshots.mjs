@@ -33,6 +33,7 @@
  *   SCREENSHOT_DIR        output directory            (default ../../docs/screenshots)
  *   SCREENSHOT_DPR        device pixel ratio          (default 2)
  *   SCREENSHOT_MAX_HEIGHT tallest clip in CSS pixels  (default 2700)
+ *   SCREENSHOT_STEPS      comma separated file stems to recapture (default: all)..
  *   CHROME_BIN            browser to drive (default: google-chrome, then chromium)
  */
 import { spawn } from 'node:child_process';
@@ -92,22 +93,43 @@ const STEPS = [
     viewport: true,
   },
   { file: '09-audit', path: '/audit', title: 'Audit' },
+  { file: '10-audit-logs', path: '/audit-logs', title: 'Audit logs' },
   {
-    file: '10-audit-report',
+    file: '11-audit-report',
     path: '/audit',
     title: 'Audit report',
     click: { row: 0, button: 'Report' },
     viewport: true,
   },
-  { file: '11-billing', path: '/billing', title: 'Billing' },
-  { file: '12-notifications', path: '/notifications', title: 'Notifications' },
-  { file: '13-providers', path: '/admin/providers', title: 'Administration — Providers' },
-  { file: '14-setup-guide', path: '/admin/guide', title: 'Administration — Setup guide' },
-  { file: '15-api-tokens', path: '/admin/api', title: 'Administration — API' },
-  { file: '16-settings', path: '/admin/settings', title: 'Administration — Settings' },
-  { file: '17-about', path: '/admin/about', title: 'Administration — About' },
-  { file: '18-not-found', path: '/this-page-does-not-exist', title: 'Not found' },
+  { file: '12-billing', path: '/billing', title: 'Billing' },
+  { file: '13-notifications', path: '/notifications', title: 'Notifications' },
+  { file: '14-providers', path: '/admin/providers', title: 'Administration — Providers' },
+  { file: '15-setup-guide', path: '/admin/guide', title: 'Administration — Setup guide' },
+  { file: '16-api-tokens', path: '/admin/api', title: 'Administration — API' },
+  { file: '17-settings', path: '/admin/settings', title: 'Administration — Settings' },
+  { file: '18-about', path: '/admin/about', title: 'Administration — About' },
+  { file: '19-not-found', path: '/this-page-does-not-exist', title: 'Not found' },
 ];
+
+/**
+ * selectedSteps narrows the capture to SCREENSHOT_STEPS (comma separated file
+ * stems): refreshing one screen after a UI change should not rewrite the other
+ * eighteen images, which makes a diff of the gallery readable.
+ */
+function selectedSteps() {
+  const wanted = (process.env.SCREENSHOT_STEPS ?? '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== '');
+  if (wanted.length === 0) {
+    return STEPS;
+  }
+  const chosen = STEPS.filter((step) => wanted.some((stem) => step.file === stem || step.file.startsWith(stem)));
+  if (chosen.length === 0) {
+    throw new Error(`SCREENSHOT_STEPS matched no step: ${wanted.join(', ')}`);
+  }
+  return chosen;
+}
 
 // ---------------------------------------------------------------------------
 // DevTools Protocol plumbing
@@ -255,7 +277,8 @@ async function main() {
   const profile = join(process.env.TMPDIR ?? '/tmp', `sync-screenshots-${process.pid}`);
   await rm(profile, { recursive: true, force: true });
 
-  console.log(`capturing ${STEPS.length} screens from ${BASE_URL} into ${OUT_DIR}`);
+  const steps = selectedSteps();
+  console.log(`capturing ${steps.length} screens from ${BASE_URL} into ${OUT_DIR}`);
   const cookie = await signIn();
   const [cookieName, ...cookieRest] = cookie.split('=');
 
@@ -316,10 +339,12 @@ async function main() {
     });
 
     const written = [];
-    for (const [index, step] of STEPS.entries()) {
-      const label = `${String(index + 1).padStart(2, '0')}/${STEPS.length} ${step.file}`;
-      if (index > 0) {
-        // The first capture is the sign-in screen, which must not be signed in.
+    for (const [index, step] of steps.entries()) {
+      const label = `${String(index + 1).padStart(2, '0')}/${steps.length} ${step.file}`;
+      if (step.path !== '/login') {
+        // Every screen but the sign-in one is captured signed in. The cookie is
+        // set per navigation (not only from the second step on) so
+        // SCREENSHOT_STEPS can refresh one screen on its own.
         await session.send('Network.setCookie', {
           name: cookieName,
           value: cookieRest.join('='),

@@ -128,6 +128,25 @@ walk could not descend into the folder), `listed` (false when the folder's
 children are not part of the report), `modified_at` and `mime_type`. The rows are
 batch-inserted after the walk, so their `id` order is the DFS preorder of the tree.
 
+`audit_log_events` — **the activity feed** behind [audit-logs.md](audit-logs.md):
+one row per vendor record (`provider`, `source` (`directory` \| `unified` \|
+`drive` \| `user_accounts` \| `groups` \| `admin` \| `login`), `remote_id`,
+`org_id`), normalised as `action` (`create` \| `delete` \| `update` \| `move` \|
+`share` \| `login` \| `other`) and `target` (`file` \| `folder` \| `user` \|
+`group` \| `site` \| `drive` \| `other`), the actor (`actor_email`,
+`actor_name`, `actor_id`), the object (`target_name`, `target_id`, `drive_id`,
+`site_id`), the vendor timestamp `occurred_at` (indexed with `org_id`) and the
+vendor document itself in `raw` (`text`, never serialised to the API).
+`uniqueIndex idx_auditlog_event_identity` on `provider` + `source` + `remote_id`
+is what makes re-reading an overlapping window idempotent.
+
+`audit_log_cursors` — **the position of every feed**: `uniqueIndex
+idx_auditlog_cursor_identity` on `provider` + `org_id` + `stream` (one
+organisation is read once, not once per connected account), the opaque `cursor`
+(RFC3339 watermark), `last_event_at` (the newest event it covers), `last_run_at`
+and `last_error` (why the feed is stale). A feed with an empty `cursor` starts
+from the default window of its provider.
+
 `notification_channels` — see [notifications.md](notifications.md) for the
 `config` documents; the table itself keeps `name`, `type` (`smtp` \| `webhook` \|
 `shoutrrr`), `config` (JSON, secrets encrypted), `events` (JSON array),
@@ -156,6 +175,8 @@ connected_accounts ──1:N──► sync_jobs (source_account_id / destination
 sync_jobs ──1:N──► sync_runs ──1:N──► sync_items
 sync_jobs ──1:N──► sync_files          (state, one row per path)
 connected_accounts ──1:N──► audit_runs ──1:N──► audit_entries
+connected_accounts ──N:1──► audit_log_cursors   (one feed per provider + org_id + stream)
+audit_log_cursors ──1:N──► audit_log_events     (by provider + org_id, no foreign key)
 notification_channels ──N:M──► events (JSON array inside the row, no join table)
 settings                              (independent key/value store)
 oauth_states ──► ephemeral (deleted after 10 minutes or on redemption)
@@ -187,6 +208,7 @@ it (an unknown `status` renders as-is in the UI).
 | `oauth_states` | 10 minutes | pruned at boot and through `POST /api/maintenance/oauth/states/prune` |
 | `sync_files` | one row per path, updated in place | nothing to prune; deleting a job deletes its state |
 | `audit_runs` + `audit_entries` | `auditKeepCount = 50` newest audits per account | `Store.PruneAudits` — called on demand through `POST /api/maintenance/audits/prune` (default `keep: 50`, allowed 1…10000) |
+| `audit_log_events` | `purge_auditlogs_days` (default 180, 1…3650 days) | `Store.PurgeAuditLogsBefore` — the retention pass of the scheduler, or `POST /api/maintenance/purge` with `target: "auditlogs"` |
 
 ## 7. Backup and restore
 

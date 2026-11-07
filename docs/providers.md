@@ -66,8 +66,26 @@ type ConsentGranter interface {
     AdminConsentURL(creds Credentials, state string) string
 }
 
+// Optional capability: providers with an organisation-wide activity feed. The
+// audit-log collector calls it once per stream and keeps one cursor per
+// (provider, organisation, stream); a provider that does not implement it is
+// simply skipped. See docs/audit-logs.md.
+type ActivityLogSource interface {
+    ActivityLogStreams() []string
+    ActivityLogScopes() []string
+    ActivityLogs(ctx, creds Credentials, tokens *Tokens, stream, cursor string) ([]ActivityEvent, string, error)
+}
+
+// Optional capability: providers that can name the organisation (tenant or
+// domain) of a token set without a provider call. Microsoft reads the `tid`
+// claim; Google cannot (its tokens are opaque), so its accounts rely on the
+// org_id stored when they were connected.
+type OrgIdentifier interface {
+    OrgIDOf(tokens *Tokens) string
+}
+
 // Capability values: files, users, groups, members, domains, orgunits, roles,
-// licenses. helpers: Catalog / ScopesOf / CapabilitiesOf / MissingCapabilities /
+// licenses, logs. helpers: Catalog / ScopesOf / CapabilitiesOf / MissingCapabilities /
 // HasCapability.
 //
 // Authorization refusals the operator can act on are returned as *AuthError

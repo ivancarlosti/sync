@@ -132,7 +132,8 @@ review.
 
 1. add the key to `web/src/i18n/locales/en-US.json` (namespaced: `common`, `nav`,
    `auth`, `status`, `validation`, `dashboard`, `accounts`, `browser`, `jobs`,
-   `runs`, `audit`, `notifications`, `admin`, `errors`, `theme`, `language`);
+   `runs`, `audit`, `auditLogs`, `notifications`, `admin`, `errors`, `theme`,
+   `language`);
 2. translate it in the six other files;
 3. `node web/scripts/check-i18n.mjs` (also part of `npm run typecheck`);
 4. use `t('namespace.key')` in the component — never a literal string.

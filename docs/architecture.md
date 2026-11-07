@@ -31,12 +31,14 @@ database, one HTTP port.
                           MySQL / MariaDB  (always external)
 ```
 
-Three background loops run inside the same process (`internal/services/scheduler.go`):
+Four background loops run inside the same process (`internal/services/scheduler.go`):
 
 | Loop | Period | What it does |
 |---|---|---|
 | schedule | 30 s (`DefaultScheduleInterval`) | starts every enabled job whose `next_run_at` elapsed |
 | tokens | 60 s (`DefaultTokenInterval`) | renews access tokens that expire inside the 5 min window (`DefaultRefreshWindow`) |
+| retention | 6 h (`DefaultPurgeInterval`) | applies the retention of Admin > Settings > Purge (runs, audit reports, traffic days, activity events) |
+| logs | 10 min (`DefaultAuditLogInterval`) | polls the activity feeds of the connected organisations ([audit-logs.md](audit-logs.md)) |
 | (on boot) bootstrap | once | closes runs a restart interrupted, recomputes `next_run_at` for every scheduled job |
 
 Sync runs are goroutines owned by `SyncService`; a per-job lease guarantees that

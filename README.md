@@ -42,6 +42,10 @@
 * **Full audit trail** — every run stores counters and a per-file decision with
   the reason (`evidence`), which is what the Runs screen and
   `GET /api/runs/:id/items` show.
+* **Activity feed of both clouds** — the Audit Logs screen keeps what Microsoft 365
+  and Google Workspace report (who created, deleted, moved or shared what, and
+  who signed in), polled every ten minutes and stored past the retention of the
+  vendors (see [docs/audit-logs.md](docs/audit-logs.md)).
 * **Encrypted at rest** — OAuth access/refresh tokens and notification secrets
   are AES-256-GCM ciphertexts (`v1:`); the database never holds a plaintext
   secret.
@@ -71,8 +75,8 @@ Every screen below is one route of the Vue SPA the Go binary serves: no second
 process, no asset server. They were captured on a running instance in the default
 light theme and in `en-US` (each screen also ships in dark mode and in the other
 six languages, Arabic included), filled with a small demo dataset — three
-connected accounts, four jobs, a week of runs and a week of traffic — so the
-numbers are illustrative, not a benchmark.
+connected accounts, four jobs, a week of runs, a week of traffic and a week of
+activity from both clouds — so the numbers are illustrative, not a benchmark.
 
 ### Sign in and overview
 
@@ -112,7 +116,7 @@ folders, the exclude patterns and the interval the job was saved with.
 
 ![Job editor](docs/screenshots/06-job-editor.png)
 
-### Runs, audit and billing
+### Runs, audits, activity and billing
 
 **Runs** — the log of everything the engine copied, filterable by job, with a
 banner while a run is in flight and the counters of each execution (scanned,
@@ -132,23 +136,30 @@ CSV.
 
 ![Audit](docs/screenshots/09-audit.png)
 
+**Audit logs** — the organisation-wide activity feed of both clouds: who created,
+deleted, moved or shared what, and who signed in. It is polled every ten minutes
+and stored locally, so the history outlives the seven days the Office 365
+activity feed keeps (see [docs/audit-logs.md](docs/audit-logs.md)).
+
+![Audit logs](docs/screenshots/10-audit-logs.png)
+
 **Audit report** — the tree with the exact size of every folder, the folders
 whose children were not listed, and the totals the report was computed from (a
 depth limit trims the listing, never the totals).
 
-![Audit report](docs/screenshots/10-audit-report.png)
+![Audit report](docs/screenshots/11-audit-report.png)
 
 **Billing** — the traffic the instance moved, by day, month, account or run,
 priced with the line-item vocabulary of an invoice (OCI here; AWS, GCP and a
 custom mapping are available) and both rates from *Administration → Settings*.
 
-![Billing](docs/screenshots/11-billing.png)
+![Billing](docs/screenshots/12-billing.png)
 
 **Notifications** — one card per channel (SMTP, webhook, or any
 [shoutrrr](https://containrrr.dev/shoutrrr/) URL) with the events it subscribes
 to, the outcome of the last delivery and a button that sends a test through it.
 
-![Notifications](docs/screenshots/12-notifications.png)
+![Notifications](docs/screenshots/13-notifications.png)
 
 ### Administration
 
@@ -156,35 +167,35 @@ to, the outcome of the last delivery and a button that sends a test through it.
 encrypted, overriding the environment) or inherited from it, with the redirect
 URI that has to be registered in the provider console.
 
-![Providers](docs/screenshots/13-providers.png)
+![Providers](docs/screenshots/14-providers.png)
 
 **Setup guide** — the walkthrough that produces that client: the console steps,
 the exact redirect URI and the exact permission list with copy buttons, plus what
 each permission unlocks and why an administrator decision is needed.
 
-![Setup guide](docs/screenshots/14-setup-guide.png)
+![Setup guide](docs/screenshots/15-setup-guide.png)
 
 **API** — personal access tokens for the REST API (`read` or `read` + `write`),
 with their expiry, the last address that used them and the request count; the
 secret itself is shown once, at creation.
 
-![API](docs/screenshots/15-api-tokens.png)
+![API](docs/screenshots/16-api-tokens.png)
 
 **Settings** — the defaults proposed to every operator (language, theme,
 schedule, run timeout), the billing vocabulary and prices, and how long runs,
-audit reports and traffic days are kept.
+audit reports, traffic days and activity events are kept.
 
-![Settings](docs/screenshots/16-settings.png)
+![Settings](docs/screenshots/17-settings.png)
 
 **About** — build metadata, the providers compiled into this binary, the shipped
 languages and a live health check of the database.
 
-![About](docs/screenshots/17-about.png)
+![About](docs/screenshots/18-about.png)
 
 **Not found** — an unknown route (and every API error) is answered with a message
 and a way back, rather than a blank page.
 
-![Not found](docs/screenshots/18-not-found.png)
+![Not found](docs/screenshots/19-not-found.png)
 
 The set is regenerated with `npm run screenshots` from `web/`, against a running
 instance (see [docs/development.md](docs/development.md)).

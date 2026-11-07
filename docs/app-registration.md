@@ -34,6 +34,7 @@ need.
 | `orgunits` — organisational units | `admin.directory.orgunit` | `AdministrativeUnit.ReadWrite.All` |
 | `roles` — administrative role catalogue (read-only) | `admin.directory.rolemanagement.readonly` | `RoleManagement.Read.All` |
 | `licenses` — subscriptions and licence assignment | `apps.licensing` | `Organization.Read.All`, `LicenseAssignment.ReadWrite.All` |
+| `logs` — the organisation-wide activity feed ([audit-logs.md](audit-logs.md)) | `admin.reports.audit.readonly` | `AuditLog.Read.All` |
 
 `GET /api/accounts` reports, per connected account, which of these capabilities
 the *stored* grant satisfies (`capabilities`) and which the current release asks
@@ -57,6 +58,14 @@ Two things a permission does **not** buy:
 * **An API.** Google scopes only work once the matching API is enabled in the
   project (Drive API, Admin SDK API, Enterprise License Manager API); a disabled
   API answers a permission error, not a "not enabled" error.
+
+One permission is deliberately **not** in that table: the Office 365 management
+activity API — the feed of file and workload activity shown on the Audit Logs
+screen — takes an *application* permission, `ActivityFeed.Read`, granted with
+tenant-wide admin consent (§3.4). It cannot be requested in an authorization
+URL and it is never reported in the `scope` of a token response, so declaring it
+here would mark every connected account as missing a permission that a reconnect
+cannot add.
 
 ## 2. Google Workspace
 
@@ -203,6 +212,26 @@ connection to a directory that has not consented yet still fails with
   `organizations` there (`consentTenant` in the same file). A concrete tenant id
   or verified domain is passed through unchanged, and only that one directory can
   consent.
+
+### 3.4 The activity feed (app-only permission)
+
+The Audit Logs screen reads two Microsoft feeds (see [audit-logs.md](audit-logs.md)
+§2): the directory feed with the delegated `AuditLog.Read.All` of §1, and the file
+and workload feed from the **Office 365 management activity API**, which only
+exists as an application permission.
+
+1. Entra > **App registrations** > your application > **API permissions**.
+2. **Add a permission** > **APIs my organization uses** > search for *Office 365
+   Management APIs* > **Application permissions** > `ActivityFeed.Read`.
+3. **Grant admin consent** for the directory.
+
+That grant is per directory and cannot be carried by the delegated token, so
+Sync builds an app-only token from the configured client id and secret
+(`client_credentials` for `https://manage.office.com/.default`) for the tenant of
+the connected account. Until the grant exists the feed answers
+`AADSTS65001`/401/403: the Audit Logs screen shows the "waiting for a permission"
+banner for that stream, the directory stream keeps working, and nothing else in
+the product is affected.
 
 
 

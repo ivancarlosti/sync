@@ -14,7 +14,7 @@ once.
 | `docker/.env` (created locally from `docker/.env.example`) | `docker compose up` passes it through `env_file:`; never commit it |
 | `.env` in the working directory | local `go run ./cmd/server` (loaded with `godotenv`) |
 | real environment variables | container orchestrators; **always win** over the files |
-| Admin > Settings (database) | the four editable settings: default locale, default theme, default interval, run timeout — they override the environment for the SPA, never for the boot checks |
+| Admin > Settings (database) | the editable settings: default locale, default theme, default interval, run timeout, billing vocabulary and the retention of runs, audit reports, traffic days and activity events — they override the environment for the SPA, never for the boot checks |
 | Admin > Providers (database, encrypted) | provider OAuth clients; override the environment values when present |
 
 ## 2. Boot sequence
@@ -25,13 +25,13 @@ config.Load()            parse .env + environment, derive redirect URIs, Validat
 slog.SetDefault(LOG_LEVEL)
 database.Open()          connect + ping (10 s budget), 25/5 connection pool, UTC
    │  failure → exit 1
-database.Migrate()       AutoMigrate the 8 tables (idempotent)
+database.Migrate()       AutoMigrate the tables (idempotent)
 database.Seed()          insert the settings that do not exist yet
 database.PruneOAuthStates()  best effort cleanup of abandoned flows
 build()                  services + providers + notifier (wiring only)
 Scheduler.Bootstrap()    close interrupted runs, recompute next_run_at
 handlers.New()           Gin engine, routes, security headers, proxies
-Scheduler.Start()        the two tickers begin
+Scheduler.Start()        the four tickers begin (schedule, tokens, retention, logs)
 ListenAndServe()         APP_PORT on 0.0.0.0
 ```
 
