@@ -762,6 +762,10 @@
   "auditLogs": {
     "title": "Registros de auditoria",
     "subtitle": "Cada alteração informada pelo Microsoft 365 e pelo Google Workspace, coletada por tarefa agendada e mantida além da retenção dos provedores.",
+    "account": "Conta",
+    "accountAll": "Todas as contas",
+    "accountHint": "A atividade é lida uma vez por organização ({org}): todas as contas de administrador dela listam os mesmos eventos.",
+    "accountNoFeed": "sem feed da organização",
     "provider": "Provedor",
     "search": "Pesquisar",
     "searchHint": "Autor ou nome do objeto",

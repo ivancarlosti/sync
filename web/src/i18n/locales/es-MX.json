@@ -762,6 +762,10 @@
   "auditLogs": {
     "title": "Registros de auditoría",
     "subtitle": "Cada cambio que Microsoft 365 y Google Workspace informaron, recopilado con una tarea programada y conservado más allá de la retención de los proveedores.",
+    "account": "Cuenta",
+    "accountAll": "Todas las cuentas",
+    "accountHint": "La actividad se lee una vez por organización ({org}): todas las cuentas de administrador de ella muestran los mismos eventos.",
+    "accountNoFeed": "sin feed de la organización",
     "provider": "Proveedor",
     "action": {
       "create": "Creado",

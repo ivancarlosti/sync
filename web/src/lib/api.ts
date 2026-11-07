@@ -269,6 +269,14 @@ export interface ConnectedAccount {
    * then reports as not applicable instead of missing.
    */
   account_kind?: 'personal' | 'work';
+  /**
+   * org_id is the organisation the account belongs to (the Entra tenant, the
+   * Workspace domain) and is what the Audit Logs screen filters by: the feed is
+   * read once per organisation, not once per account. It is absent when no
+   * source could name one (a personal account, whose organisation has no feed),
+   * which the screen offers as an account without activity to filter by.
+   */
+  org_id?: string;
   scopes: string[];
   /** Capabilities the stored grant satisfies, and the ones it misses. */
   capabilities: Capability[];

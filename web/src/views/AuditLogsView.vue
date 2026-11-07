@@ -9,8 +9,13 @@
 // The cursor banner is the health of each feed: a tenant waiting for a consent
 // still shows its directory activity and explains why the file feed is empty,
 // instead of looking broken.
+//
+// The account filter is the same design seen from the operator's side: an account
+// is turned into the organisation feed it reads, because two administrators of one
+// tenant share a single feed, and that is the finest scope the stored events can
+// honour.
 import { Download, RefreshCw, ScrollText } from '@lucide/vue';
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 import PageHeader from '@/components/PageHeader.vue';
@@ -21,7 +26,9 @@ import EmptyState from '@/components/ui/EmptyState.vue';
 import Input from '@/components/ui/Input.vue';
 import Select from '@/components/ui/Select.vue';
 import Spinner from '@/components/ui/Spinner.vue';
+import { accountLabel } from '@/lib/accounts';
 import {
+  accounts as accountsApi,
   auditLogs as auditLogsApi,
   codeOf,
   type AuditLogAction,
@@ -29,6 +36,7 @@ import {
   type AuditLogEvent,
   type AuditLogFilters,
   type AuditLogTarget,
+  type ConnectedAccount,
 } from '@/lib/api';
 import { formatDateTime, formatNumber } from '@/lib/format';
 import { useFeedbackStore } from '@/stores/feedback';
@@ -54,6 +62,76 @@ const collecting = ref(false);
 // one into the other, so a half-typed actor never narrows the table.
 const applied = ref<AuditLogFilters>({});
 const draft = ref<AuditLogFilters>({});
+
+// The accounts the operator can narrow the list by, and the one the form has
+// picked ("" reads every account). The feed is read once per organisation, so the
+// pick is turned into the provider and the organisation of that account when the
+// filters are applied — see apply().
+const accounts = ref<ConnectedAccount[]>([]);
+const accountId = ref<string | number>('');
+
+/** selectedAccount is the account the form has picked, when it picked one. */
+const selectedAccount = computed(() => accounts.value.find((account) => account.id === accountId.value));
+
+/** selectedOrg is the organisation of that account, empty without one. */
+const selectedOrg = computed(() => selectedAccount.value?.org_id ?? '');
+
+/**
+ * accountOptions are the accounts of the chosen provider, so the two fields of the
+ * form can never disagree. An account without an organisation is offered disabled
+ * with the reason: a personal account has no administrator feed, so filtering by it
+ * could only ever list nothing.
+ */
+const accountOptions = computed(() => [
+  { value: '', label: t('auditLogs.accountAll') },
+  ...accounts.value
+    .filter((account) => !draft.value.provider || account.provider === draft.value.provider)
+    .map((account) => ({
+      value: account.id,
+      label: account.org_id
+        ? accountLabel(account)
+        : `${accountLabel(account)} — ${t('auditLogs.accountNoFeed')}`,
+      disabled: !account.org_id,
+    })),
+]);
+
+/**
+ * readersByOrg names the accounts behind each organisation feed, so the table says
+ * who an event belongs to instead of showing a tenant id alone. The key is the pair
+ * the collector groups by (see internal/services/auditlog.go).
+ */
+const readersByOrg = computed(() => {
+  const index = new Map<string, string[]>();
+  for (const account of accounts.value) {
+    if (!account.org_id) continue;
+    const key = `${account.provider}\u0000${account.org_id}`;
+    const addresses = index.get(key) ?? [];
+    addresses.push(account.email || account.display_name || account.provider_account_id);
+    index.set(key, addresses);
+  }
+  return index;
+});
+
+/** readers lists the accounts of the organisation of an event. */
+function readers(event: AuditLogEvent): string {
+  return (readersByOrg.value.get(`${event.provider}\u0000${event.org_id}`) ?? []).join(' · ');
+}
+
+// Picking an account chooses its provider, and choosing another provider drops a
+// pick that no longer belongs to it: the two fields describe one decision.
+watch(accountId, () => {
+  if (selectedAccount.value) {
+    draft.value.provider = selectedAccount.value.provider;
+  }
+});
+watch(
+  () => draft.value.provider,
+  (provider) => {
+    if (selectedAccount.value && selectedAccount.value.provider !== provider) {
+      accountId.value = '';
+    }
+  },
+);
 
 const providerOptions = computed(() => [
   { value: '', label: t('common.all') },
@@ -116,9 +194,31 @@ async function load(): Promise<void> {
   }
 }
 
+/**
+ * loadAccounts fills the account filter with the connected accounts of the
+ * instance — the same list the Accounts screen shows, whose organisation the API
+ * reports as org_id. A failure only costs the filter: the table keeps working with
+ * the provider alone, so it is not surfaced as the load error of the screen.
+ */
+async function loadAccounts(): Promise<void> {
+  try {
+    accounts.value = (await accountsApi.list()).accounts;
+  } catch {
+    accounts.value = [];
+  }
+}
+
 /** apply copies the draft into the applied filters and jumps back to page one. */
 function apply(): void {
-  applied.value = { ...draft.value };
+  const filters: AuditLogFilters = { ...draft.value };
+  const account = selectedAccount.value;
+  if (account) {
+    // The events do not name an account: the feed is read once per organisation,
+    // so that is the finest scope the list can honour.
+    filters.provider = account.provider;
+    filters.org_id = account.org_id;
+  }
+  applied.value = filters;
   offset.value = 0;
   void load();
 }
@@ -126,6 +226,7 @@ function apply(): void {
 /** clear resets every filter. */
 function clear(): void {
   draft.value = {};
+  accountId.value = '';
   applied.value = {};
   offset.value = 0;
   void load();
@@ -166,6 +267,7 @@ const exportHref = computed(() => auditLogsApi.exportHref(applied.value));
 
 onMounted(() => {
   void load();
+  void loadAccounts();
 });
 </script>
 
@@ -227,6 +329,18 @@ onMounted(() => {
         <div class="space-y-2">
           <p class="text-sm font-medium">{{ t('auditLogs.provider') }}</p>
           <Select id="audit-logs-provider" v-model="draft.provider" :options="providerOptions" />
+        </div>
+        <div class="space-y-2">
+          <p class="text-sm font-medium">{{ t('auditLogs.account') }}</p>
+          <Select
+            id="audit-logs-account"
+            v-model="accountId"
+            :options="accountOptions"
+            :disabled="accounts.length === 0"
+          />
+          <p v-if="selectedOrg" class="text-xs text-muted-foreground">
+            {{ t('auditLogs.accountHint', { org: selectedOrg }) }}
+          </p>
         </div>
         <div class="space-y-2">
           <p class="text-sm font-medium">{{ t('auditLogs.actionLabel') }}</p>
@@ -313,6 +427,7 @@ onMounted(() => {
               <td class="break-anywhere px-3 py-2 text-muted-foreground">
                 <p>{{ event.org_id }}</p>
                 <p class="text-xs">{{ event.provider }} · {{ event.source }}</p>
+                <p v-if="readers(event)" class="text-xs">{{ readers(event) }}</p>
               </td>
             </tr>
           </tbody>

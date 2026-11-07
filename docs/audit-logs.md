@@ -124,6 +124,17 @@ or object name), `from` and `to`. The CSV export applies the same filters
 (`GET /api/audit-logs/export`, capped at 5000 rows, the filtered total in
 `X-Total-Count`).
 
+The form also offers an **account** selector (fed by `GET /api/accounts`, the same
+list the Accounts screen shows). Picking an account applies the `provider` and the
+`org_id` of that account, because the feed is read once per organisation: two
+administrator accounts of one tenant list exactly the same events, and the hint
+under the field names the organisation so the duplication reads as intended rather
+than as a broken filter. An account without an organisation (a personal Microsoft
+or Google account) has no administrator feed, so its option is offered greyed out
+with the reason instead of producing a filter that could only ever be empty. The
+Organisation column of the table names the accounts that read each feed, so a
+tenant id never has to be recognised on its own.
+
 Above the table, the feed banner explains a stale list:
 
 * **waiting for a permission** — at least one feed carries a `needs_consent`

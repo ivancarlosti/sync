@@ -32,8 +32,10 @@ type accountView struct {
 	// instead of missing.
 	AccountKind string `json:"account_kind,omitempty"`
 	// OrgID is the organisation the account belongs to (Entra tenant id for
-	// Microsoft, Workspace domain for Google), when one was reported. It is what
-	// groups the administrator accounts of one organisation under a single
+	// Microsoft, Workspace domain for Google), when one is known: the column the
+	// connection wrote, or the one read from the stored access token of an
+	// account connected before that column existed (see accountViewOf). It is
+	// what groups the administrator accounts of one organisation under a single
 	// activity feed on the Audit Logs screen, and it is omitted when unknown.
 	OrgID  string   `json:"org_id,omitempty"`
 	Scopes []string `json:"scopes"`
@@ -130,11 +132,13 @@ func newAccountView(account models.ConnectedAccount, permissions, notApplicable 
 
 // accountViewOf builds the API representation of a stored account: it resolves the
 // kind of the account (the column the provider wrote, or the stored access token
-// when no connection reported one), splits the permission table by what that kind
-// can hold, and fills the view. Both the list and the "test this account" answer go
-// through it, so a card never shows a different report than the list behind it.
+// when no connection reported one), resolves the organisation the same way, splits
+// the permission table by what that kind can hold, and fills the view. Both the
+// list and the "test this account" answer go through it, so a card never shows a
+// different report than the list behind it.
 func (s *Server) accountViewOf(account models.ConnectedAccount) accountView {
 	account.Kind = string(s.accountKind(account))
+	account.OrgID = s.accountOrg(account)
 	applicable, notApplicable := s.accountPermissions(account)
 	return newAccountView(account, applicable, notApplicable)
 }
@@ -168,6 +172,21 @@ func (s *Server) accountKind(account models.ConnectedAccount) providers.AccountK
 		return kind
 	}
 	return s.deps.Tokens.AccountKind(&account)
+}
+
+// accountOrg resolves the organisation (Entra tenant, Workspace domain) an account
+// belongs to: the column the connection wrote, or, for an account connected before
+// that column existed, the tenant claim of its stored access token — the very
+// fallback AuditLogService.organisations applies when it groups the feeds. The two
+// must agree, or the Audit Logs screen would list an organisation whose feed no
+// account of it can be selected for. The fallback is free (no provider call, no
+// refresh) and an account no source can place keeps the empty value, which the
+// screen reads as "no organisation feed".
+func (s *Server) accountOrg(account models.ConnectedAccount) string {
+	if org := strings.ToLower(strings.TrimSpace(account.OrgID)); org != "" {
+		return org
+	}
+	return strings.ToLower(strings.TrimSpace(s.deps.Tokens.OrgID(&account)))
 }
 
 // newItemView converts a provider item, marking the types V1 does not transfer.

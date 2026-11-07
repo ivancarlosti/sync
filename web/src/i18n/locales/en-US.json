@@ -762,6 +762,10 @@
   "auditLogs": {
     "title": "Audit Logs",
     "subtitle": "Every change Microsoft 365 and Google Workspace reported, collected on a schedule and kept past the retention of the providers.",
+    "account": "Account",
+    "accountAll": "All accounts",
+    "accountHint": "Activity is read once per organisation ({org}): every administrator account of it lists the same events.",
+    "accountNoFeed": "no organisation feed",
     "provider": "Provider",
     "action": {
       "create": "Created",

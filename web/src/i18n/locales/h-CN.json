@@ -762,6 +762,10 @@
   "auditLogs": {
     "title": "审核日志",
     "subtitle": "Microsoft 365 与 Google Workspace 报告的每一项变更，按计划采集，并在供应商保留期之后继续保存。",
+    "account": "账号",
+    "accountAll": "所有账号",
+    "accountHint": "活动按组织（{org}）读取一次：该组织的每个管理员账号显示相同的事件。",
+    "accountNoFeed": "没有组织日志",
     "provider": "提供商",
     "search": "搜索",
     "searchHint": "操作者或对象名称",

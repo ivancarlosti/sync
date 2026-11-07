@@ -112,7 +112,12 @@ this release, not granted yet) and `needs_reconnect` (true when the second list 
 not empty). `account_kind` is `personal` or `work` when the provider could tell the
 two apart — Microsoft reads the tenant claim of the *stored* access token, so an
 account connected before the field existed is classified without a Graph call —
-and is omitted when no signal could classify it. The third list,
+and is omitted when no signal could classify it. `org_id` is the organisation the
+account belongs to (the Entra tenant id, the Workspace hosted domain): it is read
+from the column the connection wrote, or from the tenant claim of the stored access
+token of an account connected before that column existed — the same fallback the
+activity collector applies — and is omitted when neither names one (a personal
+account, whose organisation has no administrator feed). The third list,
 `not_applicable_capabilities[]`, holds the capabilities the account can never be
 granted: on a personal Microsoft account (an MSA) the directory permissions are
 outside what the account can hold, so they are neither satisfied nor missing, and

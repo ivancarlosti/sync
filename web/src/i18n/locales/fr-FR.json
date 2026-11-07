@@ -762,6 +762,10 @@
   "auditLogs": {
     "title": "Journaux d'audit",
     "subtitle": "Chaque changement signalé par Microsoft 365 et Google Workspace, collecté par tâche planifiée et conservé au-delà de la rétention des fournisseurs.",
+    "account": "Compte",
+    "accountAll": "Tous les comptes",
+    "accountHint": "L'activité est lue une fois par organisation ({org}) : chaque compte administrateur de celle-ci affiche les mêmes événements.",
+    "accountNoFeed": "aucun flux d'organisation",
     "provider": "Fournisseur",
     "search": "Rechercher",
     "searchHint": "Auteur ou nom de l'objet",

@@ -56,8 +56,10 @@ func accountJWT(t *testing.T, claims map[string]any) string {
 
 // saveMicrosoftAccount stores a Microsoft account the way the OAuth callback
 // does: the tokens are sealed with the key of the instance, so a handler can read
-// the tenant claim of the access token exactly as it does in production.
-func saveMicrosoftAccount(t *testing.T, deps Deps, access, kind string) {
+// the tenant claim of the access token exactly as it does in production. org is
+// the connected_accounts.org_id column: empty for a row connected before the
+// column existed (or before the provider reported one).
+func saveMicrosoftAccount(t *testing.T, deps Deps, access, kind, org string) {
 	t.Helper()
 	box := services.NewSecretBox(deps.Config.EncryptionKeyBytes())
 	sealed, err := box.Encrypt(access)
@@ -78,6 +80,7 @@ func saveMicrosoftAccount(t *testing.T, deps Deps, access, kind string) {
 		Status:            "connected",
 		ExpiresAt:         fixedNow.Add(time.Hour),
 		Kind:              kind,
+		OrgID:             org,
 	}
 	if err := deps.Store.SaveAccount(context.Background(), account); err != nil {
 		t.Fatalf("saving the account: %v", err)
@@ -139,7 +142,7 @@ func TestPersonalAccountsNeverAskToReconnectForDirectoryPermissions(t *testing.T
 			if testCase.claims != nil {
 				access = accountJWT(t, testCase.claims)
 			}
-			saveMicrosoftAccount(t, deps, access, testCase.kind)
+			saveMicrosoftAccount(t, deps, access, testCase.kind, "")
 
 			recorder := call(t, server, http.MethodGet, "/api/accounts", nil)
 			requireStatus(t, recorder, http.StatusOK)
@@ -175,6 +178,79 @@ func TestPersonalAccountsNeverAskToReconnectForDirectoryPermissions(t *testing.T
 			if fmt.Sprint(view.NotApplicableCapabilities) != fmt.Sprint(directoryCapabilities) {
 				t.Fatalf("not_applicable_capabilities = %v, want %v",
 					view.NotApplicableCapabilities, directoryCapabilities)
+			}
+		})
+	}
+}
+
+// TestAccountsReportTheOrganisationOfTheirFeed pins the org_id the Audit Logs
+// screen filters by: the column the connection wrote, or — for an account
+// connected before that column existed — the tenant claim of its stored access
+// token, which is the same fallback AuditLogService.organisations applies when it
+// groups the accounts of a tenant under one feed. A personal account names
+// neither, so the screen offers it as an account without an organisation feed
+// instead of a filter that could only ever answer with nothing.
+func TestAccountsReportTheOrganisationOfTheirFeed(t *testing.T) {
+	cases := []struct {
+		name string
+		// claims of the stored access token; nil stores an opaque token.
+		claims map[string]any
+		// org is the connected_accounts.org_id column, empty when a connection
+		// never reported one.
+		org  string
+		want string
+	}{
+		{
+			name:   "the organisation the connection reported",
+			claims: map[string]any{"tid": workTenant},
+			org:    workTenant,
+			want:   workTenant,
+		},
+		{
+			name:   "an account connected before the column existed reads its tenant claim",
+			claims: map[string]any{"tid": workTenant},
+			want:   workTenant,
+		},
+		{
+			name:   "the stored organisation wins over the claim",
+			claims: map[string]any{"tid": msaTenant},
+			org:    workTenant,
+			want:   workTenant,
+		},
+		{
+			name:   "a personal account has no organisation to read",
+			claims: map[string]any{"tid": msaTenant},
+			want:   "",
+		},
+		{
+			name: "an unreadable token keeps it empty",
+			want: "",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			deps := testDepsWith(t, models.AuthModeNone, testOptions{})
+			server, err := New(deps)
+			if err != nil {
+				t.Fatalf("building the server: %v", err)
+			}
+			access := "EwBIA8l6BAAUopaque"
+			if testCase.claims != nil {
+				access = accountJWT(t, testCase.claims)
+			}
+			saveMicrosoftAccount(t, deps, access, "", testCase.org)
+
+			recorder := call(t, server, http.MethodGet, "/api/accounts", nil)
+			requireStatus(t, recorder, http.StatusOK)
+			list := decodeJSON[struct {
+				Accounts []accountView `json:"accounts"`
+			}](t, recorder)
+			if len(list.Accounts) != 1 {
+				t.Fatalf("accounts = %+v", list.Accounts)
+			}
+			if got := list.Accounts[0].OrgID; got != testCase.want {
+				t.Fatalf("org_id = %q, want %q", got, testCase.want)
 			}
 		})
 	}
