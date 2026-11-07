@@ -61,6 +61,11 @@ type AuditLogCollectResult struct {
 	// Events is how many normalised events were handed to the store (ingestion
 	// is idempotent, so a re-read of an overlapping window adds nothing).
 	Events int `json:"events"`
+	// Repaired is how many stored events the repair pass re-attributed during
+	// this pass, and PendingRepairs how many still wait (a history stored by a
+	// release that predates the actor kind is repaired a batch at a time).
+	Repaired       int   `json:"repaired"`
+	PendingRepairs int64 `json:"pending_repairs"`
 	// Duration is how long the pass took.
 	Duration time.Duration `json:"-"`
 	// DurationMS is Duration in milliseconds, for the JSON answer.
@@ -91,14 +96,22 @@ func (s *AuditLogService) Collect(ctx context.Context) AuditLogCollectResult {
 		result.Organisations++
 		s.collectGroup(ctx, group, &result)
 	}
+	// The vendor documents the collector keeps make an upgrade self-repairing:
+	// the history a previous release mapped with a single actor slot is re-read
+	// here instead of staying wrong until somebody asks (see RepairActors).
+	repair := s.RepairActors(ctx)
+	result.Repaired = repair.Updated
+	result.PendingRepairs = repair.Remaining
 	result.Duration = s.now().Sub(started)
 	result.DurationMS = result.Duration.Milliseconds()
-	if result.Events > 0 || result.Failed > 0 {
+	if result.Events > 0 || result.Failed > 0 || result.Repaired > 0 {
 		slog.Info("activity feed collected",
 			"organisations", result.Organisations,
 			"streams", result.Streams,
 			"events", result.Events,
 			"failed", result.Failed,
+			"repaired", result.Repaired,
+			"pending_repairs", result.PendingRepairs,
 			"duration_ms", result.DurationMS)
 	} else {
 		slog.Debug("activity feed collected nothing new",
@@ -273,6 +286,236 @@ func (s *AuditLogService) collectStream(ctx context.Context, group auditLogOrgan
 	return len(rows), nil
 }
 
+// AuditLogRepairBatch is how many stored events one repair batch re-reads,
+// AuditLogRepairMaxBatches bounds the batches of one pass and AuditLogRepairBudget
+// the wall clock it may spend: the repair reads the vendor document (cheap) but may
+// also ask Graph for the owner of a device (slow), and a pass that runs inside the
+// ten minute collect tick must never run longer than the tick.
+const (
+	AuditLogRepairBatch      = 500
+	AuditLogRepairMaxBatches = 20
+	AuditLogRepairBudget     = 2 * time.Minute
+)
+
+// AuditLogRepairResult reports what the actor repair pass did. It is returned
+// (never swallowed) so the maintenance endpoint can log it and the API can answer
+// it, the same way AuditLogCollectResult works.
+type AuditLogRepairResult struct {
+	// Scanned is how many stored events were re-read.
+	Scanned int `json:"scanned"`
+	// Updated is how many rows had their actor rewritten.
+	Updated int `json:"updated"`
+	// Attributed is how many rows were given the person behind a workload.
+	Attributed int `json:"attributed"`
+	// Remaining is how many rows still await a repair (0 once the history has
+	// been walked).
+	Remaining int64 `json:"remaining"`
+	// Duration is how long the pass took.
+	Duration   time.Duration `json:"-"`
+	DurationMS int64         `json:"duration_ms"`
+}
+
+// RepairActors gives the stored events of the feeds the actor attribution the
+// current normaliser produces: it re-reads the vendor document the collector kept
+// in Raw, so a release that learned "who is really behind this change" repairs the
+// history instead of leaving it wrong forever. It runs at the end of every collect
+// pass and on demand from POST /api/maintenance/auditlogs/renormalise.
+//
+// The pass is idempotent and convergent: it only looks at rows without an actor
+// kind and every visited row leaves with one, so a failure part-way through costs
+// nothing but the next pass.
+func (s *AuditLogService) RepairActors(ctx context.Context) AuditLogRepairResult {
+	started := s.now()
+	result := AuditLogRepairResult{}
+	defer func() {
+		result.Duration = s.now().Sub(started)
+		result.DurationMS = result.Duration.Milliseconds()
+	}()
+	pending, err := s.store.CountPendingAuditLogActors(ctx)
+	if err != nil {
+		slog.Error("counting the activity events to repair failed", "error", err)
+		return result
+	}
+	result.Remaining = pending
+	if pending == 0 {
+		return result
+	}
+	groups, err := s.organisations(ctx)
+	if err != nil {
+		// Without an account there is no token, so no provider and no
+		// normaliser: the rows stay as they are, which is what the previous
+		// release stored.
+		slog.Error("listing the organisations to repair the activity feed failed", "error", err)
+		return result
+	}
+	index := map[string]auditLogOrganisation{}
+	for _, group := range groups {
+		index[string(group.provider)+"\x00"+group.orgID] = group
+	}
+	for batch := 0; batch < AuditLogRepairMaxBatches; batch++ {
+		if ctx.Err() != nil || s.now().Sub(started) > AuditLogRepairBudget {
+			// The pass is bounded by the collect tick, not by the size of the
+			// history: what is left is repaired by the next one.
+			break
+		}
+		rows, err := s.store.PendingAuditLogActors(ctx, AuditLogRepairBatch)
+		if err != nil {
+			slog.Error("reading the activity events to repair failed", "error", err)
+			break
+		}
+		if len(rows) == 0 {
+			break
+		}
+		result.Scanned += len(rows)
+		if updated := s.repairBatch(ctx, rows, index, &result); updated == 0 {
+			// No row of the batch could be written: the next batch would read
+			// the same ones again.
+			break
+		}
+	}
+	if remaining, err := s.store.CountPendingAuditLogActors(ctx); err == nil {
+		result.Remaining = remaining
+	}
+	if result.Updated > 0 {
+		slog.Info("activity log actors repaired",
+			"scanned", result.Scanned,
+			"updated", result.Updated,
+			"attributed", result.Attributed,
+			"remaining", result.Remaining,
+			"duration_ms", result.DurationMS)
+	}
+	return result
+}
+
+// repairBatch repairs the rows of one batch, organisation by organisation so one
+// token serves every row of a tenant, and answers how many rows it wrote.
+func (s *AuditLogService) repairBatch(ctx context.Context, rows []models.AuditLogEvent, index map[string]auditLogOrganisation, result *AuditLogRepairResult) int {
+	// Group the rows under the organisation feed they belong to, keeping the
+	// order of the batch so the oldest events are repaired first.
+	order := []string{}
+	buckets := map[string][]models.AuditLogEvent{}
+	for _, row := range rows {
+		key := row.Provider + "\x00" + row.OrgID
+		if _, known := buckets[key]; !known {
+			order = append(order, key)
+		}
+		buckets[key] = append(buckets[key], row)
+	}
+	updated := 0
+	for _, key := range order {
+		if ctx.Err() != nil {
+			break
+		}
+		updated += s.repairRows(ctx, buckets[key], index[key], result)
+	}
+	return updated
+}
+
+// repairRows repairs the rows of one organisation feed: it re-reads their vendor
+// documents, gives the workload-made device changes the person behind them, and
+// writes back only the actor columns.
+func (s *AuditLogService) repairRows(ctx context.Context, rows []models.AuditLogEvent, group auditLogOrganisation, result *AuditLogRepairResult) int {
+	var session ProviderSession
+	var normaliser providers.ActivityLogNormaliser
+	var enricher providers.ActivityActorEnricher
+	if group.accountID != 0 {
+		resolved, err := s.tokens.Resolve(ctx, group.accountID)
+		if err != nil {
+			// The organisation cannot be read right now (an account that needs
+			// attention): its rows are repaired from their own columns only.
+			slog.Debug("repairing the activity feed without a token",
+				"provider", group.provider, "org_id", group.orgID, "error", err)
+		} else {
+			session = resolved
+			normaliser, _ = session.Provider.(providers.ActivityLogNormaliser)
+			enricher, _ = session.Provider.(providers.ActivityActorEnricher)
+		}
+	}
+
+	// Re-read every vendor document first: the enrichment works on the events of
+	// the batch, so the lookups of one device are made once.
+	entries := make([]auditLogEventRepair, len(rows))
+	for i, row := range rows {
+		entry := auditLogEventRepair{row: row}
+		if normaliser != nil && row.Raw != "" {
+			if event, ok := normaliser.NormaliseActivityEvent(row.Source, json.RawMessage(row.Raw)); ok {
+				entry.event, entry.read = event, true
+			}
+		}
+		entries[i] = entry
+	}
+	if enricher != nil {
+		events := make([]providers.ActivityEvent, 0, len(entries))
+		positions := make([]int, 0, len(entries))
+		for i := range entries {
+			if !entries[i].read {
+				continue
+			}
+			events = append(events, entries[i].event)
+			positions = append(positions, i)
+		}
+		if attributed := enricher.EnrichActivityActors(ctx, session.Tokens, events); attributed > 0 {
+			for j := range events {
+				entries[positions[j]].event = events[j]
+			}
+			result.Attributed += attributed
+		}
+	}
+
+	updated := 0
+	for i := range entries {
+		entry := entries[i]
+		actor := auditLogActor(entry.actorEvent())
+		target := entry.target()
+		if actor.Kind == entry.row.ActorKind && actor.Email == entry.row.ActorEmail &&
+			actor.Name == entry.row.ActorName && actor.ID == entry.row.ActorID &&
+			actor.OnBehalfOf == entry.row.ActorOnBehalfOf &&
+			actor.OnBehalfOfName == entry.row.ActorOnBehalfOfName &&
+			(target == "" || target == entry.row.Target) {
+			continue
+		}
+		repair := AuditLogRepair{Actor: actor, Target: target}
+		if err := s.store.RepairAuditLogEvent(ctx, entry.row.ID, repair); err != nil {
+			slog.Warn("repairing the actor of an activity event failed",
+				"event_id", entry.row.ID, "error", err)
+			continue
+		}
+		updated++
+		result.Updated++
+	}
+	return updated
+}
+
+// auditLogEventRepair is one row of a repair batch with the event its stored
+// vendor document was read back into (read is false when the document is missing
+// or unreadable, which is repaired from the columns the row already carries).
+type auditLogEventRepair struct {
+	row   models.AuditLogEvent
+	event providers.ActivityEvent
+	read  bool
+}
+
+// actorEvent is the event the actor of the row is repaired from.
+func (r auditLogEventRepair) actorEvent() providers.ActivityEvent {
+	if r.read {
+		return r.event
+	}
+	return providers.ActivityEvent{
+		ActorEmail: r.row.ActorEmail,
+		ActorName:  r.row.ActorName,
+		ActorID:    r.row.ActorID,
+	}
+}
+
+// target is the normalised object of the row, empty when the vendor document could
+// not be re-read and the stored classification has to stand.
+func (r auditLogEventRepair) target() string {
+	if !r.read || r.event.Target == "" {
+		return ""
+	}
+	return string(r.event.Target)
+}
+
 // recordFailure stores why a feed could not be read, so the screen explains a
 // stale list instead of showing a silently short one.
 func (s *AuditLogService) recordFailure(ctx context.Context, cursor *models.AuditLogCursor, cause error) {
@@ -296,21 +539,25 @@ func auditLogRow(group auditLogOrganisation, stream string, event providers.Acti
 	if source == "" {
 		source = stream
 	}
+	actor := auditLogActor(event)
 	row := models.AuditLogEvent{
-		Provider:   string(group.provider),
-		Source:     source,
-		RemoteID:   truncate(remoteID, 191),
-		OrgID:      group.orgID,
-		Action:     string(event.Action),
-		Target:     string(event.Target),
-		ActorEmail: truncate(strings.ToLower(strings.TrimSpace(event.ActorEmail)), 191),
-		ActorName:  truncate(strings.TrimSpace(event.ActorName), 191),
-		ActorID:    truncate(strings.TrimSpace(event.ActorID), 191),
-		TargetName: truncate(strings.TrimSpace(event.TargetName), 512),
-		TargetID:   truncate(strings.TrimSpace(event.TargetID), 191),
-		DriveID:    truncate(strings.TrimSpace(event.DriveID), 191),
-		SiteID:     truncate(strings.TrimSpace(event.SiteID), 191),
-		OccurredAt: event.OccurredAt.UTC(),
+		Provider:            string(group.provider),
+		Source:              source,
+		RemoteID:            truncate(remoteID, 191),
+		OrgID:               group.orgID,
+		Action:              string(event.Action),
+		Target:              string(event.Target),
+		ActorEmail:          actor.Email,
+		ActorName:           actor.Name,
+		ActorID:             actor.ID,
+		ActorKind:           actor.Kind,
+		ActorOnBehalfOf:     actor.OnBehalfOf,
+		ActorOnBehalfOfName: actor.OnBehalfOfName,
+		TargetName:          truncate(strings.TrimSpace(event.TargetName), 512),
+		TargetID:            truncate(strings.TrimSpace(event.TargetID), 191),
+		DriveID:             truncate(strings.TrimSpace(event.DriveID), 191),
+		SiteID:              truncate(strings.TrimSpace(event.SiteID), 191),
+		OccurredAt:          event.OccurredAt.UTC(),
 	}
 	if row.OccurredAt.IsZero() {
 		return models.AuditLogEvent{}, false
@@ -319,6 +566,70 @@ func auditLogRow(group auditLogOrganisation, stream string, event providers.Acti
 		row.Raw = string(event.Raw)
 	}
 	return row, true
+}
+
+// auditLogActorKind is the nature of the principal behind an event. A provider
+// that names one keeps it; a feed that only names the actor (Google reports a
+// user address and nothing else) is read from what it did store: an address is a
+// person, a bare name is a workload acting for somebody, and neither is an event
+// the vendor attributed to no principal at all.
+//
+// Every stored row therefore carries a kind, which is what makes the repair pass
+// converge: a row it has visited stops being a candidate.
+func auditLogActorKind(event providers.ActivityEvent) models.AuditLogActorKind {
+	if event.ActorKind.Valid() {
+		return event.ActorKind
+	}
+	switch {
+	case looksLikeAddress(event.ActorEmail):
+		return models.AuditLogActorUser
+	case strings.TrimSpace(event.ActorEmail) != "" || strings.TrimSpace(event.ActorName) != "":
+		// A value that is not an address can only be the name of a workload:
+		// the releases before the actor kind put a service principal name in
+		// the address column, which is what this reads back.
+		return models.AuditLogActorApplication
+	default:
+		return models.AuditLogActorSystem
+	}
+}
+
+// looksLikeAddress reports whether a value is an e-mail address. The actor column
+// of a row stored before the actor kind existed can hold a service principal name
+// instead, and the two must never be confused: attribution that guesses is worse
+// than attribution that admits it does not know.
+func looksLikeAddress(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || strings.ContainsAny(value, " \t\n") {
+		return false
+	}
+	at := strings.IndexByte(value, '@')
+	return at > 0 && at < len(value)-1
+}
+
+// auditLogActor normalises the actor of a provider event into the columns of a
+// stored row, the one way the collector and the repair pass both build it, so a
+// repaired row and a freshly collected one cannot disagree.
+//
+// The address is kept only for a person: a workload has a name, and letting a
+// service principal name sit in the e-mail column is exactly the defect this
+// change removes (see plan 2026-11-07-audit-log-actor-attribution.md).
+func auditLogActor(event providers.ActivityEvent) AuditLogActor {
+	kind := auditLogActorKind(event)
+	actor := AuditLogActor{
+		Kind:           string(kind),
+		Name:           truncate(strings.TrimSpace(event.ActorName), 191),
+		ID:             truncate(strings.TrimSpace(event.ActorID), 191),
+		OnBehalfOf:     truncate(strings.ToLower(strings.TrimSpace(event.ActorOnBehalfOf)), 191),
+		OnBehalfOfName: truncate(strings.TrimSpace(event.ActorOnBehalfOfName), 191),
+	}
+	if kind == models.AuditLogActorUser {
+		actor.Email = truncate(strings.ToLower(strings.TrimSpace(event.ActorEmail)), 191)
+	} else if actor.Name == "" {
+		// The address column of a row stored by an older release can hold the
+		// name of the workload: move it where it belongs instead of dropping it.
+		actor.Name = truncate(strings.TrimSpace(event.ActorEmail), 191)
+	}
+	return actor
 }
 
 // truncate shortens a value to the width of its column, so a vendor field that is

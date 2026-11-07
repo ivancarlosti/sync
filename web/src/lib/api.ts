@@ -491,15 +491,28 @@ export interface AuditLogEvent {
   org_id: string;
   action: AuditLogAction;
   target: AuditLogTarget;
+  /**
+   * actor_kind says who acted: a person (`user`, whose address is actor_email), a
+   * workload (`application`, whose name is actor_name and whose address column is
+   * empty) or nobody at all (`system`). An empty value is an event stored before
+   * the column existed and is read as `user` when it carries an address.
+   */
+  actor_kind: AuditLogActorKind;
   actor_email: string;
   actor_name?: string;
   actor_id?: string;
+  /** actor_on_behalf_of names the person a workload acted for, when it is known. */
+  actor_on_behalf_of?: string;
+  actor_on_behalf_of_name?: string;
   target_name?: string;
   target_id?: string;
   drive_id?: string;
   site_id?: string;
   occurred_at: string;
 }
+
+/** AuditLogActorKind is the nature of the principal behind an activity event. */
+export type AuditLogActorKind = 'user' | 'application' | 'system';
 
 /** AuditLogAction is the normalised verb of an activity event. */
 export type AuditLogAction = 'create' | 'delete' | 'update' | 'move' | 'share' | 'login' | 'other';
@@ -510,6 +523,8 @@ export type AuditLogTarget =
   | 'folder'
   | 'user'
   | 'group'
+  | 'device'
+  | 'application'
   | 'site'
   | 'drive'
   | 'other';
@@ -558,6 +573,10 @@ export interface AuditLogCollectResult {
   streams: number;
   failed: number;
   events: number;
+  /** repaired is how many stored events the repair pass re-attributed. */
+  repaired: number;
+  /** pending_repairs is how many stored events still await a repair. */
+  pending_repairs: number;
   duration_ms: number;
   errors?: string[];
 }

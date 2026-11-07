@@ -193,8 +193,11 @@ func TestExportAuditLogsStreamsACSV(t *testing.T) {
 	if len(lines) != 3 {
 		t.Fatalf("the CSV has %d lines, want a header and the two deletions:\n%s", len(lines), text)
 	}
-	if !strings.HasPrefix(lines[0], "occurred_at,provider,org_id,stream,action,target,actor_email") {
+	if !strings.HasPrefix(lines[0], "occurred_at,provider,org_id,stream,action,target,actor_kind,actor_email") {
 		t.Errorf("header = %q, want the documented column order", lines[0])
+	}
+	if !strings.Contains(lines[0], "actor_on_behalf_of") {
+		t.Errorf("header = %q, want the on-behalf-of column of a workload-made change", lines[0])
 	}
 	if !strings.Contains(text, "Q4 Budget.xlsx") || !strings.Contains(text, "Board pack.pdf") {
 		t.Errorf("the export misses the filtered files:\n%s", text)
@@ -273,5 +276,82 @@ func TestMaintenanceAuditLogsCollectPollsTheFeeds(t *testing.T) {
 	}](t, recorder)
 	if answer.Organisations != 0 || answer.Streams != 0 || answer.Failed != 0 || answer.Events != 0 {
 		t.Fatalf("pass = %+v, want nothing read with no account connected", answer)
+	}
+}
+
+// TestListAuditLogsReportsWhoIsBehindTheEvent pins the answer of the actor
+// attribution change: a workload keeps its name out of the address column, the
+// person it acted for travels in its own field, and the device is its own target.
+func TestListAuditLogsReportsWhoIsBehindTheEvent(t *testing.T) {
+	server, store := newTestServer(t, models.AuthModeNone)
+	base := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+	events := []models.AuditLogEvent{
+		{
+			Provider: string(models.ProviderMicrosoft), Source: "directory", RemoteID: "dev-1",
+			OrgID: "tenant-a", Action: string(models.AuditLogUpdate), Target: string(models.AuditLogTargetDevice),
+			ActorKind: string(models.AuditLogActorApplication), ActorName: "Device Registration Service",
+			ActorOnBehalfOf: "ivan@contoso.com", ActorOnBehalfOfName: "Ivan Almeida",
+			TargetName: "DESKTOP-J979VG0", OccurredAt: base,
+		},
+		{
+			Provider: string(models.ProviderMicrosoft), Source: "directory", RemoteID: "user-1",
+			OrgID: "tenant-a", Action: string(models.AuditLogCreate), Target: string(models.AuditLogTargetUser),
+			ActorKind: string(models.AuditLogActorUser), ActorEmail: "ada@contoso.com",
+			TargetName: "Bob New", OccurredAt: base.Add(time.Hour),
+		},
+	}
+	if err := store.InsertAuditLogEvents(context.Background(), events); err != nil {
+		t.Fatalf("seeding the activity events: %v", err)
+	}
+
+	recorder := call(t, server, http.MethodGet, "/api/audit-logs?target=device", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	answer := decodeJSON[auditLogPageAnswer](t, recorder)
+	if answer.Total != 1 || len(answer.Events) != 1 {
+		t.Fatalf("target=device answered %d/%d events, want the one device registration",
+			len(answer.Events), answer.Total)
+	}
+	event := answer.Events[0]
+	if event.ActorKind != string(models.AuditLogActorApplication) {
+		t.Errorf("actor_kind = %q, want application", event.ActorKind)
+	}
+	if event.ActorEmail != "" {
+		t.Errorf("actor_email = %q, want empty for a workload", event.ActorEmail)
+	}
+	if event.ActorName != "Device Registration Service" {
+		t.Errorf("actor_name = %q, want the workload name", event.ActorName)
+	}
+	if event.ActorOnBehalfOf != "ivan@contoso.com" || event.ActorOnBehalfOfName != "Ivan Almeida" {
+		t.Errorf("on behalf of = %q/%q, want the person behind the workload",
+			event.ActorOnBehalfOf, event.ActorOnBehalfOfName)
+	}
+
+	// The person's own event keeps the address in the address column.
+	recorder = call(t, server, http.MethodGet, "/api/audit-logs?target=user", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	page := decodeJSON[auditLogPageAnswer](t, recorder)
+	if len(page.Events) != 1 || page.Events[0].ActorEmail != "ada@contoso.com" ||
+		page.Events[0].ActorKind != string(models.AuditLogActorUser) {
+		t.Errorf("person event = %+v, want the address and the user kind", page.Events)
+	}
+}
+
+// TestMaintenanceAuditLogsRenormaliseRepairsTheHistory pins the on-demand repair
+// endpoint: it answers the counters of the pass and runs without an account (so
+// there is nothing to repair in this fixture, and nothing fails either).
+func TestMaintenanceAuditLogsRenormaliseRepairsTheHistory(t *testing.T) {
+	server, _ := newTestServer(t, models.AuthModeNone)
+
+	recorder := call(t, server, http.MethodPost, "/api/maintenance/auditlogs/renormalise", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	answer := decodeJSON[struct {
+		Scanned    int   `json:"scanned"`
+		Updated    int   `json:"updated"`
+		Attributed int   `json:"attributed"`
+		Remaining  int64 `json:"remaining"`
+		DurationMS int64 `json:"duration_ms"`
+	}](t, recorder)
+	if answer.Scanned != 0 || answer.Updated != 0 || answer.Attributed != 0 || answer.Remaining != 0 {
+		t.Fatalf("repair = %+v, want nothing to do on an empty history", answer)
 	}
 }

@@ -781,10 +781,20 @@
       "folder": "Folder",
       "user": "User",
       "group": "Group",
+      "device": "Device",
+      "application": "Application",
       "site": "Site",
       "drive": "Drive",
       "other": "Other"
     },
+    "actorKind": {
+      "user": "Person",
+      "application": "Service",
+      "system": "System"
+    },
+    "onBehalfOf": "on behalf of {actor}",
+    "readBy": "read by {accounts}",
+    "ownerUnavailable": "The account reading this feed cannot resolve the device owner: grant the directory permission to name the person behind this change.",
     "actionLabel": "Action",
     "targetLabel": "Object",
     "search": "Search",
@@ -809,6 +819,7 @@
     "staleTitle": "A feed could not be read",
     "staleHint": "{feeds} feed(s) failed on their last pass. What is listed below was collected before.",
     "collected": "{events} event(s) read from {streams} feed(s).",
+    "collectedRepaired": "{repaired} earlier event(s) re-attributed.",
     "collectedWithFailures": "{failed} of {streams} feed(s) failed. See the banner for the reason.",
     "error_validation": "Check the filters: one of them is not a known value.",
     "error_busy": "A collection pass is already running.",

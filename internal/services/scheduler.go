@@ -270,6 +270,14 @@ func (s *Scheduler) RunAuditLogs(ctx context.Context) AuditLogCollectResult {
 	return outcome
 }
 
+// RunAuditLogRepair re-reads the history of the activity feed and re-attributes
+// the events a release before the actor kind mapped with a single actor slot. It
+// is the body of POST /api/maintenance/auditlogs/renormalise; the same pass runs
+// at the end of every collect (see AuditLogService.Collect).
+func (s *Scheduler) RunAuditLogRepair(ctx context.Context) AuditLogRepairResult {
+	return s.logs.RepairActors(ctx)
+}
+
 // NextRunAt computes the next execution of a job: now plus its interval for an
 // enabled scheduled job and nil for a job that is disabled or manual only. The
 // job handlers use it whenever an interval or the enabled flag changes.

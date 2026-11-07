@@ -133,10 +133,21 @@ one row per vendor record (`provider`, `source` (`directory` \| `unified` \|
 `drive` \| `user_accounts` \| `groups` \| `admin` \| `login`), `remote_id`,
 `org_id`), normalised as `action` (`create` \| `delete` \| `update` \| `move` \|
 `share` \| `login` \| `other`) and `target` (`file` \| `folder` \| `user` \|
-`group` \| `site` \| `drive` \| `other`), the actor (`actor_email`,
-`actor_name`, `actor_id`), the object (`target_name`, `target_id`, `drive_id`,
+`group` \| `device` \| `application` \| `site` \| `drive` \| `other`), the actor
+(`actor_kind` (`user` \| `application` \| `system`), `actor_email`, `actor_name`,
+`actor_id`), the person behind a workload-made change (`actor_on_behalf_of`,
+`actor_on_behalf_of_name`), the object (`target_name`, `target_id`, `drive_id`,
 `site_id`), the vendor timestamp `occurred_at` (indexed with `org_id`) and the
 vendor document itself in `raw` (`text`, never serialised to the API).
+
+`actor_kind` is what keeps a workload from being read as a person:
+`actor_email` is filled for `user` rows only, an `application` row carries its
+name in `actor_name`, and a `system` row names the service that logged the event.
+A row with an **empty** `actor_kind` was stored by a release before the column
+existed; the collector repairs those rows from `raw` at the end of every pass (see
+[audit-logs.md](audit-logs.md) §3), so the column converges on a value without a
+migration rewriting history.
+
 `uniqueIndex idx_auditlog_event_identity` on `provider` + `source` + `remote_id`
 is what makes re-reading an overlapping window idempotent.
 
@@ -194,7 +205,12 @@ about before confirming).
 2. Start the new image. `AutoMigrate` adds new tables/columns and indexes;
    existing data is preserved, and `Seed` never overwrites an edited setting.
 3. If a release changes the meaning of a stored value, the release notes say so:
-   the schema is additive, historic rows are never rewritten silently.
+   the schema is additive and historic rows are never rewritten silently. The one
+   deliberate exception is the actor attribution of `audit_log_events`: a release
+   that maps a field more precisely repairs the old rows **from their own `raw`
+   vendor document**, deterministically and idempotently, at the end of every
+   collect pass (see [audit-logs.md](audit-logs.md) §3). Nothing is guessed: a
+   field the vendor document does not carry stays as it was.
 
 Downgrades are not supported: a new column added by an upgrade simply stays
 unused by an older binary, but a value written by a new release may be unknown to

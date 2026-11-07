@@ -789,6 +789,7 @@
     "staleTitle": "Não foi possível ler um feed",
     "staleHint": "{feeds} feed(s) falharam na última passagem. O que está listado abaixo foi coletado antes.",
     "collected": "{events} evento(s) lidos de {streams} feed(s).",
+    "collectedRepaired": "{repaired} evento(s) anteriores foram reatribuídos.",
     "collectedWithFailures": "{failed} de {streams} feed(s) falharam. Veja o aviso para o motivo.",
     "action": {
       "create": "Criado",
@@ -804,10 +805,20 @@
       "folder": "Pasta",
       "user": "Usuário",
       "group": "Grupo",
+      "device": "Dispositivo",
+      "application": "Aplicativo",
       "site": "Site",
       "drive": "Unidade",
       "other": "Outro"
     },
+    "actorKind": {
+      "user": "Pessoa",
+      "application": "Serviço",
+      "system": "Sistema"
+    },
+    "onBehalfOf": "em nome de {actor}",
+    "readBy": "lido por {accounts}",
+    "ownerUnavailable": "A conta que lê este feed não pode resolver o proprietário do dispositivo: conceda a permissão de diretório para nomear a pessoa por trás desta alteração.",
     "actionLabel": "Ação",
     "targetLabel": "Objeto",
     "error_validation": "Verifique os filtros: algum deles não é um valor conhecido.",

@@ -789,6 +789,7 @@
     "staleTitle": "एक फ़ीड पढ़ा नहीं जा सका",
     "staleHint": "पिछले चक्र में {feeds} फ़ीड विफल रहे। नीचे जो है वह उससे पहले एकत्र हुआ है।",
     "collected": "{streams} फ़ीड से {events} घटनाएँ पढ़ी गईं।",
+    "collectedRepaired": "{repaired} पुरानी घटनाओं का पुनः आरोपण किया गया।",
     "collectedWithFailures": "{streams} में से {failed} फ़ीड विफल रहे। कारण बैनर में देखें।",
     "action": {
       "create": "बनाया",
@@ -804,10 +805,20 @@
       "folder": "फ़ोल्डर",
       "user": "उपयोगकर्ता",
       "group": "समूह",
+      "device": "डिवाइस",
+      "application": "एप्लिकेशन",
       "site": "साइट",
       "drive": "ड्राइव",
       "other": "अन्य"
     },
+    "actorKind": {
+      "user": "व्यक्ति",
+      "application": "सेवा",
+      "system": "सिस्टम"
+    },
+    "onBehalfOf": "{actor} की ओर से",
+    "readBy": "{accounts} द्वारा पढ़ा गया",
+    "ownerUnavailable": "इस फ़ीड को पढ़ने वाला खाता डिवाइस के स्वामी को नहीं पहचान सकता: इस बदलाव के पीछे के व्यक्ति को नाम देने के लिए निर्देशिका अनुमति दें।",
     "actionLabel": "क्रिया",
     "targetLabel": "ऑब्जेक्ट",
     "error_validation": "फ़िल्टर जाँचें: इनमें से कोई ज्ञात मान नहीं है।",

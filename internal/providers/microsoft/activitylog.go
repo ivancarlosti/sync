@@ -97,8 +97,22 @@ func (p *Provider) ActivityLogs(ctx context.Context, creds providers.Credentials
 	}
 }
 
+// NormaliseActivityEvent implements providers.ActivityLogNormaliser: it re-reads
+// one stored vendor record, so the repair pass can attribute the history a
+// previous release mapped with one actor slot (see plan
+// 2026-11-07-audit-log-actor-attribution.md). Only the streams whose normaliser
+// this provider owns are re-read; a record of any other feed answers false and
+// keeps the row it has.
+func (p *Provider) NormaliseActivityEvent(source string, raw json.RawMessage) (providers.ActivityEvent, bool) {
+	if strings.ToLower(strings.TrimSpace(source)) != streamDirectory {
+		return providers.ActivityEvent{}, false
+	}
+	return normaliseDirectoryAudit(raw)
+}
+
 // formatWatermark renders a cursor. Seconds are enough for both feeds, and a
 // value without sub-second noise is stable between passes and readable in SQL.
+
 func formatWatermark(moment time.Time) string {
 	return moment.UTC().Format(time.RFC3339)
 }
@@ -206,7 +220,23 @@ type directoryAuditRecord struct {
 		DisplayName       string `json:"displayName"`
 		Type              string `json:"type"`
 		UserPrincipalName string `json:"userPrincipalName"`
+		// ModifiedProperties is where Graph reports what a change actually
+		// wrote. It is the only place a device registration names the person
+		// behind it (`RegisteredOwner`), because the actor of that record is
+		// the "Device Registration Service" workload.
+		ModifiedProperties []struct {
+			DisplayName string `json:"displayName"`
+			OldValue    string `json:"oldValue"`
+			NewValue    string `json:"newValue"`
+		} `json:"modifiedProperties"`
 	} `json:"targetResources"`
+	// AdditionalDetails are the key/value pairs some activities add to the
+	// record ("DeviceId", "DeviceOSType", …), kept as the second place a
+	// workload-made change can name the object or the person behind it.
+	AdditionalDetails []struct {
+		Key   string `json:"key"`
+		Value string `json:"value"`
+	} `json:"additionalDetails"`
 }
 
 // directoryAuditLogs reads the Graph directory feed: who changed which directory
@@ -252,6 +282,10 @@ func (p *Provider) directoryAuditLogs(ctx context.Context, tokens *providers.Tok
 			}
 		}
 		if answer.NextLink == "" {
+			// The page is complete: give the workload-made device changes the
+			// person behind them before the collector stores them (see
+			// deviceowners.go). It is bounded and never fails the pass.
+			p.EnrichActivityActors(ctx, tokens, events)
 			return events, formatWatermark(now), nil
 		}
 		// A page link carries the access token: never follow one that leaves
@@ -263,6 +297,7 @@ func (p *Provider) directoryAuditLogs(ctx context.Context, tokens *providers.Tok
 	}
 	// The page cap was reached: resume from the newest record read instead of
 	// claiming the whole window was consumed.
+	p.EnrichActivityActors(ctx, tokens, events)
 	return events, formatWatermark(newest), nil
 }
 
@@ -287,58 +322,217 @@ func normaliseDirectoryAudit(raw json.RawMessage) (providers.ActivityEvent, bool
 		return providers.ActivityEvent{}, false
 	}
 	action, target := classifyDirectoryAudit(record)
+	principal := directoryPrincipalOf(record)
 	event := providers.ActivityEvent{
 		Source:     streamDirectory,
 		RemoteID:   record.ID,
 		Action:     action,
 		Target:     target,
-		ActorEmail: strings.ToLower(strings.TrimSpace(directoryActorEmail(record))),
-		ActorName:  directoryActorName(record),
-		ActorID:    directoryActorID(record),
+		ActorEmail: principal.email,
+		ActorName:  principal.name,
+		ActorID:    principal.id,
+		ActorKind:  principal.kind,
 		OccurredAt: record.ActivityDateTime.UTC(),
 		Raw:        raw,
 	}
-	if len(record.TargetResources) > 0 {
-		resource := record.TargetResources[0]
+	if principal.kind == models.AuditLogActorApplication {
+		// A workload made the change; the record sometimes still says which
+		// person it did it for (a device registration names the enrolling
+		// owner). What it does not say stays empty — the device owner lookup
+		// of deviceowners.go is the second chance, never a guess.
+		event.ActorOnBehalfOf, event.ActorOnBehalfOfName = recordOwnerOnBehalfOf(record)
+	}
+	if index, ok := primaryTargetResource(record, target); ok {
+		resource := record.TargetResources[index]
 		event.TargetName = strings.TrimSpace(resource.DisplayName)
 		if event.TargetName == "" {
 			event.TargetName = strings.TrimSpace(resource.UserPrincipalName)
 		}
 		event.TargetID = strings.TrimSpace(resource.ID)
 	}
+	if target == models.AuditLogTargetDevice && event.TargetID == "" {
+		// Some activities name the device only by its Entra device id, which is
+		// what the owner lookup of deviceowners.go accepts in the same position.
+		event.TargetID = recordDeviceID(record)
+	}
 	return event, true
 }
 
-// directoryActorEmail names the principal that made the change: the user when a
-// person did it, the service principal or the application display name when the
-// change was made by a workload.
-func directoryActorEmail(record directoryAuditRecord) string {
-	if email := record.InitiatedBy.User.UserPrincipalName; email != "" {
-		return email
+// primaryTargetResource picks the resource the event is filed under: the one
+// whose type matches the classified target, or the first one when none does.
+// Graph lists a device registration as [device, user], so reading the first
+// resource blindly can label a device event with a person's name.
+func primaryTargetResource(record directoryAuditRecord, target models.AuditLogTarget) (int, bool) {
+	if len(record.TargetResources) == 0 {
+		return 0, false
 	}
-	if name := record.InitiatedBy.App.ServicePrincipalName; name != "" {
-		return name
+	for i := range record.TargetResources {
+		if directoryTargetOfType(record.TargetResources[i].Type) == target {
+			return i, true
+		}
 	}
-	return record.InitiatedBy.App.DisplayName
+	return 0, true
 }
 
-// directoryActorName is the display label of the actor.
-func directoryActorName(record directoryAuditRecord) string {
-	if name := record.InitiatedBy.User.DisplayName; name != "" {
-		return name
-	}
-	return record.InitiatedBy.App.DisplayName
+// directoryPrincipal is the principal behind one record: a person, a workload or
+// no principal at all. It is one value instead of three accessors because the
+// kind decides which column each field may travel in — an application name must
+// never land in the e-mail slot (see plan
+// 2026-11-07-audit-log-actor-attribution.md).
+type directoryPrincipal struct {
+	// kind is the AuditLogActorKind of the principal.
+	kind models.AuditLogActorKind
+	// email is the address of a person, empty for a workload or a system
+	// event: a service principal name is not an address.
+	email string
+	// name is the display label: the user's name, the application display name
+	// or the service that logged the event.
+	name string
+	// id is the stable object id of the principal.
+	id string
 }
 
-// directoryActorID is the stable id of the actor.
-func directoryActorID(record directoryAuditRecord) string {
-	if id := record.InitiatedBy.User.ID; id != "" {
-		return id
+// directoryPrincipalOf reads the actor of a record. Graph reports a person under
+// `initiatedBy.user` and a workload under `initiatedBy.app`; a change that is
+// neither (a scheduled policy, a platform job) is attributed to the service that
+// logged it.
+func directoryPrincipalOf(record directoryAuditRecord) directoryPrincipal {
+	user := record.InitiatedBy.User
+	if strings.TrimSpace(user.UserPrincipalName) != "" || strings.TrimSpace(user.ID) != "" {
+		return directoryPrincipal{
+			kind:  models.AuditLogActorUser,
+			email: strings.ToLower(strings.TrimSpace(user.UserPrincipalName)),
+			name:  strings.TrimSpace(user.DisplayName),
+			id:    strings.TrimSpace(user.ID),
+		}
 	}
-	if id := record.InitiatedBy.App.AppID; id != "" {
-		return id
+	app := record.InitiatedBy.App
+	if strings.TrimSpace(app.DisplayName) != "" || strings.TrimSpace(app.ServicePrincipalName) != "" ||
+		strings.TrimSpace(app.AppID) != "" || strings.TrimSpace(app.ServicePrincipalID) != "" {
+		name := strings.TrimSpace(app.DisplayName)
+		if name == "" {
+			name = strings.TrimSpace(app.ServicePrincipalName)
+		}
+		id := strings.TrimSpace(app.AppID)
+		if id == "" {
+			id = strings.TrimSpace(app.ServicePrincipalID)
+		}
+		return directoryPrincipal{kind: models.AuditLogActorApplication, name: name, id: id}
 	}
-	return record.InitiatedBy.App.ServicePrincipalID
+	// No principal at all: the only thing the record says is which service
+	// logged the change (loggedByService), which is what the screen shows.
+	return directoryPrincipal{kind: models.AuditLogActorSystem, name: strings.TrimSpace(record.LoggedByService)}
+}
+
+// recordOwnerOnBehalfOf recovers the person a workload-made change was made for.
+// Microsoft logs a device registration as the work of "Device Registration
+// Service" and repeats the human in one of three places, all of which are read
+// here: a sibling user target resource, a `RegisteredOwner`/`RegisteredUsers`
+// modified property, or an owner-like additional detail.
+//
+// A value that is not an address (a display name alone) is not used as the
+// e-mail: attribution that cannot be verified is left empty on purpose.
+func recordOwnerOnBehalfOf(record directoryAuditRecord) (email, name string) {
+	for i := range record.TargetResources {
+		resource := record.TargetResources[i]
+		if directoryTargetOfType(resource.Type) != models.AuditLogTargetUser {
+			continue
+		}
+		if upn := strings.ToLower(strings.TrimSpace(resource.UserPrincipalName)); strings.Contains(upn, "@") {
+			return upn, strings.TrimSpace(resource.DisplayName)
+		}
+		if upn := strings.ToLower(strings.TrimSpace(resource.DisplayName)); strings.Contains(upn, "@") {
+			return upn, ""
+		}
+	}
+	for i := range record.TargetResources {
+		for _, property := range record.TargetResources[i].ModifiedProperties {
+			if !isOwnerProperty(property.DisplayName) {
+				continue
+			}
+			if value := addressOf(propertyValue(property.NewValue)); value != "" {
+				return value, ""
+			}
+		}
+	}
+	for _, detail := range record.AdditionalDetails {
+		if !isOwnerProperty(detail.Key) {
+			continue
+		}
+		if value := addressOf(propertyValue(detail.Value)); value != "" {
+			return value, ""
+		}
+	}
+	return "", ""
+}
+
+// isOwnerProperty reports whether a Graph property or detail names the person
+// behind a workload change.
+func isOwnerProperty(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "registeredowner", "registeredowners", "registereduser", "registeredusers", "owner", "owners":
+		return true
+	default:
+		return false
+	}
+}
+
+// addressOf answers the lower-cased value of a string that looks like an address
+// and an empty string for anything else.
+func addressOf(raw string) string {
+	value := strings.ToLower(strings.TrimSpace(raw))
+	if !strings.Contains(value, "@") || strings.ContainsAny(value, " \t\n") {
+		return ""
+	}
+	return value
+}
+
+// propertyValue decodes a Graph modifiedProperties / additionalDetails value.
+// Graph JSON-encodes it, so an address arrives as `"\"ivan@…\""` and a list as
+// `"[\"ivan@…\"]"`; a plain value is returned as it is.
+func propertyValue(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	var text string
+	if err := json.Unmarshal([]byte(trimmed), &text); err == nil {
+		return strings.TrimSpace(text)
+	}
+	var list []string
+	if err := json.Unmarshal([]byte(trimmed), &list); err == nil {
+		for _, item := range list {
+			if value := strings.TrimSpace(item); value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	return strings.Trim(trimmed, `"`)
+}
+
+// recordDeviceID reads the Entra device id out of a record: some activities carry
+// the `deviceId` of the device object (which `GET /devices/{id}` also accepts) in
+// their modified properties instead of the object id.
+func recordDeviceID(record directoryAuditRecord) string {
+	for _, detail := range record.AdditionalDetails {
+		if strings.EqualFold(strings.TrimSpace(detail.Key), "deviceId") {
+			if value := propertyValue(detail.Value); value != "" {
+				return value
+			}
+		}
+	}
+	for i := range record.TargetResources {
+		for _, property := range record.TargetResources[i].ModifiedProperties {
+			if !strings.EqualFold(strings.TrimSpace(property.DisplayName), "deviceId") {
+				continue
+			}
+			if value := propertyValue(property.NewValue); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
 }
 
 // classifyDirectoryAudit maps the vendor activity onto the shared vocabulary.
@@ -366,16 +560,33 @@ func classifyDirectoryAudit(record directoryAuditRecord) (models.AuditLogAction,
 	return models.AuditLogOther, target
 }
 
-// directoryTarget names the kind of directory object the change touched.
+// directoryTarget names the kind of directory object the change touched. The
+// event is filed under the first resource that maps to a known kind, so a record
+// that lists [device, user] is a device event and not a user one.
 func directoryTarget(record directoryAuditRecord) models.AuditLogTarget {
-	if len(record.TargetResources) == 0 {
-		return models.AuditLogTargetOther
+	for i := range record.TargetResources {
+		if target := directoryTargetOfType(record.TargetResources[i].Type); target != models.AuditLogTargetOther {
+			return target
+		}
 	}
-	switch strings.ToLower(strings.TrimSpace(record.TargetResources[0].Type)) {
+	return models.AuditLogTargetOther
+}
+
+// directoryTargetOfType maps one Graph targetResources.type onto the shared
+// vocabulary. Device and Application/ServicePrincipal are what keeps a device
+// registration and an application consent out of the catch-all "other".
+func directoryTargetOfType(raw string) models.AuditLogTarget {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "user":
 		return models.AuditLogTargetUser
 	case "group":
 		return models.AuditLogTargetGroup
+	case "device":
+		return models.AuditLogTargetDevice
+	case "application", "serviceprincipal":
+		return models.AuditLogTargetApplication
+	case "site", "sharepoint site":
+		return models.AuditLogTargetSite
 	}
 	return models.AuditLogTargetOther
 }

@@ -275,3 +275,137 @@ func TestUnifiedFeedNeedsATenant(t *testing.T) {
 		t.Errorf("the pass issued %d requests, want none", len(transport.urls))
 	}
 }
+
+// deviceRegistrationRecord is an "Add device" record as Graph reports it: the
+// actor is the Device Registration Service workload, the enrolling person is only
+// repeated in the target resources and in the record's additional details.
+const deviceRegistrationRecord = `{"id":"Directory_dev-1","category":"Device","result":"success",` +
+	`"activityDisplayName":"Add device","activityDateTime":"2026-11-05T09:00:00Z",` +
+	`"loggedByService":"Core Directory","operationType":"Add",` +
+	`"initiatedBy":{"app":{"appId":"app-device","displayName":"Device Registration Service",` +
+	`"servicePrincipalId":"sp-device","servicePrincipalName":"Device Registration Service"}},` +
+	`"targetResources":[` +
+	`{"id":"device-object-id","displayName":"DESKTOP-J979VG0","type":"Device",` +
+	`"modifiedProperties":[{"displayName":"RegisteredOwner","newValue":"\"ivan@contoso.com\""}]},` +
+	`{"id":"user-ivan","displayName":"Ivan Almeida","type":"User","userPrincipalName":"ivan@contoso.com"}]}`
+
+// TestDirectoryAuditSeparatesTheWorkloadFromThePerson pins the defect the actor
+// attribution plan removes: a device registration used to store the service name in
+// the actor e-mail slot, so the screen read "device registration service" as if it
+// were the address of the person who enrolled the device.
+func TestDirectoryAuditSeparatesTheWorkloadFromThePerson(t *testing.T) {
+	event, ok := normaliseDirectoryAudit([]byte(deviceRegistrationRecord))
+	if !ok {
+		t.Fatal("normaliseDirectoryAudit() refused a complete record")
+	}
+	if event.ActorKind != models.AuditLogActorApplication {
+		t.Errorf("ActorKind = %q, want application: the actor is a workload", event.ActorKind)
+	}
+	if event.ActorEmail != "" {
+		t.Errorf("ActorEmail = %q, want empty: a service principal name is not an address", event.ActorEmail)
+	}
+	if event.ActorName != "Device Registration Service" || event.ActorID != "app-device" {
+		t.Errorf("actor = %q/%q, want the workload name and its app id", event.ActorName, event.ActorID)
+	}
+	if event.ActorOnBehalfOf != "ivan@contoso.com" || event.ActorOnBehalfOfName != "Ivan Almeida" {
+		t.Errorf("on behalf of = %q/%q, want the enrolling person of the record",
+			event.ActorOnBehalfOf, event.ActorOnBehalfOfName)
+	}
+	if event.Target != models.AuditLogTargetDevice {
+		t.Errorf("Target = %q, want device", event.Target)
+	}
+	if event.TargetName != "DESKTOP-J979VG0" || event.TargetID != "device-object-id" {
+		t.Errorf("target = %q/%q, want the device (not the user listed after it)",
+			event.TargetName, event.TargetID)
+	}
+	if event.Action != models.AuditLogCreate {
+		t.Errorf("Action = %q, want create", event.Action)
+	}
+}
+
+// TestDirectoryAuditReadsTheOwnerFromTheModifiedProperty pins the second place a
+// workload-made change names its person: the modified properties, without any
+// sibling user resource.
+func TestDirectoryAuditReadsTheOwnerFromTheModifiedProperty(t *testing.T) {
+	record := `{"id":"Directory_dev-2","activityDisplayName":"Add registered owner to device",` +
+		`"activityDateTime":"2026-11-05T10:00:00Z","loggedByService":"Core Directory","operationType":"Update",` +
+		`"initiatedBy":{"app":{"displayName":"Device Registration Service"}},` +
+		`"targetResources":[{"id":"device-object-id","displayName":"DESKTOP-J979VG0","type":"Device",` +
+		`"modifiedProperties":[{"displayName":"RegisteredUsers","newValue":"[\"Maria@Contoso.com\"]"}]}]}`
+	event, ok := normaliseDirectoryAudit([]byte(record))
+	if !ok {
+		t.Fatal("normaliseDirectoryAudit() refused a complete record")
+	}
+	if event.ActorOnBehalfOf != "maria@contoso.com" {
+		t.Errorf("ActorOnBehalfOf = %q, want the owner decoded from the JSON-encoded property",
+			event.ActorOnBehalfOf)
+	}
+	if event.TargetName != "DESKTOP-J979VG0" {
+		t.Errorf("TargetName = %q, want the device the owner was registered on", event.TargetName)
+	}
+}
+
+// TestDirectoryAuditWithoutAPrincipalIsASystemEvent pins the third kind: an event
+// the directory attributes to nobody is filed under the service that logged it
+// instead of being given the name of whichever resource came first.
+func TestDirectoryAuditWithoutAPrincipalIsASystemEvent(t *testing.T) {
+	record := `{"id":"Directory_policy-1","activityDisplayName":"Update policy",` +
+		`"activityDateTime":"2026-11-05T11:00:00Z","loggedByService":"Core Directory",` +
+		`"operationType":"Update","initiatedBy":{},` +
+		`"targetResources":[{"id":"policy-1","displayName":"Default policy","type":"Policy"}]}`
+	event, ok := normaliseDirectoryAudit([]byte(record))
+	if !ok {
+		t.Fatal("normaliseDirectoryAudit() refused a complete record")
+	}
+	if event.ActorKind != models.AuditLogActorSystem {
+		t.Errorf("ActorKind = %q, want system", event.ActorKind)
+	}
+	if event.ActorName != "Core Directory" || event.ActorEmail != "" {
+		t.Errorf("actor = %q/%q, want the logging service alone", event.ActorName, event.ActorEmail)
+	}
+	if event.Target != models.AuditLogTargetOther {
+		t.Errorf("Target = %q, want other for a policy", event.Target)
+	}
+}
+
+// TestDirectoryAuditFilesAnApplicationTarget pins the second new target kind: a
+// consent or a credential change is an application event, not a catch-all one.
+func TestDirectoryAuditFilesAnApplicationTarget(t *testing.T) {
+	record := `{"id":"Directory_app-1","activityDisplayName":"Add service principal",` +
+		`"activityDateTime":"2026-11-05T12:00:00Z","loggedByService":"Core Directory","operationType":"Add",` +
+		`"initiatedBy":{"user":{"id":"admin-1","displayName":"Ada Admin","userPrincipalName":"ada@contoso.com"}},` +
+		`"targetResources":[{"id":"sp-1","displayName":"Reporting service","type":"ServicePrincipal"}]}`
+	event, ok := normaliseDirectoryAudit([]byte(record))
+	if !ok {
+		t.Fatal("normaliseDirectoryAudit() refused a complete record")
+	}
+	if event.Target != models.AuditLogTargetApplication {
+		t.Errorf("Target = %q, want application", event.Target)
+	}
+	if event.ActorKind != models.AuditLogActorUser || event.ActorEmail != "ada@contoso.com" {
+		t.Errorf("actor = %q/%q, want the administrator who consented", event.ActorKind, event.ActorEmail)
+	}
+	if event.ActorOnBehalfOf != "" {
+		t.Errorf("ActorOnBehalfOf = %q, want empty: a person does not act for somebody else", event.ActorOnBehalfOf)
+	}
+}
+
+// TestNormaliseActivityEventOnlyReadsItsOwnStream pins the contract of the repair
+// pass: the provider re-reads the directory feed it normalises and leaves every
+// other stream to whoever owns it.
+func TestNormaliseActivityEventOnlyReadsItsOwnStream(t *testing.T) {
+	provider := New()
+	if _, ok := provider.NormaliseActivityEvent("unified", []byte(deviceRegistrationRecord)); ok {
+		t.Error("NormaliseActivityEvent() read a stream this provider does not normalise")
+	}
+	if _, ok := provider.NormaliseActivityEvent("directory", []byte("{not json")); ok {
+		t.Error("NormaliseActivityEvent() accepted an unreadable document")
+	}
+	event, ok := provider.NormaliseActivityEvent("directory", []byte(deviceRegistrationRecord))
+	if !ok {
+		t.Fatal("NormaliseActivityEvent() refused a complete directory record")
+	}
+	if event.ActorKind != models.AuditLogActorApplication {
+		t.Errorf("ActorKind = %q, want the workload of the record", event.ActorKind)
+	}
+}

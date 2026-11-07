@@ -45,7 +45,18 @@ import { useFeedbackStore } from '@/stores/feedback';
 const PAGE_SIZE = 50;
 /** ACTIONS and TARGETS mirror the server vocabulary (models/enums.go). */
 const ACTIONS: AuditLogAction[] = ['create', 'delete', 'update', 'move', 'share', 'login', 'other'];
-const TARGETS: AuditLogTarget[] = ['file', 'folder', 'user', 'group', 'site', 'drive', 'other'];
+const TARGETS: AuditLogTarget[] = [
+  'file',
+  'folder',
+  'user',
+  'group',
+  'device',
+  'application',
+  'site',
+  'drive',
+  'other',
+];
+
 
 const { t, locale } = useI18n();
 const feedback = useFeedbackStore();
@@ -96,25 +107,88 @@ const accountOptions = computed(() => [
 ]);
 
 /**
- * readersByOrg names the accounts behind each organisation feed, so the table says
- * who an event belongs to instead of showing a tenant id alone. The key is the pair
- * the collector groups by (see internal/services/auditlog.go).
+ * accountsByOrg names the accounts behind each organisation feed, so the table says
+ * who an event belongs to instead of showing a tenant id alone, and the actor cell
+ * can explain why a workload has no person behind it. The key is the pair the
+ * collector groups by (see internal/services/auditlog.go).
  */
-const readersByOrg = computed(() => {
-  const index = new Map<string, string[]>();
+const accountsByOrg = computed(() => {
+  const index = new Map<string, ConnectedAccount[]>();
   for (const account of accounts.value) {
     if (!account.org_id) continue;
     const key = `${account.provider}\u0000${account.org_id}`;
-    const addresses = index.get(key) ?? [];
-    addresses.push(account.email || account.display_name || account.provider_account_id);
-    index.set(key, addresses);
+    const group = index.get(key) ?? [];
+    group.push(account);
+    index.set(key, group);
   }
   return index;
 });
 
 /** readers lists the accounts of the organisation of an event. */
 function readers(event: AuditLogEvent): string {
-  return (readersByOrg.value.get(`${event.provider}\u0000${event.org_id}`) ?? []).join(' · ');
+  return accountsFor(event)
+    .map((account) => account.email || account.display_name || account.provider_account_id)
+    .join(' · ');
+}
+
+/** accountsFor lists the connected accounts that read the feed of an event. */
+function accountsFor(event: AuditLogEvent): ConnectedAccount[] {
+  return accountsByOrg.value.get(`${event.provider}\u0000${event.org_id}`) ?? [];
+}
+
+/**
+ * canResolveOwners reports whether one of the accounts of the organisation holds
+ * the directory grant the owner lookup needs (the `groups` capability, see
+ * plan 2026-11-07-audit-log-actor-attribution.md). An unknown account answers true:
+ * the hint only appears when the screen knows the grant is missing.
+ */
+function canResolveOwners(event: AuditLogEvent): boolean {
+  const group = accountsFor(event);
+  if (group.length === 0) return true;
+  return group.some((account) => !account.missing_capabilities.includes('groups'));
+}
+
+/**
+ * ownerUnavailable is true for a device change a workload made, with no person
+ * behind it and no grant to look one up: the one case where the row cannot say who
+ * enrolled the device, and the operator can do something about it.
+ */
+function ownerUnavailable(event: AuditLogEvent): boolean {
+  return (
+    event.actor_kind === 'application' &&
+    event.target === 'device' &&
+    !event.actor_on_behalf_of &&
+    !canResolveOwners(event)
+  );
+}
+
+/**
+ * actorLabel is the primary line of the actor cell. A person is named by the
+ * address the vendor reported; a workload by its display name, because a service
+ * principal name is not an address and must never render as one.
+ */
+function actorLabel(event: AuditLogEvent): string {
+  if (event.actor_kind === 'application' || event.actor_kind === 'system') {
+    return event.actor_name || t('common.unknown');
+  }
+  return event.actor_email || event.actor_name || t('common.unknown');
+}
+
+/** actorDetail is the secondary line of the actor cell, empty when it adds nothing. */
+function actorDetail(event: AuditLogEvent): string {
+  if (event.actor_kind === 'application' || event.actor_kind === 'system') {
+    return '';
+  }
+  const label = event.actor_email || '';
+  return event.actor_name && event.actor_name !== label ? event.actor_name : '';
+}
+
+/** onBehalfOf is the line naming the person a workload acted for. */
+function onBehalfOf(event: AuditLogEvent): string {
+  if (!event.actor_on_behalf_of) return '';
+  return t('auditLogs.onBehalfOf', {
+    actor: event.actor_on_behalf_of_name || event.actor_on_behalf_of,
+  });
 }
 
 // Picking an account chooses its provider, and choosing another provider drops a
@@ -252,7 +326,14 @@ async function collect(): Promise<void> {
         result.errors?.join('\n'),
       );
     } else {
-      feedback.success(t('auditLogs.collected', { events: result.events, streams: result.streams }));
+      const message = t('auditLogs.collected', { events: result.events, streams: result.streams });
+      // The pass also repairs the history a release before the actor kind stored;
+      // saying so explains why a row changed its actor without a new event.
+      feedback.success(
+        result.repaired > 0
+          ? `${message} ${t('auditLogs.collectedRepaired', { repaired: result.repaired })}`
+          : message,
+      );
     }
     await load();
   } catch (error) {
@@ -421,13 +502,31 @@ onMounted(() => {
                 <p v-if="event.site_id" class="text-xs text-muted-foreground">{{ event.site_id }}</p>
               </td>
               <td class="break-anywhere px-3 py-2">
-                <p>{{ event.actor_email || t('common.unknown') }}</p>
-                <p v-if="event.actor_name" class="text-xs text-muted-foreground">{{ event.actor_name }}</p>
+                <span class="flex flex-wrap items-center gap-2">
+                  <span>{{ actorLabel(event) }}</span>
+                  <span
+                    v-if="event.actor_kind === 'application' || event.actor_kind === 'system'"
+                    class="rounded-md border border-border px-1.5 py-0.5 text-xs text-muted-foreground"
+                  >
+                    {{ t(`auditLogs.actorKind.${event.actor_kind}`) }}
+                  </span>
+                </span>
+                <p v-if="actorDetail(event)" class="text-xs text-muted-foreground">
+                  {{ actorDetail(event) }}
+                </p>
+                <p v-if="onBehalfOf(event)" class="text-xs text-muted-foreground">
+                  {{ onBehalfOf(event) }}
+                </p>
+                <p v-if="ownerUnavailable(event)" class="text-xs text-muted-foreground">
+                  {{ t('auditLogs.ownerUnavailable') }}
+                </p>
               </td>
               <td class="break-anywhere px-3 py-2 text-muted-foreground">
                 <p>{{ event.org_id }}</p>
                 <p class="text-xs">{{ event.provider }} · {{ event.source }}</p>
-                <p v-if="readers(event)" class="text-xs">{{ readers(event) }}</p>
+                <p v-if="readers(event)" class="text-xs">
+                  {{ t('auditLogs.readBy', { accounts: readers(event) }) }}
+                </p>
               </td>
             </tr>
           </tbody>

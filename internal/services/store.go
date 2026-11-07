@@ -748,11 +748,16 @@ func (s *Store) auditLogQuery(ctx context.Context, filter AuditLogFilter) *gorm.
 		query = query.Where("target = ?", filter.Target)
 	}
 	if filter.Actor != "" {
-		query = query.Where("actor_email = ?", filter.Actor)
+		// The actor box answers "everything this person or workload did", so it
+		// matches both the address of a person and the person a workload acted
+		// for (a device registration is filed under the service that made it).
+		query = query.Where("actor_email = ? OR actor_on_behalf_of = ?", filter.Actor, filter.Actor)
 	}
 	if filter.Search != "" {
 		like := "%" + filter.Search + "%"
-		query = query.Where("actor_email LIKE ? OR target_name LIKE ?", like, like)
+		query = query.Where(
+			"actor_email LIKE ? OR actor_name LIKE ? OR actor_on_behalf_of LIKE ? OR target_name LIKE ?",
+			like, like, like, like)
 	}
 	if filter.From != nil {
 		query = query.Where("occurred_at >= ?", *filter.From)
@@ -845,6 +850,91 @@ func (s *Store) SaveAuditLogCursor(ctx context.Context, cursor *models.AuditLogC
 		Create(cursor).Error
 	if err != nil {
 		return fmt.Errorf("services: saving the activity cursor: %w", err)
+	}
+	return nil
+}
+
+// AuditLogRepair is what the repair pass rewrites on one stored event: the actor
+// attribution and the normalised target, both derived from re-reading the vendor
+// document. Nothing else of the row is touched, so its identity, its timestamps and
+// the vendor document itself stay exactly as the collector stored them.
+type AuditLogRepair struct {
+	Actor AuditLogActor
+	// Target is a models.AuditLogTarget. It is rewritten with the actor because
+	// the same re-read classifies both: a device registration the previous
+	// release filed as "other" is a device.
+	Target string
+}
+
+// AuditLogActor is the attribution of one stored activity event: who did it.
+// It is what the repair pass rewrites, and the only part of a stored row it
+// touches, so a re-read of the vendor document cannot disturb the filters, the
+// cursor or the identity of the event.
+type AuditLogActor struct {
+	// Kind is a models.AuditLogActorKind; it is never empty after a repair.
+	Kind string
+	// Email is the address of a person and stays empty for a workload.
+	Email string
+	Name  string
+	ID    string
+	// OnBehalfOf names the person a workload acted for, when it is known.
+	OnBehalfOf     string
+	OnBehalfOfName string
+}
+
+// PendingAuditLogActors lists the events whose actor attribution a release before
+// the actor kind left incomplete: an empty kind marks a row the collector has not
+// re-read since. They are answered oldest first so a bounded pass makes steady
+// progress through the history instead of restarting at the newest event.
+func (s *Store) PendingAuditLogActors(ctx context.Context, limit int) ([]models.AuditLogEvent, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	var rows []models.AuditLogEvent
+	err := s.db.WithContext(ctx).
+		Where("actor_kind = ?", "").
+		Order("occurred_at ASC").
+		Order("id ASC").
+		Limit(limit).
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("services: listing the activity events to repair: %w", err)
+	}
+	return rows, nil
+}
+
+// CountPendingAuditLogActors counts the rows PendingAuditLogActors would answer,
+// so a pass can tell whether a repair is worth a batch and the screen can report
+// what is left.
+func (s *Store) CountPendingAuditLogActors(ctx context.Context) (int64, error) {
+	var total int64
+	if err := s.db.WithContext(ctx).Model(&models.AuditLogEvent{}).
+		Where("actor_kind = ?", "").
+		Count(&total).Error; err != nil {
+		return 0, fmt.Errorf("services: counting the activity events to repair: %w", err)
+	}
+	return total, nil
+}
+
+// RepairAuditLogEvent rewrites the actor attribution and the target of one stored
+// event, the two fields the repair pass derives from the vendor document.
+func (s *Store) RepairAuditLogEvent(ctx context.Context, id uint, repair AuditLogRepair) error {
+	columns := map[string]any{
+		"actor_kind":              repair.Actor.Kind,
+		"actor_email":             repair.Actor.Email,
+		"actor_name":              repair.Actor.Name,
+		"actor_id":                repair.Actor.ID,
+		"actor_on_behalf_of":      repair.Actor.OnBehalfOf,
+		"actor_on_behalf_of_name": repair.Actor.OnBehalfOfName,
+	}
+	if target := strings.TrimSpace(repair.Target); target != "" {
+		columns["target"] = target
+	}
+	err := s.db.WithContext(ctx).Model(&models.AuditLogEvent{}).
+		Where("id = ?", id).
+		Updates(columns).Error
+	if err != nil {
+		return fmt.Errorf("services: repairing the actor of activity event %d: %w", id, err)
 	}
 	return nil
 }

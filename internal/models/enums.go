@@ -205,6 +205,12 @@ const (
 	AuditLogTargetSite AuditLogTarget = "site"
 	// AuditLogTargetDrive is a drive or document library.
 	AuditLogTargetDrive AuditLogTarget = "drive"
+	// AuditLogTargetDevice is a device registration (an Entra device object:
+	// a laptop, a phone, a server joined to the directory).
+	AuditLogTargetDevice AuditLogTarget = "device"
+	// AuditLogTargetApplication is an application or service principal: the
+	// identity of a workload rather than of a person.
+	AuditLogTargetApplication AuditLogTarget = "application"
 	// AuditLogTargetOther is a target the normaliser did not recognise.
 	AuditLogTargetOther AuditLogTarget = "other"
 )
@@ -213,7 +219,40 @@ const (
 func (t AuditLogTarget) Valid() bool {
 	switch t {
 	case AuditLogTargetFile, AuditLogTargetFolder, AuditLogTargetUser, AuditLogTargetGroup,
-		AuditLogTargetSite, AuditLogTargetDrive, AuditLogTargetOther:
+		AuditLogTargetSite, AuditLogTargetDrive, AuditLogTargetDevice, AuditLogTargetApplication,
+		AuditLogTargetOther:
+		return true
+	default:
+		return false
+	}
+}
+
+// AuditLogActorKind is the nature of the principal behind an activity event.
+// It exists because the actor of a change is not always a person: a device
+// registration names "Device Registration Service", a policy refresh names the
+// workload that ran it. Without this column a service name has to travel in the
+// actor e-mail slot, where the screen reads it as an address (see plan
+// 2026-11-07-audit-log-actor-attribution.md).
+type AuditLogActorKind string
+
+const (
+	// AuditLogActorUser is a person: ActorEmail holds the address.
+	AuditLogActorUser AuditLogActorKind = "user"
+	// AuditLogActorApplication is a workload (a service principal, an
+	// application, a background service): ActorEmail stays empty and
+	// ActorName holds the display name. ActorOnBehalfOf may name the person
+	// whose action the workload carried out.
+	AuditLogActorApplication AuditLogActorKind = "application"
+	// AuditLogActorSystem is an event the vendor attributes to no principal at
+	// all (a scheduled policy, a background job), named after the service that
+	// logged it.
+	AuditLogActorSystem AuditLogActorKind = "system"
+)
+
+// Valid reports whether the value is a supported actor kind.
+func (k AuditLogActorKind) Valid() bool {
+	switch k {
+	case AuditLogActorUser, AuditLogActorApplication, AuditLogActorSystem:
 		return true
 	default:
 		return false

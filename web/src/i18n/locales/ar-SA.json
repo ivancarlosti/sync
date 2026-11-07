@@ -789,6 +789,7 @@
     "staleTitle": "تعذّرت قراءة تدفّق",
     "staleHint": "فشل {feeds} تدفّقًا في آخر مرور. ما يظهر أدناه جُمع قبل ذلك.",
     "collected": "تمت قراءة {events} حدثًا من {streams} تدفّقًا.",
+    "collectedRepaired": "أُعيد إسناد {repaired} حدثًا سابقًا.",
     "collectedWithFailures": "فشل {failed} من {streams} تدفّقًا. راجع التنبيه للسبب.",
     "action": {
       "create": "أُنشئ",
@@ -804,10 +805,20 @@
       "folder": "مجلد",
       "user": "مستخدم",
       "group": "مجموعة",
+      "device": "جهاز",
+      "application": "تطبيق",
       "site": "موقع",
       "drive": "وحدة تخزين",
       "other": "أخرى"
     },
+    "actorKind": {
+      "user": "شخص",
+      "application": "خدمة",
+      "system": "النظام"
+    },
+    "onBehalfOf": "نيابةً عن {actor}",
+    "readBy": "قُرئ بواسطة {accounts}",
+    "ownerUnavailable": "لا يمكن للحساب الذي يقرأ هذا التدفّق تحديد مالك الجهاز: امنح إذن الدليل لتسمية الشخص المسؤول عن هذا التغيير.",
     "actionLabel": "الإجراء",
     "targetLabel": "الكائن",
     "error_validation": "تحقق من عوامل التصفية: أحدها قيمة غير معروفة.",

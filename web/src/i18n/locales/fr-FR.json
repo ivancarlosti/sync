@@ -789,6 +789,7 @@
     "staleTitle": "Un flux n'a pas pu être lu",
     "staleHint": "{feeds} flux ont échoué lors de leur dernière passe. Ce qui est affiché ci-dessous a été collecté avant.",
     "collected": "{events} événement(s) lus dans {streams} flux.",
+    "collectedRepaired": "{repaired} événement(s) antérieurs réattribués.",
     "collectedWithFailures": "{failed} flux sur {streams} ont échoué. Voir la bannière pour la raison.",
     "action": {
       "create": "Créé",
@@ -804,10 +805,20 @@
       "folder": "Dossier",
       "user": "Utilisateur",
       "group": "Groupe",
+      "device": "Appareil",
+      "application": "Application",
       "site": "Site",
       "drive": "Périphérique",
       "other": "Autre"
     },
+    "actorKind": {
+      "user": "Personne",
+      "application": "Service",
+      "system": "Système"
+    },
+    "onBehalfOf": "au nom de {actor}",
+    "readBy": "lu par {accounts}",
+    "ownerUnavailable": "Le compte qui lit ce flux ne peut pas résoudre le propriétaire de l'appareil : accordez l'autorisation d'annuaire pour nommer la personne derrière cette modification.",
     "actionLabel": "Action",
     "targetLabel": "Objet",
     "error_validation": "Vérifiez les filtres : l'un d'eux n'est pas une valeur connue.",

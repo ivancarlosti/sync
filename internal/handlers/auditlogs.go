@@ -23,48 +23,59 @@ import (
 // shows, so a spreadsheet opens as the operator sees it.
 var auditLogCSVHeader = []string{
 	"occurred_at", "provider", "org_id", "stream", "action", "target",
-	"actor_email", "actor_name", "target_name", "target_id", "site_id", "remote_id",
+	"actor_kind", "actor_email", "actor_name", "actor_on_behalf_of", "actor_on_behalf_of_name",
+	"target_name", "target_id", "site_id", "remote_id",
 }
 
 // auditLogView is one row of the Audit Logs screen. The stored row carries the
 // vendor record in Raw, which is never sent: the screen renders the normalised
 // columns, and the raw document stays available in the database.
 type auditLogView struct {
-	ID         uint      `json:"id"`
-	Provider   string    `json:"provider"`
-	Source     string    `json:"source"`
-	RemoteID   string    `json:"remote_id"`
-	OrgID      string    `json:"org_id"`
-	Action     string    `json:"action"`
-	Target     string    `json:"target"`
-	ActorEmail string    `json:"actor_email"`
-	ActorName  string    `json:"actor_name,omitempty"`
-	ActorID    string    `json:"actor_id,omitempty"`
-	TargetName string    `json:"target_name,omitempty"`
-	TargetID   string    `json:"target_id,omitempty"`
-	DriveID    string    `json:"drive_id,omitempty"`
-	SiteID     string    `json:"site_id,omitempty"`
-	OccurredAt time.Time `json:"occurred_at"`
+	ID       uint   `json:"id"`
+	Provider string `json:"provider"`
+	Source   string `json:"source"`
+	RemoteID string `json:"remote_id"`
+	OrgID    string `json:"org_id"`
+	Action   string `json:"action"`
+	Target   string `json:"target"`
+	// ActorKind is `user`, `application` or `system` (models.AuditLogActorKind):
+	// the screen renders the actor cell from it, because an application name in
+	// the address column reads as a person (see plan
+	// 2026-11-07-audit-log-actor-attribution.md).
+	ActorKind           string    `json:"actor_kind"`
+	ActorEmail          string    `json:"actor_email"`
+	ActorName           string    `json:"actor_name,omitempty"`
+	ActorID             string    `json:"actor_id,omitempty"`
+	ActorOnBehalfOf     string    `json:"actor_on_behalf_of,omitempty"`
+	ActorOnBehalfOfName string    `json:"actor_on_behalf_of_name,omitempty"`
+	TargetName          string    `json:"target_name,omitempty"`
+	TargetID            string    `json:"target_id,omitempty"`
+	DriveID             string    `json:"drive_id,omitempty"`
+	SiteID              string    `json:"site_id,omitempty"`
+	OccurredAt          time.Time `json:"occurred_at"`
 }
 
 // newAuditLogView decorates one stored event.
 func newAuditLogView(event models.AuditLogEvent) auditLogView {
 	return auditLogView{
-		ID:         event.ID,
-		Provider:   event.Provider,
-		Source:     event.Source,
-		RemoteID:   event.RemoteID,
-		OrgID:      event.OrgID,
-		Action:     event.Action,
-		Target:     event.Target,
-		ActorEmail: event.ActorEmail,
-		ActorName:  event.ActorName,
-		ActorID:    event.ActorID,
-		TargetName: event.TargetName,
-		TargetID:   event.TargetID,
-		DriveID:    event.DriveID,
-		SiteID:     event.SiteID,
-		OccurredAt: event.OccurredAt,
+		ID:                  event.ID,
+		Provider:            event.Provider,
+		Source:              event.Source,
+		RemoteID:            event.RemoteID,
+		OrgID:               event.OrgID,
+		Action:              event.Action,
+		Target:              event.Target,
+		ActorKind:           event.ActorKind,
+		ActorEmail:          event.ActorEmail,
+		ActorName:           event.ActorName,
+		ActorID:             event.ActorID,
+		ActorOnBehalfOf:     event.ActorOnBehalfOf,
+		ActorOnBehalfOfName: event.ActorOnBehalfOfName,
+		TargetName:          event.TargetName,
+		TargetID:            event.TargetID,
+		DriveID:             event.DriveID,
+		SiteID:              event.SiteID,
+		OccurredAt:          event.OccurredAt,
 	}
 }
 
@@ -149,6 +160,7 @@ func auditLogTargets() []string {
 	return []string{
 		string(models.AuditLogTargetFile), string(models.AuditLogTargetFolder),
 		string(models.AuditLogTargetUser), string(models.AuditLogTargetGroup),
+		string(models.AuditLogTargetDevice), string(models.AuditLogTargetApplication),
 		string(models.AuditLogTargetSite), string(models.AuditLogTargetDrive),
 		string(models.AuditLogTargetOther),
 	}
@@ -258,8 +270,11 @@ func (s *Server) handleExportAuditLogs(c *gin.Context) {
 			event.Source,
 			event.Action,
 			event.Target,
+			event.ActorKind,
 			event.ActorEmail,
 			event.ActorName,
+			event.ActorOnBehalfOf,
+			event.ActorOnBehalfOfName,
 			event.TargetName,
 			event.TargetID,
 			event.SiteID,
@@ -282,5 +297,16 @@ func (s *Server) handleExportAuditLogs(c *gin.Context) {
 // which is how the screen explains a missing consent).
 func (s *Server) handleMaintenanceAuditLogs(c *gin.Context) {
 	outcome := s.deps.Scheduler.RunAuditLogs(c.Request.Context())
+	c.JSON(http.StatusOK, outcome)
+}
+
+// handleMaintenanceAuditLogRepair answers POST /api/maintenance/auditlogs/renormalise:
+// it re-reads the stored vendor document of the events a release before the actor
+// kind attributed with a single slot, and gives them the actor the current
+// normaliser produces (a person, a workload, or the person behind a workload). The
+// same pass runs at the end of every collect, so this endpoint is how an operator
+// repairs the history now instead of waiting for the next tick.
+func (s *Server) handleMaintenanceAuditLogRepair(c *gin.Context) {
+	outcome := s.deps.Scheduler.RunAuditLogRepair(c.Request.Context())
 	c.JSON(http.StatusOK, outcome)
 }

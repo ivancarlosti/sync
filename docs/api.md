@@ -312,19 +312,24 @@ Query parameters of the list and the export (every one optional):
 | `provider` | `microsoft` \| `google` |
 | `org_id` | the tenant (Microsoft) or Workspace domain (Google) |
 | `action` | `create` \| `delete` \| `update` \| `move` \| `share` \| `login` \| `other` |
-| `target` | `file` \| `folder` \| `user` \| `group` \| `site` \| `drive` \| `other` |
-| `actor` | exact actor e-mail |
-| `search` | substring of the actor e-mail or the object name |
+| `target` | `file` \| `folder` \| `user` \| `group` \| `device` \| `application` \| `site` \| `drive` \| `other` |
+| `actor` | exact actor address, or the address of the person a workload acted for |
+| `search` | substring of the actor address, the actor name, the person a workload acted for, or the object name |
 | `from`, `to` | RFC3339 or `YYYY-MM-DD`; a date-only `to` means the end of that day |
 | `limit`, `offset` | pagination of the list (`limit` default 50, max 500) |
 
 An unknown value is a **400** (`validation`), never a silently empty page.
 
 `auditLogView` = `{id, provider, source, remote_id, org_id, action, target,
-actor_email, actor_name?, actor_id?, target_name?, target_id?, drive_id?,
-site_id?, occurred_at}`. `source` is the feed the record came from (`directory`,
-`unified`, `drive`, `user_accounts`, `groups`, `admin`, `login`). The vendor
-document is stored but **never serialised**.
+actor_kind, actor_email, actor_name?, actor_id?, actor_on_behalf_of?,
+actor_on_behalf_of_name?, target_name?, target_id?, drive_id?, site_id?,
+occurred_at}`. `source` is the feed the record came from (`directory`, `unified`,
+`drive`, `user_accounts`, `groups`, `admin`, `login`). `actor_kind` is `user`
+(a person: `actor_email` is set), `application` (a workload: `actor_name` only,
+`actor_email` empty) or `system` (no principal: `actor_name` is the service that
+logged the event); `actor_on_behalf_of` names the person a workload acted for when
+it is known (see [audit-logs.md](audit-logs.md) §3). The vendor document is stored
+but **never serialised**.
 
 `auditLogCursor` = `{provider, org_id, stream, cursor?, last_event_at?,
 last_run_at?, healthy, needs_consent, last_error?}`: `healthy` is false when the
@@ -418,7 +423,8 @@ bucket,day,month,account_id,account_email,run_id,job_id,inbound,outbound,operati
 | `POST` | `/api/maintenance/oauth/states/prune` | `{removed}` |
 | `POST` | `/api/maintenance/runs/prune` | `{keep}` (default 200, 1…10000) → `{keep, pruned:true}` |
 | `POST` | `/api/maintenance/audits/prune` | `{keep}` (default 50, 1…10000) → `{keep, pruned:true}` |
-| `POST` | `/api/maintenance/auditlogs/collect` | `{organisations, streams, failed, events, duration_ms, errors?}` — one activity-feed pass right now (see [audit-logs.md](audit-logs.md)) |
+| `POST` | `/api/maintenance/auditlogs/collect` | `{organisations, streams, failed, events, repaired, pending_repairs, duration_ms, errors?}` — one activity-feed pass right now, including the repair of the stored history (see [audit-logs.md](audit-logs.md)) |
+| `POST` | `/api/maintenance/auditlogs/renormalise` | `{scanned, updated, attributed, remaining, duration_ms}` — re-read the stored vendor documents and re-attribute the events a release before `actor_kind` mapped with a single actor slot |
 | `POST` | `/api/maintenance/purge` | `{target}` ∈ `all` \| `jobs` \| `audits` \| `billing` \| `auditlogs`, optional `{days}` → `PurgeOutcome` |
 
 ## 11. Worked examples

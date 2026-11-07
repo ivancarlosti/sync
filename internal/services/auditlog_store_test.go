@@ -233,4 +233,115 @@ func TestPurgeAuditLogsBefore(t *testing.T) {
 }
 
 // timePtr is a small helper for the optional date filters.
+
+// TestListAuditLogEventsMatchesThePersonBehindAWorkload pins the two filter
+// behaviours the actor attribution change adds: the actor box of the screen also
+// answers the person a workload acted for, and the free-text search also matches the
+// name of a workload, which no longer lives in the address column.
+func TestListAuditLogEventsMatchesThePersonBehindAWorkload(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+
+	workload := activityEvent(models.ProviderMicrosoft, "directory", "dev-1", "tenant-a",
+		models.AuditLogUpdate, "", base)
+	workload.ActorKind = string(models.AuditLogActorApplication)
+	workload.ActorName = "Device Registration Service"
+	workload.ActorOnBehalfOf = "ivan@contoso.com"
+	workload.ActorOnBehalfOfName = "Ivan Almeida"
+	workload.Target = string(models.AuditLogTargetDevice)
+	workload.TargetName = "DESKTOP-J979VG0"
+
+	person := activityEvent(models.ProviderMicrosoft, "directory", "user-1", "tenant-a",
+		models.AuditLogCreate, "ivan@contoso.com", base.Add(time.Hour))
+	person.ActorKind = string(models.AuditLogActorUser)
+	person.ActorName = "Ivan Almeida"
+
+	if err := store.InsertAuditLogEvents(ctx, []models.AuditLogEvent{workload, person}); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+
+	cases := []struct {
+		name   string
+		filter AuditLogFilter
+		want   int64
+	}{
+		{"actor box matches the address", AuditLogFilter{Actor: "ivan@contoso.com"}, 2},
+		{"search matches the workload name", AuditLogFilter{Search: "Device Registration"}, 1},
+		{"search matches the device", AuditLogFilter{Search: "DESKTOP"}, 1},
+		{"target device", AuditLogFilter{Target: string(models.AuditLogTargetDevice)}, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, total, err := store.ListAuditLogEvents(ctx, tc.filter)
+			if err != nil {
+				t.Fatalf("listing: %v", err)
+			}
+			if total != tc.want {
+				t.Fatalf("filter %s matched %d events, want %d", tc.name, total, tc.want)
+			}
+		})
+	}
+}
+
+// TestPendingAuditLogActorsFindsAndRewritesTheHistory pins the storage side of the
+// repair pass: only the rows stored without an actor kind are candidates, the count
+// agrees with the listing, and the rewrite touches nothing but the actor columns.
+func TestPendingAuditLogActorsFindsAndRewritesTheHistory(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 7, 8, 0, 0, 0, time.UTC)
+
+	legacy := activityEvent(models.ProviderMicrosoft, "directory", "legacy", "tenant-a",
+		models.AuditLogUpdate, "deviceregistrationservice", base)
+	legacy.Raw = `{"vendor":"record"}`
+	done := activityEvent(models.ProviderMicrosoft, "directory", "done", "tenant-a",
+		models.AuditLogCreate, "ada@contoso.com", base.Add(time.Hour))
+	done.ActorKind = string(models.AuditLogActorUser)
+	if err := store.InsertAuditLogEvents(ctx, []models.AuditLogEvent{legacy, done}); err != nil {
+		t.Fatalf("seeding: %v", err)
+	}
+
+	pending, err := store.PendingAuditLogActors(ctx, 10)
+	if err != nil {
+		t.Fatalf("listing the pending rows: %v", err)
+	}
+	if len(pending) != 1 || pending[0].RemoteID != "legacy" {
+		t.Fatalf("pending = %+v, want only the row stored without an actor kind", pending)
+	}
+	if count, err := store.CountPendingAuditLogActors(ctx); err != nil || count != 1 {
+		t.Fatalf("count = %d/%v, want the one pending row", count, err)
+	}
+
+	actor := AuditLogActor{
+		Kind:       string(models.AuditLogActorApplication),
+		Name:       "Device Registration Service",
+		OnBehalfOf: "ivan@contoso.com",
+	}
+	if err := store.RepairAuditLogEvent(ctx, pending[0].ID, AuditLogRepair{Actor: actor, Target: string(models.AuditLogTargetDevice)}); err != nil {
+		t.Fatalf("repairing the row: %v", err)
+	}
+	if count, err := store.CountPendingAuditLogActors(ctx); err != nil || count != 0 {
+		t.Fatalf("count after the repair = %d/%v, want none left", count, err)
+	}
+
+	rows, _, err := store.ListAuditLogEvents(ctx, AuditLogFilter{Search: "Device Registration"})
+	if err != nil {
+		t.Fatalf("listing the repaired row: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("the repaired row is not searchable by its new actor name: %+v", rows)
+	}
+	repaired := rows[0]
+	if repaired.ActorEmail != "" || repaired.ActorKind != string(models.AuditLogActorApplication) {
+		t.Errorf("actor = %q/%q, want a workload with no address", repaired.ActorKind, repaired.ActorEmail)
+	}
+	if repaired.ActorOnBehalfOf != "ivan@contoso.com" {
+		t.Errorf("ActorOnBehalfOf = %q, want the person behind the workload", repaired.ActorOnBehalfOf)
+	}
+	if repaired.Raw != legacy.Raw || repaired.Action != legacy.Action {
+		t.Errorf("the repair disturbed the rest of the row: %+v", repaired)
+	}
+}
+
 func timePtr(value time.Time) *time.Time { return &value }

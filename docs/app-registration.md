@@ -67,6 +67,20 @@ URL and it is never reported in the `scope` of a token response, so declaring it
 here would mark every connected account as missing a permission that a reconnect
 cannot add.
 
+The same rule keeps `Device.Read.All` out of the table. The Audit Logs screen
+names the person behind a workload-made device change by reading
+`/devices/{id}?$expand=registeredOwners` ([audit-logs.md](audit-logs.md) §3), and
+Graph accepts any of `Directory.ReadWrite.All`, `Directory.Read.All`,
+`Device.Read.All` or `Device.ReadWrite.All` for it. `Directory.ReadWrite.All` is
+already in the `groups` row above, so the enrichment rides on a grant every
+connected account carries: no new consent, no reconnect, and nothing to fix if a
+tenant refuses the read (the row simply names the service). Asking for the
+narrower `Device.Read.All` would be an improvement in least privilege, and it is
+recorded as a follow-up rather than smuggled into an upgrade: a new scope in this
+table makes every refresh ask for it, and a refresh token issued before it existed
+fails with `AADSTS65001 consent_required` — which would take files, users and logs
+down together for every account.
+
 ## 2. Google Workspace
 
 ### 2.1 Steps

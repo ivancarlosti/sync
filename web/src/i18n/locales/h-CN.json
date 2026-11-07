@@ -789,6 +789,7 @@
     "staleTitle": "有数据流读取失败",
     "staleHint": "{feeds} 个数据流在上一次采集时失败。下面显示的是此前采集的内容。",
     "collected": "从 {streams} 个数据流读取了 {events} 条事件。",
+    "collectedRepaired": "已重新归属 {repaired} 条较早的事件。",
     "collectedWithFailures": "{streams} 个数据流中有 {failed} 个失败。请查看提示了解原因。",
     "action": {
       "create": "创建",
@@ -804,10 +805,20 @@
       "folder": "文件夹",
       "user": "用户",
       "group": "组",
+      "device": "设备",
+      "application": "应用",
       "site": "站点",
       "drive": "驱动器",
       "other": "其他"
     },
+    "actorKind": {
+      "user": "人员",
+      "application": "服务",
+      "system": "系统"
+    },
+    "onBehalfOf": "代表 {actor}",
+    "readBy": "由 {accounts} 读取",
+    "ownerUnavailable": "读取此数据流的账户无法解析设备所有者：请授予目录权限以指明此变更背后的人员。",
     "actionLabel": "操作",
     "targetLabel": "对象",
     "error_validation": "请检查筛选条件：其中一项不是已知取值。",

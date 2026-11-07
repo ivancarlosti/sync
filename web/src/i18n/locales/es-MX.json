@@ -781,10 +781,20 @@
       "folder": "Carpeta",
       "user": "Usuario",
       "group": "Grupo",
+      "device": "Dispositivo",
+      "application": "Aplicación",
       "site": "Sitio",
       "drive": "Unidad",
       "other": "Otro"
     },
+    "actorKind": {
+      "user": "Persona",
+      "application": "Servicio",
+      "system": "Sistema"
+    },
+    "onBehalfOf": "en nombre de {actor}",
+    "readBy": "leído por {accounts}",
+    "ownerUnavailable": "La cuenta que lee este feed no puede resolver el propietario del dispositivo: concede el permiso de directorio para nombrar a la persona detrás de este cambio.",
     "actionLabel": "Acción",
     "targetLabel": "Objeto",
     "search": "Buscar",
@@ -809,6 +819,7 @@
     "staleTitle": "No se pudo leer un feed",
     "staleHint": "{feeds} feed(s) fallaron en su última pasada. Lo que se muestra abajo se recopiló antes.",
     "collected": "Se leyeron {events} evento(s) de {streams} feed(s).",
+    "collectedRepaired": "Se reatribuyeron {repaired} evento(s) anteriores.",
     "collectedWithFailures": "Fallaron {failed} de {streams} feed(s). Revisa el aviso para ver el motivo.",
     "error_validation": "Revisa los filtros: alguno no es un valor conocido.",
     "error_busy": "Ya hay una recopilación en curso.",

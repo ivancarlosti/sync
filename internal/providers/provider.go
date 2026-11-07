@@ -165,6 +165,15 @@ type ActivityEvent struct {
 	ActorEmail string
 	ActorName  string
 	ActorID    string
+	// ActorKind is the nature of the principal (models.AuditLogActorKind): a
+	// person, a workload or nobody at all. An application name belongs in
+	// ActorName, never in ActorEmail.
+	ActorKind models.AuditLogActorKind
+	// ActorOnBehalfOf names the person a workload acted for, when the vendor
+	// says so (a device registration is a service acting for the human who
+	// enrolled it). Both stay empty when the record does not say.
+	ActorOnBehalfOf     string
+	ActorOnBehalfOfName string
 
 	TargetName string
 	TargetID   string
@@ -207,6 +216,39 @@ type ActivityLogSource interface {
 	// the provider has no meaningful resume token, in which case the collector
 	// keeps the previous position.
 	ActivityLogs(ctx context.Context, creds Credentials, tokens *Tokens, stream, cursor string) (events []ActivityEvent, next string, err error)
+}
+
+// ActivityLogNormaliser is the optional capability behind the repair pass of the
+// activity feed: it maps one *stored* vendor record back onto the shared
+// vocabulary, without a network read. The collector keeps the vendor document of
+// every event in AuditLogEvent.Raw precisely so a normaliser that learned a field
+// later can re-read the history instead of leaving it wrong forever (see
+// plan 2026-11-07-audit-log-actor-attribution.md).
+//
+// A provider that does not implement it simply keeps its stored rows as they are:
+// the repair pass skips its events, which is why the interface is optional.
+type ActivityLogNormaliser interface {
+	// NormaliseActivityEvent parses one vendor record of the named stream.
+	// It answers false for a record it cannot read, which leaves the stored row
+	// untouched instead of erasing what the previous release mapped.
+	NormaliseActivityEvent(source string, raw json.RawMessage) (ActivityEvent, bool)
+}
+
+// ActivityActorEnricher is the optional capability that gives an event a better
+// actor than the one its record carries: vendors log a change as made by a
+// workload ("Device Registration Service") while the person behind it is only
+// recoverable from another object the event points at (the device, and its
+// registered owners).
+//
+// The collector calls it on the events of a pass and on the rows of a repair
+// pass, so a batch is always the unit of work: an implementation deduplicates
+// inside the batch, and a failure — a throttle, a refusal, an object that no
+// longer exists — must be logged and skipped, never returned: attribution is an
+// improvement, and an unreachable enrichment must not cost the pass.
+type ActivityActorEnricher interface {
+	// EnrichActivityActors fills the actor fields of the events it can, and
+	// answers how many it improved.
+	EnrichActivityActors(ctx context.Context, tokens *Tokens, events []ActivityEvent) int
 }
 
 // Drive is a named root the operator can browse and pick a folder from. For
@@ -612,6 +654,18 @@ func normalizeScope(scope string) string {
 // forms appear in token responses, so the scope matching above is prefix
 // tolerant instead of the permission tables having to declare every variant.
 const graphResource = "https://graph.microsoft.com/"
+
+// GrantsScope reports whether a grant carries one scope, ignoring case, surrounding
+// whitespace and (for Microsoft Graph) the resource prefix.
+//
+// It answers a different question than HasCapability: whether an optional read a
+// provider performs on top of its permission table is allowed by the grant in hand
+// (see the device-owner enrichment of the Microsoft audit feed). A capability asks
+// for *every* permission it declares, which is the right question for a badge and
+// the wrong one for an enrichment that any of several scopes authorises.
+func GrantsScope(granted []string, scope string) bool {
+	return containsScope(granted, scope)
+}
 
 // containsScope reports whether a granted scope list holds a scope, ignoring case,
 // surrounding whitespace and (for Microsoft Graph) the resource prefix.

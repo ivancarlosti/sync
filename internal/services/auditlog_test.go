@@ -8,6 +8,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -38,6 +39,13 @@ type stubActivityProvider struct {
 	events  map[string][]providers.ActivityEvent
 	next    map[string]string
 	errors  map[string]error
+	// normalised answers the repair pass: the event a stored vendor document is
+	// re-read into, keyed by the document itself.
+	normalised map[string]providers.ActivityEvent
+	// enrich is the enrichment of the repair pass (see
+	// providers.ActivityActorEnricher); nil means the stub cannot improve an
+	// actor, which is what a feed without owners looks like.
+	enrich func(events []providers.ActivityEvent) int
 }
 
 // newStubActivityProvider builds the stub around an empty fake drive.
@@ -48,6 +56,7 @@ func newStubActivityProvider(name models.ProviderName) *stubActivityProvider {
 		events:       map[string][]providers.ActivityEvent{},
 		next:         map[string]string{},
 		errors:       map[string]error{},
+		normalised:   map[string]providers.ActivityEvent{},
 	}
 }
 
@@ -75,6 +84,27 @@ func (p *stubActivityProvider) ActivityLogs(_ context.Context, _ providers.Crede
 		next = "2026-11-07T12:00:00Z"
 	}
 	return events, next, nil
+}
+
+// NormaliseActivityEvent implements providers.ActivityLogNormaliser: the repair
+// pass re-reads a stored vendor document through it.
+func (p *stubActivityProvider) NormaliseActivityEvent(source string, raw json.RawMessage) (providers.ActivityEvent, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	event, ok := p.normalised[string(raw)]
+	if event.Source == "" {
+		event.Source = source
+	}
+	return event, ok
+}
+
+// EnrichActivityActors implements providers.ActivityActorEnricher: it hands the
+// events of the batch to whatever the test scripted.
+func (p *stubActivityProvider) EnrichActivityActors(_ context.Context, _ *providers.Tokens, events []providers.ActivityEvent) int {
+	if p.enrich == nil {
+		return 0
+	}
+	return p.enrich(events)
 }
 
 // callsFor lists the cursors a stream was called with, in order.
@@ -426,5 +456,150 @@ func TestNeedsConsentRecognisesTheManagementApiCode(t *testing.T) {
 	}
 	if needsConsent("microsoft graph: the directory feed answered http 500") {
 		t.Error("needsConsent() = true, want a server fault to stay a plain failure")
+	}
+}
+
+// legacyDeviceEvent is the event a release before the actor kind stored: the
+// service name reached the address column and the object was filed as "other".
+func legacyDeviceEvent(at time.Time) models.AuditLogEvent {
+	return models.AuditLogEvent{
+		Provider:   string(models.ProviderMicrosoft),
+		Source:     "directory",
+		RemoteID:   "Directory_dev-1",
+		OrgID:      "tenant-a",
+		Action:     string(models.AuditLogUpdate),
+		Target:     string(models.AuditLogTargetOther),
+		ActorEmail: "deviceregistrationservice",
+		TargetName: "DESKTOP-J979VG0",
+		OccurredAt: at,
+		Raw:        `{"id":"Directory_dev-1"}`,
+	}
+}
+
+// TestRepairActorsReattributesTheStoredHistory pins the repair pass: it re-reads
+// the vendor document the collector kept, names the person behind a workload and
+// writes the result back without touching the rest of the row.
+func TestRepairActorsReattributesTheStoredHistory(t *testing.T) {
+	env := newActivityEnv(t)
+	env.connect(t, "admin@contoso.com", "tenant-a", models.AccountConnected)
+	ctx := context.Background()
+	at := time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)
+
+	legacy := legacyDeviceEvent(at)
+	if err := env.store.InsertAuditLogEvents(ctx, []models.AuditLogEvent{legacy}); err != nil {
+		t.Fatalf("seeding the legacy row: %v", err)
+	}
+	env.provider.normalised[legacy.Raw] = providers.ActivityEvent{
+		Source:     "directory",
+		RemoteID:   legacy.RemoteID,
+		Action:     models.AuditLogUpdate,
+		Target:     models.AuditLogTargetDevice,
+		ActorKind:  models.AuditLogActorApplication,
+		ActorName:  "Device Registration Service",
+		TargetName: "DESKTOP-J979VG0",
+		TargetID:   "device-object-id",
+		OccurredAt: at,
+		Raw:        []byte(legacy.Raw),
+	}
+	env.provider.enrich = func(events []providers.ActivityEvent) int {
+		for i := range events {
+			events[i].ActorOnBehalfOf = "ivan@contoso.com"
+			events[i].ActorOnBehalfOfName = "Ivan Almeida"
+		}
+		return len(events)
+	}
+
+	result := env.service.RepairActors(ctx)
+	if result.Scanned != 1 || result.Updated != 1 || result.Attributed != 1 || result.Remaining != 0 {
+		t.Fatalf("repair = %+v, want one row scanned, updated and attributed with none left", result)
+	}
+
+	rows, _, err := env.store.ListAuditLogEvents(ctx, AuditLogFilter{})
+	if err != nil {
+		t.Fatalf("listing the repaired row: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("stored %d rows after the repair, want 1", len(rows))
+	}
+	row := rows[0]
+	if row.ActorKind != string(models.AuditLogActorApplication) || row.ActorEmail != "" {
+		t.Errorf("actor = %q/%q, want a workload with no address", row.ActorKind, row.ActorEmail)
+	}
+	if row.ActorName != "Device Registration Service" {
+		t.Errorf("ActorName = %q, want the workload of the record", row.ActorName)
+	}
+	if row.ActorOnBehalfOf != "ivan@contoso.com" || row.ActorOnBehalfOfName != "Ivan Almeida" {
+		t.Errorf("on behalf of = %q/%q, want the enrolling person",
+			row.ActorOnBehalfOf, row.ActorOnBehalfOfName)
+	}
+	if row.Target != string(models.AuditLogTargetDevice) || row.TargetName != "DESKTOP-J979VG0" {
+		t.Errorf("target = %q/%q, want the device of the record", row.Target, row.TargetName)
+	}
+}
+
+// TestRepairActorsIsIdempotent pins the convergence of the pass: a second run has
+// nothing left to do, so a scheduler that repairs on every tick costs one count.
+func TestRepairActorsIsIdempotent(t *testing.T) {
+	env := newActivityEnv(t)
+	env.connect(t, "admin@contoso.com", "tenant-a", models.AccountConnected)
+	ctx := context.Background()
+	legacy := legacyDeviceEvent(time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC))
+	if err := env.store.InsertAuditLogEvents(ctx, []models.AuditLogEvent{legacy}); err != nil {
+		t.Fatalf("seeding the legacy row: %v", err)
+	}
+
+	first := env.service.RepairActors(ctx)
+	if first.Updated != 1 || first.Remaining != 0 {
+		t.Fatalf("first repair = %+v, want the legacy row repaired", first)
+	}
+	second := env.service.RepairActors(ctx)
+	if second.Scanned != 0 || second.Updated != 0 || second.Remaining != 0 {
+		t.Fatalf("second repair = %+v, want nothing left to do", second)
+	}
+}
+
+// TestRepairActorsRepairsALegacyRowWithoutAVendorDocument pins the fallback: a row
+// whose Raw is missing or unreadable is repaired from the columns it already
+// carries, so the service name leaves the address column even then.
+func TestRepairActorsRepairsALegacyRowWithoutAVendorDocument(t *testing.T) {
+	env := newActivityEnv(t)
+	env.connect(t, "admin@contoso.com", "tenant-a", models.AccountConnected)
+	ctx := context.Background()
+	legacy := legacyDeviceEvent(time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC))
+	legacy.Raw = ""
+	if err := env.store.InsertAuditLogEvents(ctx, []models.AuditLogEvent{legacy}); err != nil {
+		t.Fatalf("seeding the legacy row: %v", err)
+	}
+
+	if result := env.service.RepairActors(ctx); result.Updated != 1 || result.Remaining != 0 {
+		t.Fatalf("repair = %+v, want the row repaired from its own columns", result)
+	}
+	rows, _, err := env.store.ListAuditLogEvents(ctx, AuditLogFilter{})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("listing the repaired row: %v (%d rows)", err, len(rows))
+	}
+	if rows[0].ActorEmail != "" {
+		t.Errorf("ActorEmail = %q, want the service name out of the address column", rows[0].ActorEmail)
+	}
+	if rows[0].ActorKind != string(models.AuditLogActorApplication) || rows[0].ActorName != "deviceregistrationservice" {
+		t.Errorf("actor = %q/%q, want the workload name kept in its own column",
+			rows[0].ActorKind, rows[0].ActorName)
+	}
+}
+
+// TestCollectRepairsTheHistory pins the wiring: a collect pass repairs the history
+// left by the previous release without anybody asking, and reports it.
+func TestCollectRepairsTheHistory(t *testing.T) {
+	env := newActivityEnv(t)
+	env.connect(t, "admin@contoso.com", "tenant-a", models.AccountConnected)
+	ctx := context.Background()
+	legacy := legacyDeviceEvent(time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC))
+	if err := env.store.InsertAuditLogEvents(ctx, []models.AuditLogEvent{legacy}); err != nil {
+		t.Fatalf("seeding the legacy row: %v", err)
+	}
+
+	result := env.service.Collect(ctx)
+	if result.Repaired != 1 || result.PendingRepairs != 0 {
+		t.Fatalf("collect = %+v, want the legacy row repaired by the pass", result)
 	}
 }

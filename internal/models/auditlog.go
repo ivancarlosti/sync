@@ -40,6 +40,19 @@ type AuditLogEvent struct {
 	ActorEmail string `gorm:"size:191;index" json:"actor_email"`
 	ActorName  string `gorm:"size:191" json:"actor_name,omitempty"`
 	ActorID    string `gorm:"size:191" json:"actor_id,omitempty"`
+	// ActorKind says whether the actor is a person, a workload or nobody at
+	// all (AuditLogActorKind). A workload fills ActorName and leaves ActorEmail
+	// empty, so an application name never travels in the address column. An
+	// empty value is a row stored before the column existed, which is what the
+	// repair pass looks for (see plan 2026-11-07-audit-log-actor-attribution.md).
+	ActorKind string `gorm:"size:32;index" json:"actor_kind"`
+	// ActorOnBehalfOf names the person a workload acted for, when the vendor
+	// record allows recovering it: a device registration is made by "Device
+	// Registration Service" on behalf of the human who enrolled the device.
+	// ActorOnBehalfOf is the address and ActorOnBehalfOfName the label; both
+	// stay empty when the vendor does not say (never guessed).
+	ActorOnBehalfOf     string `gorm:"size:191;index" json:"actor_on_behalf_of,omitempty"`
+	ActorOnBehalfOfName string `gorm:"size:191" json:"actor_on_behalf_of_name,omitempty"`
 
 	// The object the action touched. TargetName is the display label the vendor
 	// reported, TargetID its id. DriveID/SiteID locate a file operation on a

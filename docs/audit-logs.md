@@ -103,8 +103,9 @@ One pass:
 3. calls every stream of the provider (`ActivityLogStreams()`), handing each the
    cursor stored for `(provider, organisation, stream)`;
 4. normalises the records onto one vocabulary (`create`, `delete`, `update`,
-   `move`, `share`, `login`, `other` × `file`, `folder`, `user`, `group`, `site`,
-   `drive`, `other`), stores them and advances the cursor.
+   `move`, `share`, `login`, `other` × `file`, `folder`, `user`, `group`,
+   `device`, `application`, `site`, `drive`, `other`), stores them and advances the
+   cursor.
 
 A failure is per stream, never per pass: a throttled feed stops the remaining
 feeds of *that* organisation for the pass (the provider is asking for a backoff)
@@ -134,13 +135,73 @@ The identity of a stored event is `(provider, source, remote_id)`, so a re-read
 can never duplicate a row. The cursor also keeps `last_event_at`, `last_run_at`
 and `last_error`, which is what the screen renders as the health of each feed.
 
+### Actor attribution
+
+An event names a principal, and that principal is not always a person. The stored
+`actor_kind` says which:
+
+| `actor_kind` | Who | Stored in |
+|---|---|---|
+| `user` | a person | `actor_email` (indexed) + `actor_name` |
+| `application` | a workload: a service principal, an app, a background job | `actor_name`, **never** `actor_email` |
+| `system` | no principal at all (a scheduled or platform job) | `actor_name` = the service that logged it |
+
+A workload often acts *for* somebody, and the clearest case is a device
+registration: Microsoft logs `Add device` as the work of "Device Registration
+Service" and names the enrolling human nowhere in `initiatedBy`. The collector
+recovers the person in three places, in order:
+
+1. **the record itself** — a sibling user `targetResource`, a
+   `RegisteredOwner`/`RegisteredUsers` modified property, or an owner-like
+   `additionalDetail`. Only a value that looks like an address is accepted: a
+   display name alone is not attributed to anybody;
+2. **the object** — `GET /v1.0/devices/{id}?$expand=registeredOwners`, one lookup
+   per device per pass (memoised, at most 20 per pass, ~20 s each) in
+   `internal/providers/microsoft/deviceowners.go`;
+3. **nothing** — the row keeps the workload actor, and the screen says why it
+   cannot name the person (see §4).
+
+Both recovery steps write `actor_on_behalf_of` / `actor_on_behalf_of_name` and
+never touch the workload actor: the row still says a service made the change, and
+the person appears beside it.
+
+The Graph read is authorised by `Device.Read.All`, `Device.ReadWrite.All`,
+`Directory.Read.All` or `Directory.ReadWrite.All`. This application already holds
+`Directory.ReadWrite.All` (see [app-registration.md](app-registration.md)), so the
+enrichment needs **no new consent and no reconnect**, and a tenant that revokes the
+grant simply keeps the honest service attribution. Anything else — a throttle, a
+404 for a device deleted since the event, a refusal — is logged and skipped: an
+unreachable enrichment never fails a pass.
+
+Google's normaliser names `actor.email` from its own feed, so its rows are stored
+with `actor_kind = user` and the two on-behalf-of columns stay empty.
+
+### Repairing the history
+
+A release that maps a field more precisely can re-read what it already stored: the
+vendor document of every event is kept in `AuditLogEvent.Raw` for exactly this. At
+the end of every pass `RepairActors` takes the rows whose `actor_kind` is empty
+(stored by an older release), re-normalises them through the provider's optional
+`ActivityLogNormaliser`, runs the optional `ActivityActorEnricher` on the device
+rows of the batch, and writes back the actor columns and the target. It is bounded
+(500 rows per batch, 20 batches and 2 minutes per pass), idempotent (a repaired row
+stops being a candidate) and safe to interrupt; a row whose `raw` is missing is
+repaired from the columns it already carries (a service principal name found in the
+address column moves to `actor_name`). `POST /api/maintenance/auditlogs/renormalise`
+runs the same pass on demand and answers `scanned`, `updated`, `attributed` and
+`remaining`.
+
 ## 4. What the screen shows
 
 `/audit-logs` (nav: **Audit Logs**) lists the stored events newest first, with the
-filters `provider`, `org_id`, `action`, `target`, `actor`, `search` (actor e-mail
-or object name), `from` and `to`. The CSV export applies the same filters
-(`GET /api/audit-logs/export`, capped at 5000 rows, the filtered total in
-`X-Total-Count`).
+filters `provider`, `org_id`, `action`, `target`, `actor` (the address of a person
+or of the person a workload acted for), `search` (actor address, actor name,
+on-behalf-of or object name), `from` and `to`. The CSV export applies the same
+filters (`GET /api/audit-logs/export`, capped at 5000 rows, the filtered total in
+`X-Total-Count`) and carries the same columns as the screen:
+`occurred_at, provider, org_id, stream, action, target, actor_kind, actor_email,
+actor_name, actor_on_behalf_of, actor_on_behalf_of_name, target_name, target_id,
+site_id, remote_id`.
 
 The form also offers an **account** selector (fed by `GET /api/accounts`, the same
 list the Accounts screen shows). Picking an account applies the `provider` and the
@@ -149,9 +210,27 @@ administrator accounts of one tenant list exactly the same events, and the hint
 under the field names the organisation so the duplication reads as intended rather
 than as a broken filter. An account without an organisation (a personal Microsoft
 or Google account) has no administrator feed, so its option is offered greyed out
-with the reason instead of producing a filter that could only ever be empty. The
-Organisation column of the table names the accounts that read each feed, so a
-tenant id never has to be recognised on its own.
+with the reason instead of producing a filter that could only ever be empty.
+
+The **Organisation** column names the accounts that read each feed, prefixed with
+`read by`, so a tenant id never has to be recognised on its own and the collector
+identity can never be mistaken for the actor of the event.
+
+The **Actor** column is rendered from `actor_kind` (§3), because the two are read
+very differently:
+
+* a **person** shows the address (and the display name under it);
+* a **workload** shows its display name in the body and a `Service` chip, with no
+  address at all, and the person it acted for under it (`on behalf of …`) when one
+  was recovered;
+* an event with no principal shows the name of the service that logged it and a
+  `System` chip.
+
+A workload-changed device whose owner could not be resolved carries one extra
+line: the account reading that feed cannot look the owner up, which is what an
+administrator has to grant a directory permission to fix. The hint is derived from
+the `missing_capabilities` of the accounts of that organisation, so it appears only
+when the screen knows the grant is missing.
 
 Above the table, the feed banner explains a stale list:
 
