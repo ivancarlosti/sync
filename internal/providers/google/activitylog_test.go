@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -138,10 +139,61 @@ func TestActivityLogsResumesFromTheCursorWithOverlap(t *testing.T) {
 	}
 }
 
+// documentedDriveEventNames is the drive filter exactly as Google's Drive event
+// reference publishes it. It is pinned on purpose: the Reports API validates every
+// eventName against that manifest and answers 400 for the *whole* request when one
+// is unknown, so an unlisted name blinds the entire feed — the incident that
+// dropped `change_acl_scope` (not a Drive event) and every drive event with it.
+var documentedDriveEventNames = []string{
+	"change_acl_editors",
+	"change_document_access_scope",
+	"change_document_visibility",
+	"change_owner",
+	"change_user_access",
+	"create",
+	"delete",
+	"edit",
+	"move",
+	"rename",
+	"upload",
+}
+
+// TestDriveEventNamesAreDocumented pins the curated filter to the published
+// manifest, so adding a name means checking the reference first.
+func TestDriveEventNamesAreDocumented(t *testing.T) {
+	got := append([]string(nil), driveEventNames...)
+	sort.Strings(got)
+	if len(got) != len(documentedDriveEventNames) {
+		t.Fatalf("driveEventNames = %v, want the %d documented names %v", got, len(documentedDriveEventNames), documentedDriveEventNames)
+	}
+	for index, name := range documentedDriveEventNames {
+		if got[index] != name {
+			t.Errorf("driveEventNames carries %q, want %q (the documented set)", got[index], name)
+		}
+	}
+	for _, name := range got {
+		if name == "change_acl_scope" {
+			t.Error("driveEventNames carries change_acl_scope, which the drive manifest does not know")
+		}
+	}
+}
+
+// TestClassifyActivityMapsTheShareEvents pins the sharing vocabulary: every name
+// the drive filter may return as a sharing change maps onto the share action.
+func TestClassifyActivityMapsTheShareEvents(t *testing.T) {
+	for _, name := range []string{"change_user_access", "change_document_access_scope",
+		"change_acl_editors", "change_document_visibility", "change_owner"} {
+		action, _ := classifyActivity(streamDrive, googleEvent{Name: name})
+		if action != models.AuditLogShare {
+			t.Errorf("classifyActivity(%q) = %s, want share", name, action)
+		}
+	}
+}
+
 // TestActivityURLFiltersDriveEvents pins the narrowing of the drive feed: the
 // access events (view, preview, download) are what would bury the changes.
 func TestActivityURLFiltersDriveEvents(t *testing.T) {
-	raw := activityURL(streamDrive, time.Unix(0, 0), time.Unix(3600, 0), "")
+	raw := activityURL(streamDrive, driveEventNames, time.Unix(0, 0), time.Unix(3600, 0), "")
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		t.Fatalf("cannot parse %q: %v", raw, err)
@@ -159,6 +211,89 @@ func TestActivityURLFiltersDriveEvents(t *testing.T) {
 	}
 	if got := parsed.Query().Get("maxResults"); got != "1000" {
 		t.Errorf("maxResults = %q, want 1000", got)
+	}
+	// A feed read without a filter must not carry one: the other applications
+	// are read whole.
+	unfiltered := activityURL(streamLogin, nil, time.Unix(0, 0), time.Unix(3600, 0), "")
+	if strings.Contains(unfiltered, "eventName=") {
+		t.Errorf("login URL = %q, want no eventName filter", unfiltered)
+	}
+}
+
+// manifestRejectingTransport answers the drive feed the way the Reports API
+// answers a filter carrying a name its manifest does not know: a 400 naming that
+// event instead of a page of records, and a normal page once the name is gone.
+type manifestRejectingTransport struct {
+	urls []string
+	name string
+}
+
+// RoundTrip implements http.RoundTripper.
+func (t *manifestRejectingTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.urls = append(t.urls, request.URL.String())
+	status := http.StatusOK
+	body := driveActivityBody
+	if strings.Contains(request.URL.RawQuery, "eventName="+t.name) {
+		status = http.StatusBadRequest
+		body = `{"error":{"code":400,"message":"Invalid request: Event ` + t.name + ` not found in manifest."}}`
+	}
+	header := http.Header{}
+	header.Set("Content-Type", "application/json")
+	return &http.Response{
+		StatusCode:    status,
+		Status:        http.StatusText(status),
+		Header:        header,
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Request:       request,
+	}, nil
+}
+
+// TestActivityLogsTrimsAnEventNameTheManifestRejects pins the self-healing read:
+// a name Google retired costs one extra request, not the whole stream.
+func TestActivityLogsTrimsAnEventNameTheManifestRejects(t *testing.T) {
+	transport := &manifestRejectingTransport{name: "change_owner"}
+	provider := &Provider{httpClient: &http.Client{Transport: transport}}
+
+	events, _, err := provider.ActivityLogs(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "token"}, streamDrive, "")
+	if err != nil {
+		t.Fatalf("ActivityLogs() = %v, want the page served once the rejected name was dropped", err)
+	}
+	if len(transport.urls) != 2 {
+		t.Fatalf("the pass issued %d requests, want 2 (the curated filter then the trimmed retry)", len(transport.urls))
+	}
+	if !strings.Contains(transport.urls[0], "eventName=change_owner") {
+		t.Errorf("first request = %q, want the curated filter", transport.urls[0])
+	}
+	if strings.Contains(transport.urls[1], "eventName=change_owner") {
+		t.Errorf("retry = %q, want the rejected name dropped", transport.urls[1])
+	}
+	if len(events) != 1 {
+		t.Errorf("ActivityLogs() answered %d events, want the deletion of the retried page", len(events))
+	}
+}
+
+// TestActivityLogsDoesNotRetryAnUnrelatedBadRequest pins the bound of the trim: a
+// 400 it cannot attribute to one of its names is a real fault and is reported at
+// once, not retried in a loop.
+func TestActivityLogsDoesNotRetryAnUnrelatedBadRequest(t *testing.T) {
+	transport := &activityTransport{
+		statuses: map[string]int{streamDrive: http.StatusBadRequest},
+		bodies:   map[string]string{streamDrive: `{"error":{"code":400,"message":"Invalid request: bad startTime."}}`},
+	}
+	provider := &Provider{httpClient: &http.Client{Transport: transport}}
+
+	_, _, err := provider.ActivityLogs(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "token"}, streamDrive, "")
+	if err == nil {
+		t.Fatal("ActivityLogs() = nil, want the rejected request")
+	}
+	if len(transport.urls) != 1 {
+		t.Errorf("the pass issued %d requests, want exactly 1", len(transport.urls))
+	}
+	if !strings.Contains(err.Error(), "400") {
+		t.Errorf("err = %v, want the status of the refusal", err)
 	}
 }
 

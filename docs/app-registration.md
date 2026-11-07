@@ -224,14 +224,25 @@ exists as an application permission.
 2. **Add a permission** > **APIs my organization uses** > search for *Office 365
    Management APIs* > **Application permissions** > `ActivityFeed.Read`.
 3. **Grant admin consent** for the directory.
+4. Turn on **unified audit logging** in the Purview compliance portal (Audit >
+   Audit log). Without it the subscription succeeds and the content listings stay
+   empty, which looks like a broken feed rather than a disabled one.
 
 That grant is per directory and cannot be carried by the delegated token, so
 Sync builds an app-only token from the configured client id and secret
 (`client_credentials` for `https://manage.office.com/.default`) for the tenant of
-the connected account. Until the grant exists the feed answers
-`AADSTS65001`/401/403: the Audit Logs screen shows the "waiting for a permission"
-banner for that stream, the directory stream keeps working, and nothing else in
-the product is affected.
+the connected account. It fails in two shapes, and they mean different things:
+
+* `AADSTS65001` on the token exchange — the application permission was never
+  granted, or the consent was given to another client id;
+* `401 AF10001` (`permission set ()`) on the subscription — the permission exists
+  on the app registration, but this directory never consented to it. The token is
+  issued with no application roles, so no retry and no reconnect can help.
+
+Either way the Audit Logs screen shows the "waiting for a permission" banner for
+that stream (the message names `ActivityFeed.Read` and, for `AF10001`, the three
+things to fix), the directory stream keeps working, and nothing else in the
+product is affected. A second tenant needs its own step 3.
 
 
 
@@ -304,6 +315,8 @@ capability.
 | Google: directory call fails with a permission error right after connecting | the API is not enabled in the project, or the account is not an administrator | enable Admin SDK / License Manager, connect an administrator |
 | Google: the consent screen demands verification | the app is External and the scopes are sensitive | switch to Internal, or publish/verify the app |
 | Microsoft: `AADSTS65001` / `consent_required` | admin consent was never granted (or was granted to another client id) | use the consent step of the guide; check that the client id still matches |
+| Microsoft: `AF10001` / `permission set ()` on the activity feed | `ActivityFeed.Read` was granted to the app but never consented in **this** directory (the grant is per tenant), or the app registration lost the permission | redo §3.4 for that directory; the Audit Logs screen names the stream that failed |
+| Microsoft: the activity feed subscribes but stores nothing | unified audit logging is off in the tenant, so the content listings are empty | turn it on in the Purview compliance portal (Audit > Audit log) and wait for the first records |
 | Microsoft: Graph answers `403 Forbidden` after consent | the connected account lacks the directory role | connect an administrator, or assign the role |
 | Microsoft: `invalid_client` after some weeks | the client secret expired | create a new secret and paste it in Admin > Providers (the stored tokens stay valid) |
 | Account shows missing capability badges | connected before that permission was requested | reconnect the account |

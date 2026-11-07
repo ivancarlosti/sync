@@ -26,13 +26,15 @@ const unifiedBlobBody = `[{"Id":"blob-record-1","Operation":"FileDeleted","Workl
 // token, the (idempotent) subscription, the content listing and the blob it
 // points at.
 type unifiedTransport struct {
-	urls     []string
-	methods  []string
-	forms    []string
-	headers  []http.Header
-	blobs    string
-	tokenErr string
-	startErr string
+	urls          []string
+	methods       []string
+	forms         []string
+	headers       []http.Header
+	blobs         string
+	tokenErr      string
+	startErr      string
+	startStatus   int
+	throttleToken int
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -49,8 +51,19 @@ func (t *unifiedTransport) RoundTrip(request *http.Request) (*http.Response, err
 
 	status := http.StatusOK
 	body := "{}"
+	header := http.Header{}
+	header.Set("Content-Type", "application/json")
 	switch {
 	case strings.HasSuffix(request.URL.Path, "/oauth2/v2.0/token"):
+		if t.throttleToken > 0 {
+			t.throttleToken--
+			status = http.StatusTooManyRequests
+			body = `{"error":"temporarily_unavailable"}`
+			// A zero delay keeps the retry instant: the code under test is the
+			// replay of the form, not the backoff (see providers.RetryPolicy).
+			header.Set("Retry-After", "0")
+			break
+		}
 		if t.tokenErr != "" {
 			status = http.StatusBadRequest
 			body = t.tokenErr
@@ -59,7 +72,10 @@ func (t *unifiedTransport) RoundTrip(request *http.Request) (*http.Response, err
 		body = `{"access_token":"app-token","token_type":"Bearer","expires_in":3599}`
 	case strings.HasSuffix(request.URL.Path, "/subscriptions/start"):
 		if t.startErr != "" {
-			status = http.StatusBadRequest
+			status = t.startStatus
+			if status == 0 {
+				status = http.StatusBadRequest
+			}
 			body = t.startErr
 			break
 		}
@@ -74,8 +90,6 @@ func (t *unifiedTransport) RoundTrip(request *http.Request) (*http.Response, err
 	case strings.HasSuffix(request.URL.Path, "/content-1"):
 		body = t.blobs
 	}
-	header := http.Header{}
-	header.Set("Content-Type", "application/json")
 	return &http.Response{
 		StatusCode:    status,
 		Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),

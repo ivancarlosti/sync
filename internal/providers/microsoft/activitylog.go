@@ -127,7 +127,7 @@ func (p *Provider) getJSON(ctx context.Context, target string, token string, out
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Accept", "application/json")
 
-	response, err := p.httpClient.Do(request)
+	response, err := p.doRequest(ctx, request)
 	if err != nil {
 		return fmt.Errorf("microsoft graph: %s failed: %w", safeURL(target), err)
 	}
@@ -142,6 +142,33 @@ func (p *Provider) getJSON(ctx context.Context, target string, token string, out
 		return fmt.Errorf("microsoft graph: cannot decode the answer of %s: %w", safeURL(target), err)
 	}
 	return nil
+}
+
+// activityRetryPolicy is the retry of the two audit feeds. It is wider than the
+// default policy on purpose: both endpoints answer a throttle with a Retry-After
+// of a minute or more, and the default 30s cap would retry too early and burn an
+// attempt. Three attempts keep one throttled tenant from starving the other
+// streams of the pass, and the whole exchange stays inside requestTimeout.
+var activityRetryPolicy = providers.RetryPolicy{
+	MaxAttempts: 3,
+	MaxDelay:    90 * time.Second,
+}
+
+// doRequest sends one request through providers.DoWithRetry, replaying the body of
+// a POST from GetBody between attempts (a consumed reader would send an empty
+// form the second time). The caller still closes the body it gets back.
+func (p *Provider) doRequest(ctx context.Context, request *http.Request) (*http.Response, error) {
+	return providers.DoWithRetry(ctx, activityRetryPolicy, func(ctx context.Context) (*http.Response, error) {
+		attempt := request.Clone(ctx)
+		if request.GetBody != nil {
+			replay, err := request.GetBody()
+			if err != nil {
+				return nil, err
+			}
+			attempt.Body = replay
+		}
+		return p.httpClient.Do(attempt)
+	})
 }
 
 // safeURL trims a URL to a length that is safe to log.

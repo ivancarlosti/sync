@@ -412,3 +412,19 @@ func TestSchedulerRunsTheActivityFeedPass(t *testing.T) {
 		t.Fatalf("DefaultAuditLogInterval = %s, want 10m", DefaultAuditLogInterval)
 	}
 }
+
+// TestNeedsConsentRecognisesTheManagementApiCode pins the marker that turns a
+// refused subscription into the "waiting for a permission" banner: the AF10001
+// document spells the code but the permission name may be elided ("permission set
+// ()"), so the code itself has to be recognised. A plain server fault must not be
+// mistaken for a grant the operator could add.
+func TestNeedsConsentRecognisesTheManagementApiCode(t *testing.T) {
+	refused := "microsoft: cannot enable the Audit.SharePoint activity subscription: http 401: AF10001:" +
+		" The permission set () sent in the request did not include the expected permission."
+	if !needsConsent(refused) {
+		t.Error("needsConsent() = false, want the AF10001 refusal to ask for a grant")
+	}
+	if needsConsent("microsoft graph: the directory feed answered http 500") {
+		t.Error("needsConsent() = true, want a server fault to stay a plain failure")
+	}
+}

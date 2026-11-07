@@ -391,7 +391,7 @@ func needsConsent(lastError string) bool {
 	message := strings.ToLower(lastError)
 	for _, marker := range []string{
 		"consent", "activityfeed.read", "auditlog.read.all", "admin.reports.audit.readonly",
-		"insufficient", "unauthorized", "forbidden", "http 401", "http 403",
+		"af10001", "insufficient", "unauthorized", "forbidden", "http 401", "http 403",
 	} {
 		if strings.Contains(message, marker) {
 			return true

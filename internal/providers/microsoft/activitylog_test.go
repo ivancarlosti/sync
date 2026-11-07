@@ -3,6 +3,7 @@ package microsoft
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -134,7 +135,132 @@ func TestActivityLogsRejectsAnUnknownStream(t *testing.T) {
 	}
 }
 
+// throttleTransport answers the first `throttled` calls with the 429 Graph sends a
+// busy tenant, and the rest from the canned body of the request path. The
+// Retry-After is zero seconds, so a retry does not make the test sleep.
+type throttleTransport struct {
+	urls      []string
+	throttled int
+	bodies    map[string]string
+}
+
+// RoundTrip implements http.RoundTripper.
+func (t *throttleTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	t.urls = append(t.urls, request.URL.String())
+	status := http.StatusOK
+	body := t.bodies[request.URL.Path]
+	if body == "" {
+		body = "{}"
+	}
+	header := http.Header{}
+	header.Set("Content-Type", "application/json")
+	if t.throttled > 0 {
+		t.throttled--
+		status = http.StatusTooManyRequests
+		body = `{"error":{"code":"TooManyRequests","message":"Too many requests."}}`
+		header.Set("Retry-After", "0")
+	}
+	return &http.Response{
+		StatusCode:    status,
+		Status:        fmt.Sprintf("%d %s", status, http.StatusText(status)),
+		Header:        header,
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Request:       request,
+	}, nil
+}
+
+// TestDirectoryFeedRetriesAThrottle pins the fix of the 429 on the directory
+// stream: it was the only Microsoft call that abandoned a pass on the first
+// throttle, and a failed stream also costs the unified feed of that organisation.
+func TestDirectoryFeedRetriesAThrottle(t *testing.T) {
+	transport := &throttleTransport{
+		throttled: 1,
+		bodies:    map[string]string{"/v1.0/auditLogs/directoryAudits": directoryAuditPageBody},
+	}
+	provider := &Provider{httpClient: &http.Client{Transport: transport}}
+
+	events, _, err := provider.ActivityLogs(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "token"}, streamDirectory, "")
+	if err != nil {
+		t.Fatalf("ActivityLogs() = %v, want the pass to survive one 429", err)
+	}
+	if len(transport.urls) != 2 {
+		t.Fatalf("the pass issued %d requests, want 2 (the throttle then the retry)", len(transport.urls))
+	}
+	if len(events) != 1 {
+		t.Errorf("ActivityLogs() answered %d events, want the record of the retried page", len(events))
+	}
+}
+
+// TestDirectoryFeedDoesNotRetryARejectedRequest pins the other side of the retry: a
+// 400 is a decision, so the pass fails at once instead of spending its budget.
+func TestDirectoryFeedDoesNotRetryARejectedRequest(t *testing.T) {
+	transport := &recordingTransport{
+		statuses: map[string]int{"/v1.0/auditLogs/directoryAudits": http.StatusBadRequest},
+		bodies:   map[string]string{"/v1.0/auditLogs/directoryAudits": `{"error":{"code":"BadRequest","message":"Invalid filter."}}`},
+	}
+	provider := &Provider{httpClient: &http.Client{Transport: transport}}
+
+	if _, _, err := provider.ActivityLogs(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "token"}, streamDirectory, ""); err == nil {
+		t.Fatal("ActivityLogs() = nil, want the rejected filter")
+	}
+	if len(transport.urls) != 1 {
+		t.Errorf("the pass issued %d requests, want exactly 1", len(transport.urls))
+	}
+}
+
+// TestActivityFeedExplainsAF10001 pins the failure that looked like a broken token:
+// the management API refuses the app-only subscription with AF10001 and an empty
+// `permission set ()` when ActivityFeed.Read was never granted, and the stored
+// message has to name the grant plus the two other things that fix it.
+func TestActivityFeedExplainsAF10001(t *testing.T) {
+	transport := &unifiedTransport{
+		startStatus: http.StatusUnauthorized,
+		startErr:    `{"error":{"code":"AF10001","message":"The permission set () sent in the request did not include the expected permission ActivityFeed.Read for the resource https:\/\/manage.office.com."}}`,
+	}
+	provider := &Provider{httpClient: &http.Client{Transport: transport}}
+
+	err := provider.startSubscription(context.Background(), "contoso.onmicrosoft.com", "app-token", "Audit.SharePoint")
+	if err == nil {
+		t.Fatal("startSubscription() = nil, want the AF10001 refusal")
+	}
+	for _, want := range []string{"AF10001", "ActivityFeed.Read", "application permission", "administrator", "Purview"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want %q in the message", err, want)
+		}
+	}
+}
+
+// TestUnifiedFeedRetriesAThrottledToken pins the retry of the token request and the
+// form replay it needs: a consumed body would send an empty client-credentials
+// request on the second attempt and turn a throttle into an invalid_client.
+func TestUnifiedFeedRetriesAThrottledToken(t *testing.T) {
+	transport := &unifiedTransport{blobs: unifiedBlobBody, throttleToken: 1}
+	provider := &Provider{httpClient: &http.Client{Transport: transport}}
+	creds := providers.Credentials{ClientID: "app-id", ClientSecret: "app-secret", TenantID: "contoso.onmicrosoft.com"}
+
+	if _, _, err := provider.ActivityLogs(context.Background(), creds,
+		&providers.Tokens{AccessToken: "delegated"}, streamUnified, ""); err != nil {
+		t.Fatalf("ActivityLogs() = %v, want the pass to survive one throttled token request", err)
+	}
+	forms := []string{}
+	for index, raw := range transport.urls {
+		if strings.HasSuffix(raw, "/oauth2/v2.0/token") {
+			forms = append(forms, transport.forms[index])
+		}
+	}
+	if len(forms) != 2 {
+		t.Fatalf("the token request was issued %d times, want 2 (the throttle then the retry)", len(forms))
+	}
+	if forms[1] == "" || forms[1] != forms[0] {
+		t.Errorf("retried form = %q, want the replay of %q", forms[1], forms[0])
+	}
+}
+
 // TestUnifiedFeedNeedsATenant pins the precondition of the app-only feed: without
+
 // a directory to read there is nothing to subscribe to, and the message says so
 // instead of half-reading a feed.
 func TestUnifiedFeedNeedsATenant(t *testing.T) {

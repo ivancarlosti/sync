@@ -45,12 +45,17 @@ with separate cursors and separate last errors:
   (`client_credentials` for `https://manage.office.com/.default`) for the tenant
   of that account. The permission cannot be requested in an authorization URL,
   so it is not part of the permission table: see
-  [app-registration.md](app-registration.md) §5.
+  [app-registration.md](app-registration.md) §3.4.
 
-A tenant that never granted `ActivityFeed.Read` answers 401/403 on the token
-exchange. That is recorded as the `unified` stream's `last_error`, the screen
-shows the "waiting for a permission" banner, and the `directory` stream keeps
-working. No reconnect can fix it — only an administrator grant.
+A tenant that never granted `ActivityFeed.Read` fails in one of two shapes: the
+token exchange answers `AADSTS65001` (no consent at all), or the token is issued
+with an empty role set and the subscription answers `AF10001` /
+`permission set ()` (granted to the app, never consented in *that* directory).
+Either one is recorded as the `unified` stream's `last_error`, the screen shows
+the "waiting for a permission" banner, and the `directory` stream keeps working.
+No reconnect can fix it — only an administrator grant, per directory, plus
+unified audit logging turned on in Purview (otherwise the feed subscribes and
+answers nothing).
 
 ### Google Workspace — five streams
 
@@ -67,7 +72,13 @@ One stream per Reports API application (`admin.googleapis.com`):
 All five are read with one delegated scope, `admin.reports.audit.readonly`
 (admin consent). The `drive` stream sends an `eventName` filter: without it every
 view, preview and download would come back too, and that volume buries the
-deletions the screen exists for.
+deletions the screen exists for. The Reports API validates every name of that
+filter against the published event manifest and answers
+`400 … Event <name> not found in manifest` for the **whole request** when one is
+unknown, so the list is the published Drive event set and nothing else (see
+`driveEventNames`, pinned by `TestDriveEventNamesAreDocumented`). A name the API
+starts rejecting is dropped for that page and the read retried, so a vendor
+retirement costs one extra request instead of the stream.
 
 ## 3. The collector
 
@@ -98,6 +109,13 @@ One pass:
 A failure is per stream, never per pass: a throttled feed stops the remaining
 feeds of *that* organisation for the pass (the provider is asking for a backoff)
 and every other organisation is still read.
+
+Before a stream is given up on, the request itself is retried: every call of both
+Microsoft streams goes through `providers.DoWithRetry` with `activityRetryPolicy`
+(3 attempts, a `Retry-After` up to 90 s, inside the 5 minute `requestTimeout`),
+because the audit endpoints answer a throttle with a minute or more and the
+default 30 s cap would retry too early. Google requests retry through `doJSON`
+already, and a rejected `eventName` is trimmed and retried (see §2).
 
 ### Cursors
 
@@ -174,4 +192,21 @@ Accounts screen ask an operator to grant. An app-only permission is documented
 instead, never declared there: it can neither be requested by an authorization
 URL nor proven by the `scope` of a token response, so declaring it would mark
 every existing account as missing a permission a reconnect cannot add.
+
+## 7. Troubleshooting
+
+The health of every feed is in `GET /api/audit-logs/cursors`: `healthy`,
+`needs_consent`, `last_error`, `last_run_at`, `last_event_at`. The three failures
+seen in production:
+
+| Symptom (`last_error`) | Cause | Fix |
+|---|---|---|
+| `… 400 … Event change_acl_scope not found in manifest` (`drive`) | a name of `driveEventNames` is not in Google's Drive event reference, and one unknown name fails the **whole** request | remove the name from `driveEventNames` and `classifyActivity`: the diagnostic names it. The trim in `activityPage` already drops it for the next pass, so the stream recovers before a release ships |
+| `… AF10001 … permission set ()` (`unified`) | `ActivityFeed.Read` (application permission of *Office 365 Management APIs*) was never granted, or was granted without consent in **this** directory. Unified audit logging also has to be on | grant the permission, have an administrator of that directory consent, turn on unified audit logging in Purview — [app-registration.md](app-registration.md) §3.4 |
+| `microsoft graph: … http 429` (`directory`) | Graph throttled the read; the `Retry-After` outlived the retry budget | nothing, unless it repeats on every pass: the call is retried twice with the delay Graph asked for, and a tenant that throttles a ten-minute poll needs a lower poll rate, not a bigger local copy |
+
+`needs_consent` is what turns the banner into "waiting for a permission" instead
+of "could not be read": it is set from the message, so a new vendor spelling has
+to be added to the markers in `needsConsent` (`internal/services/auditlog.go`) —
+`af10001` is there for exactly that reason.
 

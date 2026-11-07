@@ -177,7 +177,7 @@ func (p *Provider) appOnlyToken(ctx context.Context, tenant string, creds provid
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	response, err := p.httpClient.Do(request)
+	response, err := p.doRequest(ctx, request)
 	if err != nil {
 		return "", fmt.Errorf("microsoft: the activity feed token request failed: %w", err)
 	}
@@ -249,7 +249,7 @@ func (p *Provider) startSubscription(ctx context.Context, tenant, token, content
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 
-	response, err := p.httpClient.Do(request)
+	response, err := p.doRequest(ctx, request)
 	if err != nil {
 		return fmt.Errorf("microsoft: the activity feed subscription request failed: %w", err)
 	}
@@ -263,7 +263,23 @@ func (p *Provider) startSubscription(ctx context.Context, tenant, token, content
 		(strings.Contains(summary, "AF20024") || strings.Contains(strings.ToLower(summary), "already enabled")) {
 		return nil
 	}
-	return fmt.Errorf("microsoft: cannot enable the %s activity subscription: %s", contentType, summary)
+	return fmt.Errorf("microsoft: cannot enable the %s activity subscription: %s%s", contentType, summary, activityFeedConsentHint(summary))
+}
+
+// activityFeedConsentHint turns the AF10001 the management API answers an
+// ungranted application into the fix. The code comes with `permission set ()`,
+// which is the tell: the app-only token carries no application roles, so
+// ActivityFeed.Read was never granted (or an administrator of that directory
+// never consented to it) — no retry and no reconnect can change that. Neither
+// this message nor the AF10001 document names the directory, which is why the
+// hint says "this directory": the Audit Logs screen lists the organisation of the
+// cursor that carries the error.
+func activityFeedConsentHint(summary string) string {
+	if !strings.Contains(summary, "AF10001") {
+		return ""
+	}
+	return " (grant the office 365 management apis application permission ActivityFeed.Read to the app registration," +
+		" have an administrator of this directory consent to it, and turn on unified audit logging in Purview)"
 }
 
 // contentBlobs lists the content blobs of one content type for one window. The
@@ -286,7 +302,7 @@ func (p *Provider) contentBlobs(ctx context.Context, tenant, token, contentType 
 		request.Header.Set("Authorization", "Bearer "+token)
 		request.Header.Set("Accept", "application/json")
 
-		response, err := p.httpClient.Do(request)
+		response, err := p.doRequest(ctx, request)
 		if err != nil {
 			return nil, fmt.Errorf("microsoft: the activity feed content request failed: %w", err)
 		}
@@ -332,7 +348,7 @@ func (p *Provider) blobRecords(ctx context.Context, uri, token string) ([]json.R
 	// some tenants require it: send it.
 	request.Header.Set("Authorization", "Bearer "+token)
 
-	response, err := p.httpClient.Do(request)
+	response, err := p.doRequest(ctx, request)
 	if err != nil {
 		return nil, fmt.Errorf("microsoft: the activity feed blob request failed: %w", err)
 	}

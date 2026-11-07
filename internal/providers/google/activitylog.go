@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -67,6 +70,13 @@ const (
 // The API would otherwise return every view, preview and download as well, and
 // that volume would bury the deletions the screen exists for. The list is the
 // filter of the request, so the payload stays small too.
+//
+// The Reports API validates *every* name against the published manifest of the
+// application and answers 400 for the whole request when one is unknown — an
+// unknown name costs the entire stream, not just its own events. A name may
+// therefore only be listed after checking Google's event reference (see
+// docs/audit-logs.md); the trim in activityPage only covers the day a listed
+// name is retired.
 var driveEventNames = []string{
 	"create",
 	"upload",
@@ -77,7 +87,8 @@ var driveEventNames = []string{
 	"change_user_access",
 	"change_document_access_scope",
 	"change_acl_editors",
-	"change_acl_scope",
+	"change_document_visibility",
+	"change_owner",
 }
 
 // Compile time guard: the audit-log collector hands these calls to the registry
@@ -125,13 +136,17 @@ func (p *Provider) ActivityLogs(ctx context.Context, _ providers.Credentials, to
 	client := p.client(tokens)
 	events := []providers.ActivityEvent{}
 	newest := start
+	// Only the drive feed is narrow enough to filter, and only its names can be
+	// trimmed when the API rejects one (see activityPage).
+	var names []string
+	if application == streamDrive {
+		names = append([]string(nil), driveEventNames...)
+	}
 	pageToken := ""
 	for page := 0; page < activityMaxPages; page++ {
-		var answer struct {
-			Items         []googleActivity `json:"items"`
-			NextPageToken string           `json:"nextPageToken"`
-		}
-		if err := p.doJSON(ctx, client, "GET", activityURL(application, start, end, pageToken), nil, &answer); err != nil {
+		answer, remaining, err := p.activityPage(ctx, client, application, names, start, end, pageToken)
+		names = remaining
+		if err != nil {
 			return events, "", err
 		}
 		for _, activity := range answer.Items {
@@ -163,19 +178,87 @@ func activityApplication(stream string) (string, error) {
 
 // activityURL builds one page of one application's feed. The window is the
 // incremental one described by the cursor, so the API does the filtering and the
-// page stays small.
-func activityURL(application string, start, end time.Time, pageToken string) string {
+// page stays small. names is the eventName filter: nil reads every event.
+func activityURL(application string, names []string, start, end time.Time, pageToken string) string {
 	target := activityBase + "/users/all/applications/" + application
 	target = withParam(target, "startTime", formatActivityWatermark(start))
 	target = withParam(target, "endTime", formatActivityWatermark(end))
 	target = withParam(target, "maxResults", fmt.Sprintf("%d", activityPageLimit))
 	target = withParam(target, "pageToken", pageToken)
-	if application == streamDrive {
-		for _, name := range driveEventNames {
-			target += "&eventName=" + name
-		}
+	for _, name := range names {
+		target += "&eventName=" + url.QueryEscape(name)
 	}
 	return target
+}
+
+// activityPage is one page of one feed: the events and the token of the next one.
+type activityPage struct {
+	Items         []googleActivity `json:"items"`
+	NextPageToken string           `json:"nextPageToken"`
+}
+
+// activityPage reads one page of one feed, trimming an event name the Reports API
+// says its manifest does not know.
+//
+// The trim is the one failure worth repairing in place: the API validates every
+// name of the filter against the manifest and answers 400 for the *whole*
+// request when one is missing, so a single retired name would blind the stream
+// until a release. Dropping the rejected name and retrying once loses nothing —
+// the API had no events to give for a name it does not know — and the pinned
+// list in the tests makes the retirement visible.
+func (p *Provider) activityPage(ctx context.Context, client *http.Client, application string, names []string,
+	start, end time.Time, pageToken string) (activityPage, []string, error) {
+	for {
+		var answer activityPage
+		err := p.doJSON(ctx, client, "GET", activityURL(application, names, start, end, pageToken), nil, &answer)
+		if err == nil {
+			return answer, names, nil
+		}
+		name, ok := unknownEventName(err)
+		if !ok {
+			return answer, names, err
+		}
+		remaining := withoutEventName(names, name)
+		if len(remaining) == len(names) {
+			// The rejected name is not one of the filter's: the request failed
+			// for another reason, and retrying it unchanged would only loop.
+			return answer, names, err
+		}
+		names = remaining
+	}
+}
+
+// unknownEventNamePattern matches the diagnostic of a rejected filter:
+// "Invalid request: Event change_acl_scope not found in manifest."
+var unknownEventNamePattern = regexp.MustCompile(`(?i)event ([a-z0-9_]+) not found in manifest`)
+
+// unknownEventName reports the event name a 400 blames for the rejected request.
+func unknownEventName(err error) (string, bool) {
+	var apiErr *apiError
+	if !asAPIError(err, &apiErr) || apiErr.Status != http.StatusBadRequest {
+		return "", false
+	}
+	match := unknownEventNamePattern.FindStringSubmatch(apiErr.Message)
+	if len(match) != 2 {
+		return "", false
+	}
+	// The filter is written in lower case, so the name of the diagnostic is
+	// normalised before it is compared with it.
+	return strings.ToLower(match[1]), true
+}
+
+// withoutEventName answers the names without name. The caller compares the length
+// to tell "removed" from "was not there".
+func withoutEventName(names []string, name string) []string {
+	for index, candidate := range names {
+		if candidate != name {
+			continue
+		}
+		remaining := make([]string, 0, len(names)-1)
+		remaining = append(remaining, names[:index]...)
+		return append(remaining, names[index+1:]...)
+	}
+	return names
 }
 
 // formatActivityWatermark renders a cursor. Milliseconds are dropped so a cursor
@@ -305,7 +388,8 @@ func classifyActivity(application string, event googleEvent) (models.AuditLogAct
 			return models.AuditLogMove, target
 		case "rename", "edit":
 			return models.AuditLogUpdate, target
-		case "change_user_access", "change_document_access_scope", "change_acl_editors", "change_acl_scope":
+		case "change_user_access", "change_document_access_scope", "change_acl_editors",
+			"change_document_visibility", "change_owner":
 			return models.AuditLogShare, target
 		}
 		return models.AuditLogOther, target
