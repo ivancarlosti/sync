@@ -66,6 +66,13 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		audits.POST("/:id/cancel", s.handleCancelAudit)
 		audits.GET("/:id/export", s.handleExportAudit)
 
+		// The activity feed of the Audit Logs screen: the stored history, its
+		// export and the status of every feed.
+		auditLogs := secured.Group("/audit-logs")
+		auditLogs.GET("", s.handleListAuditLogs)
+		auditLogs.GET("/export", s.handleExportAuditLogs)
+		auditLogs.GET("/cursors", s.handleAuditLogCursors)
+
 		settings := secured.Group("/settings")
 		settings.GET("", s.handleGetSettings)
 		settings.PUT("", s.handleUpdateSettings)
@@ -107,6 +114,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		maintenance.POST("/runs/prune", s.handleMaintenanceRuns)
 		maintenance.POST("/audits/prune", s.handleMaintenanceAudits)
 		maintenance.POST("/purge", s.handleMaintenancePurge)
+		maintenance.POST("/auditlogs/collect", s.handleMaintenanceAuditLogs)
 	}
 
 	router.NoRoute(s.spa())

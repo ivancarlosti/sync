@@ -335,3 +335,67 @@ func truncate(value string, width int) string {
 func timePointer(value time.Time) *time.Time {
 	return &value
 }
+
+// AuditLogMaxPage is the largest page the API answers (the store clamps to the
+// same value), and AuditLogExportLimit the number of events one CSV export may
+// carry, which is what keeps a single request bounded.
+const (
+	AuditLogMaxPage     = 500
+	AuditLogExportLimit = 5000
+)
+
+// AuditLogCursorView is one feed position as the screen reads it: where the feed
+// stands, when it was last read and whether it is healthy. It is a view and not
+// the row so the SPA never has to interpret the opaque cursor string itself.
+type AuditLogCursorView struct {
+	Provider string `json:"provider"`
+	OrgID    string `json:"org_id"`
+	Stream   string `json:"stream"`
+	// Cursor is the opaque resume token, shown only as evidence of progress.
+	Cursor string `json:"cursor,omitempty"`
+	// LastEventAt is when the newest stored event of the feed happened.
+	LastEventAt *time.Time `json:"last_event_at,omitempty"`
+	// LastRunAt is when the collector last advanced this feed.
+	LastRunAt *time.Time `json:"last_run_at,omitempty"`
+	// Healthy is true when the last pass read the feed without an error.
+	Healthy bool `json:"healthy"`
+	// NeedsConsent is true when the failure is a missing grant, which is the one
+	// error an operator can fix from the provider console (the SPA words it as
+	// "grant the permission", see docs/audit-logs.md).
+	NeedsConsent bool   `json:"needs_consent"`
+	LastError    string `json:"last_error,omitempty"`
+}
+
+// NewAuditLogCursorViews converts the stored cursors.
+func NewAuditLogCursorViews(rows []models.AuditLogCursor) []AuditLogCursorView {
+	views := make([]AuditLogCursorView, 0, len(rows))
+	for _, row := range rows {
+		views = append(views, AuditLogCursorView{
+			Provider:     row.Provider,
+			OrgID:        row.OrgID,
+			Stream:       row.Stream,
+			Cursor:       row.Cursor,
+			LastEventAt:  row.LastEventAt,
+			LastRunAt:    row.LastRunAt,
+			Healthy:      strings.TrimSpace(row.LastError) == "",
+			NeedsConsent: needsConsent(row.LastError),
+			LastError:    row.LastError,
+		})
+	}
+	return views
+}
+
+// needsConsent reports whether a stored failure is a missing grant: the vendors
+// spell it as a consent, a permission name or a 401/403 on the feed's endpoint.
+func needsConsent(lastError string) bool {
+	message := strings.ToLower(lastError)
+	for _, marker := range []string{
+		"consent", "activityfeed.read", "auditlog.read.all", "admin.reports.audit.readonly",
+		"insufficient", "unauthorized", "forbidden", "http 401", "http 403",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
+}
