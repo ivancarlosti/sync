@@ -21,6 +21,12 @@ const (
 	// DefaultRefreshWindow refreshes an access token before it actually expires,
 	// so a scheduled run never has to refresh on its critical path.
 	DefaultRefreshWindow = 5 * time.Minute
+	// DefaultAuditLogInterval is how often the activity feeds of the connected
+	// organisations are polled. Ten minutes is the finest interval Microsoft
+	// documents for the management activity API (its content becomes available
+	// with a delay of up to fifteen minutes) and comfortably inside every vendor
+	// quota, so a shorter one would only repeat the same window.
+	DefaultAuditLogInterval = 10 * time.Minute
 	// DefaultPurgeInterval is how often the retention policy of Admin > Settings
 	// > Purge is applied. Age is measured in days, so an hourly pass would only
 	// churn through the same rows: six hours keeps the tables bounded without
@@ -28,14 +34,16 @@ const (
 	DefaultPurgeInterval = 6 * time.Hour
 )
 
-// Scheduler is the in-process time source of Sync. It owns three loops:
+// Scheduler is the in-process time source of Sync. It owns four loops:
 //
 //   - the schedule loop starts every enabled job whose next_run_at elapsed;
 //   - the token loop renews the access tokens that expire inside the refresh
 //     window of every connected account;
-//   - the retention loop applies the purge policy (runs, audits and traffic
-//     days older than the configured age) once at start-up and every
-//     DefaultPurgeInterval afterwards.
+//   - the retention loop applies the purge policy (runs, audits, traffic days and
+//     activity events older than the configured age) once at start-up and every
+//     DefaultPurgeInterval afterwards;
+//   - the logs loop polls the activity feeds of the connected organisations once
+//     at start-up and every DefaultAuditLogInterval afterwards.
 //
 // The loops are plain goroutines with a ticker, so running the binary twice
 // against the same database only causes jobs to be attempted twice (each
@@ -46,12 +54,14 @@ type Scheduler struct {
 	tokens   *TokenManager
 	notifier *Notifier
 	purge    *PurgeService
+	logs     *AuditLogService
 	now      func() time.Time
 
 	scheduleEvery time.Duration
 	tokenEvery    time.Duration
 	refreshWindow time.Duration
 	purgeEvery    time.Duration
+	logsEvery     time.Duration
 
 	mu      sync.Mutex
 	started bool
@@ -67,11 +77,13 @@ func NewScheduler(store *Store, engine *SyncService, tokens *TokenManager, notif
 		tokens:        tokens,
 		notifier:      notifier,
 		purge:         NewPurgeService(store),
+		logs:          NewAuditLogService(store, tokens),
 		now:           func() time.Time { return time.Now().UTC() },
 		scheduleEvery: DefaultScheduleInterval,
 		tokenEvery:    DefaultTokenInterval,
 		refreshWindow: DefaultRefreshWindow,
 		purgeEvery:    DefaultPurgeInterval,
+		logsEvery:     DefaultAuditLogInterval,
 		stop:          make(chan struct{}),
 	}
 }
@@ -122,7 +134,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	s.started = true
 	s.mu.Unlock()
 
-	s.wg.Add(3)
+	s.wg.Add(4)
 	go func() {
 		defer s.wg.Done()
 		s.loop(ctx, "schedule", s.scheduleEvery, func(ctx context.Context) { s.RunDue(ctx) })
@@ -137,6 +149,13 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		// restarted more often than the interval would otherwise never purge.
 		s.RunRetention(ctx)
 		s.loop(ctx, "retention", s.purgeEvery, func(ctx context.Context) { s.RunRetention(ctx) })
+	}()
+	go func() {
+		defer s.wg.Done()
+		// The first pass runs immediately: a fresh instance shows the activity
+		// of the last week without waiting for the first tick.
+		s.RunAuditLogs(ctx)
+		s.loop(ctx, "logs", s.logsEvery, func(ctx context.Context) { s.RunAuditLogs(ctx) })
 	}()
 	return nil
 }
@@ -234,6 +253,21 @@ func (s *Scheduler) RunRetention(ctx context.Context) PurgeResult {
 		return PurgeResult{}
 	}
 	return outcome.Removed
+}
+
+// RunAuditLogs polls every activity feed once and answers what the pass did. It
+// is the body of the logs loop, exported so the API can force a pass and so tests
+// can drive the collector deterministically. A failure is logged and reported as
+// an empty pass: an unreachable provider must never take the scheduler down.
+func (s *Scheduler) RunAuditLogs(ctx context.Context) AuditLogCollectResult {
+	outcome := s.logs.Collect(ctx)
+	if outcome.Failed > 0 {
+		slog.Warn("the activity feed pass finished with failures",
+			"streams", outcome.Streams,
+			"failed", outcome.Failed,
+			"errors", len(outcome.Errors))
+	}
+	return outcome
 }
 
 // NextRunAt computes the next execution of a job: now plus its interval for an

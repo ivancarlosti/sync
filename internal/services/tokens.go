@@ -123,6 +123,34 @@ func (m *TokenManager) AccountKind(account *models.ConnectedAccount) providers.A
 	return classifier.AccountKindOf(&providers.Tokens{AccessToken: access})
 }
 
+// OrgID names the organisation (tenant or domain) a stored account belongs to,
+// reading it from the access token instead of the row.
+//
+// It exists for the rows connected before connected_accounts.org_id was filled:
+// the audit-log collector groups the accounts of one organisation under a single
+// feed, and an account that cannot name its organisation falls back to this. Like
+// AccountKind it decrypts the access token and reads a claim — no provider call,
+// no refresh, no write — and answers "" for a provider that cannot name the
+// organisation from the token (Google, whose tokens are opaque).
+func (m *TokenManager) OrgID(account *models.ConnectedAccount) string {
+	if account == nil {
+		return ""
+	}
+	implementation, err := m.registry.Get(models.ProviderName(account.Provider))
+	if err != nil {
+		return ""
+	}
+	identifier, ok := implementation.(providers.OrgIdentifier)
+	if !ok {
+		return ""
+	}
+	access, err := m.box.Decrypt(account.AccessToken)
+	if err != nil || access == "" {
+		return ""
+	}
+	return identifier.OrgIDOf(&providers.Tokens{AccessToken: access})
+}
+
 // Reissue forces a renewal of the access token of an account and persists it.
 //
 // Resolve only refreshes when the stored token is already expired, which is

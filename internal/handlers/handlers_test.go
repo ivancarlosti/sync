@@ -1695,6 +1695,7 @@ func TestSettingsReadAndUpdate(t *testing.T) {
 			"purge_jobs_days":               180,
 			"purge_audits_days":             180,
 			"purge_billing_days":            180,
+			"purge_auditlogs_days":          180,
 		}
 		for key, value := range extra {
 			payload[key] = value
@@ -3051,6 +3052,7 @@ func TestBillingExportAndValidation(t *testing.T) {
 		"purge_jobs_days":               180,
 		"purge_audits_days":             180,
 		"purge_billing_days":            180,
+		"purge_auditlogs_days":          180,
 	})
 	requireStatus(t, recorder, http.StatusOK)
 
@@ -3095,6 +3097,7 @@ func TestBillingExportAndValidation(t *testing.T) {
 		"purge_jobs_days":               180,
 		"purge_audits_days":             180,
 		"purge_billing_days":            180,
+		"purge_auditlogs_days":          180,
 	})
 	requireStatus(t, recorder, http.StatusBadRequest)
 	requireErrorCode(t, recorder, codeValidation)

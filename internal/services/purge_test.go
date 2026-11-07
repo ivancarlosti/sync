@@ -70,7 +70,7 @@ func TestPurgePolicyDefaultsAndClamps(t *testing.T) {
 
 // TestPurgeTargetsValidation covers what a caller may ask for.
 func TestPurgeTargetsValidation(t *testing.T) {
-	for _, target := range []string{"jobs", " JOBS ", "audits", "billing"} {
+	for _, target := range []string{"jobs", " JOBS ", "audits", "billing", "auditlogs"} {
 		targets, err := purgeTargets(target)
 		if err != nil || len(targets) != 1 {
 			t.Fatalf("purgeTargets(%q) = %v (%v), want the single target", target, targets, err)
@@ -234,5 +234,60 @@ func TestPurgeRunHonoursTheSwitchAndTheScheduler(t *testing.T) {
 	}
 	if audits := countRows(t, store, &models.AuditRun{}, ""); audits != 0 {
 		t.Fatalf("audit_runs = %d, want none left", audits)
+	}
+}
+
+// TestPurgeErasesAgedActivityEvents pins the fourth purge target: the stored
+// activity events follow their own retention, which is what bounds the storage
+// the poller grows, and the events of the days still inside the policy stay.
+func TestPurgeErasesAgedActivityEvents(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+	service := NewPurgeService(store)
+	now := time.Date(2026, 10, 14, 9, 0, 0, 0, time.UTC)
+	service.now = func() time.Time { return now }
+
+	aged := activityEvent(models.ProviderMicrosoft, "directory", "evt-old", "tenant-a",
+		models.AuditLogDelete, "admin@contoso.com", now.AddDate(0, 0, -400))
+	fresh := activityEvent(models.ProviderMicrosoft, "directory", "evt-new", "tenant-a",
+		models.AuditLogCreate, "admin@contoso.com", now.AddDate(0, 0, -2))
+	if err := store.InsertAuditLogEvents(ctx, []models.AuditLogEvent{aged, fresh}); err != nil {
+		t.Fatalf("seeding the activity events: %v", err)
+	}
+	setSettings(t, store, map[string]string{models.SettingPurgeAuditLogsDays: "365"})
+
+	outcome, err := service.Purge(ctx, PurgeTargetAuditLogs, 0)
+	if err != nil {
+		t.Fatalf("purging the activity events: %v", err)
+	}
+	if outcome.Removed.AuditLogs != 1 {
+		t.Fatalf("removed = %+v, want the single aged event", outcome.Removed)
+	}
+	if outcome.Days[PurgeTargetAuditLogs] != 365 {
+		t.Fatalf("days = %v, want the configured activity-log retention", outcome.Days)
+	}
+	if outcome.Removed.Jobs != 0 || outcome.Removed.Audits != 0 || outcome.Removed.Billing != 0 {
+		t.Fatalf("removed = %+v, want the other targets untouched", outcome.Removed)
+	}
+	if events := countRows(t, store, &models.AuditLogEvent{}, ""); events != 1 {
+		t.Fatalf("audit_log_events = %d, want the recent event kept", events)
+	}
+
+	// The automatic pass applies the same age, and `all` counts the events it
+	// erased with the rest.
+	agedAgain := activityEvent(models.ProviderMicrosoft, "unified", "evt-older", "tenant-a",
+		models.AuditLogDelete, "admin@contoso.com", now.AddDate(0, 0, -500))
+	if err := store.InsertAuditLogEvents(ctx, []models.AuditLogEvent{agedAgain}); err != nil {
+		t.Fatalf("seeding a second aged event: %v", err)
+	}
+	outcome, err = service.Purge(ctx, PurgeTargetAll, 0)
+	if err != nil {
+		t.Fatalf("purging everything: %v", err)
+	}
+	if outcome.Removed.AuditLogs != 1 || outcome.Removed.Total() != 1 {
+		t.Fatalf("removed = %+v, want the second aged event alone", outcome.Removed)
+	}
+	if events := countRows(t, store, &models.AuditLogEvent{}, ""); events != 1 {
+		t.Fatalf("audit_log_events = %d, want only the recent event left", events)
 	}
 }

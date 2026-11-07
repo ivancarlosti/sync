@@ -19,7 +19,7 @@ import (
 	"github.com/ivancarlosti/sync/internal/models"
 )
 
-// The purge targets: the three kinds of record an operator trims.
+// The purge targets: the kinds of record an operator trims.
 const (
 	// PurgeTargetJobs erases finished sync runs with their items and traffic.
 	PurgeTargetJobs = "jobs"
@@ -27,25 +27,30 @@ const (
 	PurgeTargetAudits = "audits"
 	// PurgeTargetBilling erases the traffic rows of the days that aged out.
 	PurgeTargetBilling = "billing"
-	// PurgeTargetAll runs the three of them in one pass.
+	// PurgeTargetAuditLogs erases the stored activity events of the days that
+	// aged out. The event rows are the local copy of a vendor feed, so erasing
+	// them is what bounds the storage the poller grows.
+	PurgeTargetAuditLogs = "auditlogs"
+	// PurgeTargetAll runs every target in one pass.
 	PurgeTargetAll = "all"
 )
 
-// PurgeTargets lists the three targets in the order the settings screen shows
-// them.
-var PurgeTargets = []string{PurgeTargetJobs, PurgeTargetAudits, PurgeTargetBilling}
+// PurgeTargets lists the targets in the order the settings screen shows them.
+var PurgeTargets = []string{PurgeTargetJobs, PurgeTargetAudits, PurgeTargetBilling, PurgeTargetAuditLogs}
 
 // PurgePolicy is the retention an operator configured: one switch for the
 // automatic pass and one age per kind of record.
 //
-// The three ages move independently because the records do: a run log is
-// troubleshooting material, an audit report backs a compliance statement and a
-// traffic day is what an invoice is made of.
+// The ages move independently because the records do: a run log is
+// troubleshooting material, an audit report backs a compliance statement, a
+// traffic day is what an invoice is made of and an activity event is what an
+// investigation reads.
 type PurgePolicy struct {
-	Enabled     bool
-	JobsDays    int
-	AuditsDays  int
-	BillingDays int
+	Enabled       bool
+	JobsDays      int
+	AuditsDays    int
+	BillingDays   int
+	AuditLogsDays int
 }
 
 // Days returns the configured age of a target (0 for an unknown one).
@@ -57,6 +62,8 @@ func (p PurgePolicy) Days(target string) int {
 		return p.AuditsDays
 	case PurgeTargetBilling:
 		return p.BillingDays
+	case PurgeTargetAuditLogs:
+		return p.AuditLogsDays
 	default:
 		return 0
 	}
@@ -70,11 +77,13 @@ type PurgeResult struct {
 	Audits int64 `json:"audits"`
 	// Billing is the number of traffic rows.
 	Billing int64 `json:"billing"`
+	// AuditLogs is the number of activity events.
+	AuditLogs int64 `json:"auditlogs"`
 }
 
 // Total is what the screen reports as "records removed".
 func (r PurgeResult) Total() int64 {
-	return r.Jobs + r.Audits + r.Billing
+	return r.Jobs + r.Audits + r.Billing + r.AuditLogs
 }
 
 // PurgeOutcome is what a pass did: the age it applied to each target and the
@@ -104,10 +113,11 @@ func NewPurgeService(store *Store) *PurgeService {
 func (p *PurgeService) Policy(ctx context.Context) PurgePolicy {
 	settings := p.store.Settings()
 	return PurgePolicy{
-		Enabled:     settings.Bool(ctx, models.SettingPurgeEnabled, true),
-		JobsDays:    clampDays(settings.Int(ctx, models.SettingPurgeJobsDays, DefaultRetentionDays)),
-		AuditsDays:  clampDays(settings.Int(ctx, models.SettingPurgeAuditsDays, DefaultRetentionDays)),
-		BillingDays: clampDays(settings.Int(ctx, models.SettingPurgeBillingDays, DefaultRetentionDays)),
+		Enabled:       settings.Bool(ctx, models.SettingPurgeEnabled, true),
+		JobsDays:      clampDays(settings.Int(ctx, models.SettingPurgeJobsDays, DefaultRetentionDays)),
+		AuditsDays:    clampDays(settings.Int(ctx, models.SettingPurgeAuditsDays, DefaultRetentionDays)),
+		BillingDays:   clampDays(settings.Int(ctx, models.SettingPurgeBillingDays, DefaultRetentionDays)),
+		AuditLogsDays: clampDays(settings.Int(ctx, models.SettingPurgeAuditLogsDays, DefaultRetentionDays)),
 	}
 }
 
@@ -129,7 +139,8 @@ func (p *PurgeService) Run(ctx context.Context) (PurgeOutcome, error) {
 	slog.Info("retention pass done",
 		"runs", outcome.Removed.Jobs,
 		"audits", outcome.Removed.Audits,
-		"traffic_rows", outcome.Removed.Billing)
+		"traffic_rows", outcome.Removed.Billing,
+		"audit_log_events", outcome.Removed.AuditLogs)
 	return outcome, nil
 }
 
@@ -169,6 +180,8 @@ func (p *PurgeService) purge(ctx context.Context, policy PurgePolicy, target str
 			outcome.Removed.Audits, err = p.store.PurgeAuditsBefore(ctx, cutoff)
 		case PurgeTargetBilling:
 			outcome.Removed.Billing, err = p.store.PurgeTrafficBefore(ctx, cutoff)
+		case PurgeTargetAuditLogs:
+			outcome.Removed.AuditLogs, err = p.store.PurgeAuditLogsBefore(ctx, cutoff)
 		}
 		if err != nil {
 			return PurgeOutcome{}, err
@@ -178,8 +191,8 @@ func (p *PurgeService) purge(ctx context.Context, policy PurgePolicy, target str
 	return outcome, nil
 }
 
-// purgeTargets resolves what a pass touches: one target, or the three of them
-// for `all` (and for the empty string a caller may send).
+// purgeTargets resolves what a pass touches: one target, or all of them for
+// `all` (and for the empty string a caller may send).
 func purgeTargets(target string) ([]string, error) {
 	trimmed := strings.ToLower(strings.TrimSpace(target))
 	if trimmed == "" || trimmed == PurgeTargetAll {

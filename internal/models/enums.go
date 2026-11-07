@@ -312,13 +312,15 @@ const (
 	// SettingPurgeEnabled arms the automatic retention pass (and leaves the
 	// manual "purge now" actions available either way).
 	SettingPurgeEnabled = "purge_enabled"
-	// SettingPurgeJobsDays, SettingPurgeAuditsDays and SettingPurgeBillingDays
-	// are the ages, in days, past which the automatic pass erases a run, an
-	// audit report and a traffic day. Operators delete records under different
-	// legal constraints, so the three move independently.
-	SettingPurgeJobsDays    = "purge_jobs_days"
-	SettingPurgeAuditsDays  = "purge_audits_days"
-	SettingPurgeBillingDays = "purge_billing_days"
+	// SettingPurgeJobsDays, SettingPurgeAuditsDays, SettingPurgeBillingDays and
+	// SettingPurgeAuditLogsDays are the ages, in days, past which the automatic
+	// pass erases a run, an audit report, a traffic day and an activity event.
+	// Operators delete records under different legal constraints, so the four
+	// move independently.
+	SettingPurgeJobsDays      = "purge_jobs_days"
+	SettingPurgeAuditsDays    = "purge_audits_days"
+	SettingPurgeBillingDays   = "purge_billing_days"
+	SettingPurgeAuditLogsDays = "purge_auditlogs_days"
 )
 
 // ProviderConfigPrefix is the settings-key prefix holding credentials entered

@@ -61,11 +61,12 @@ type AppSettings struct {
 	// PurgeEnabled arms the automatic retention pass. It never disables the
 	// manual "purge now" actions of Admin > Settings.
 	PurgeEnabled bool `json:"purge_enabled"`
-	// PurgeJobsDays, PurgeAuditsDays and PurgeBillingDays are the ages, in days,
-	// past which each kind of record is erased.
-	PurgeJobsDays    int `json:"purge_jobs_days"`
-	PurgeAuditsDays  int `json:"purge_audits_days"`
-	PurgeBillingDays int `json:"purge_billing_days"`
+	// PurgeJobsDays, PurgeAuditsDays, PurgeBillingDays and PurgeAuditLogsDays are
+	// the ages, in days, past which each kind of record is erased.
+	PurgeJobsDays      int `json:"purge_jobs_days"`
+	PurgeAuditsDays    int `json:"purge_audits_days"`
+	PurgeBillingDays   int `json:"purge_billing_days"`
+	PurgeAuditLogsDays int `json:"purge_auditlogs_days"`
 }
 
 // SettingsService reads and writes the editable settings.
@@ -99,6 +100,7 @@ func Defaults(cfg *config.Config) map[string]string {
 		models.SettingPurgeJobsDays:        strconv.Itoa(DefaultRetentionDays),
 		models.SettingPurgeAuditsDays:      strconv.Itoa(DefaultRetentionDays),
 		models.SettingPurgeBillingDays:     strconv.Itoa(DefaultRetentionDays),
+		models.SettingPurgeAuditLogsDays:   strconv.Itoa(DefaultRetentionDays),
 	}
 }
 
@@ -116,6 +118,7 @@ func (s *SettingsService) Load(ctx context.Context) (AppSettings, error) {
 		PurgeJobsDays:       DefaultRetentionDays,
 		PurgeAuditsDays:     DefaultRetentionDays,
 		PurgeBillingDays:    DefaultRetentionDays,
+		PurgeAuditLogsDays:  DefaultRetentionDays,
 	}
 	if locale := strings.TrimSpace(s.settings.Value(ctx, models.SettingDefaultLocale, out.DefaultLocale)); locale != "" {
 		out.DefaultLocale = locale
@@ -142,6 +145,7 @@ func (s *SettingsService) Load(ctx context.Context) (AppSettings, error) {
 	out.PurgeJobsDays = clampDays(s.settings.Int(ctx, models.SettingPurgeJobsDays, out.PurgeJobsDays))
 	out.PurgeAuditsDays = clampDays(s.settings.Int(ctx, models.SettingPurgeAuditsDays, out.PurgeAuditsDays))
 	out.PurgeBillingDays = clampDays(s.settings.Int(ctx, models.SettingPurgeBillingDays, out.PurgeBillingDays))
+	out.PurgeAuditLogsDays = clampDays(s.settings.Int(ctx, models.SettingPurgeAuditLogsDays, out.PurgeAuditLogsDays))
 	return out, nil
 }
 
@@ -200,6 +204,7 @@ func (s *SettingsService) Update(ctx context.Context, in AppSettings) (AppSettin
 		{"jobs", in.PurgeJobsDays},
 		{"audits", in.PurgeAuditsDays},
 		{"billing", in.PurgeBillingDays},
+		{"auditlogs", in.PurgeAuditLogsDays},
 	} {
 		if retention.days < MinRetentionDays || retention.days > MaxRetentionDays {
 			return AppSettings{}, fmt.Errorf("%w: the %s retention must be between %d and %d days",
@@ -220,6 +225,7 @@ func (s *SettingsService) Update(ctx context.Context, in AppSettings) (AppSettin
 		models.SettingPurgeJobsDays:        strconv.Itoa(in.PurgeJobsDays),
 		models.SettingPurgeAuditsDays:      strconv.Itoa(in.PurgeAuditsDays),
 		models.SettingPurgeBillingDays:     strconv.Itoa(in.PurgeBillingDays),
+		models.SettingPurgeAuditLogsDays:   strconv.Itoa(in.PurgeAuditLogsDays),
 	}
 	if err := s.settings.SetMany(ctx, values); err != nil {
 		return AppSettings{}, fmt.Errorf("services: saving settings: %w", err)
