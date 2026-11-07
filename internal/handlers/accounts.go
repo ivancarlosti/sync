@@ -30,8 +30,13 @@ type accountView struct {
 	// account: a personal Microsoft account cannot be granted the directory
 	// permissions at all, so those capabilities are reported as not applicable
 	// instead of missing.
-	AccountKind string   `json:"account_kind,omitempty"`
-	Scopes      []string `json:"scopes"`
+	AccountKind string `json:"account_kind,omitempty"`
+	// OrgID is the organisation the account belongs to (Entra tenant id for
+	// Microsoft, Workspace domain for Google), when one was reported. It is what
+	// groups the administrator accounts of one organisation under a single
+	// activity feed on the Audit Logs screen, and it is omitted when unknown.
+	OrgID  string   `json:"org_id,omitempty"`
+	Scopes []string `json:"scopes"`
 	// Capabilities lists the features the stored grant satisfies, and
 	// MissingCapabilities the ones the provider now requests but this grant does
 	// not cover, so the UI can explain what a reconnection adds.
@@ -99,6 +104,7 @@ func newAccountView(account models.ConnectedAccount, permissions, notApplicable 
 		DisplayName:               account.DisplayName,
 		AvatarURL:                 account.AvatarURL,
 		AccountKind:               account.Kind,
+		OrgID:                     account.OrgID,
 		Scopes:                    granted,
 		Capabilities:              []providers.Capability{},
 		MissingCapabilities:       []providers.Capability{},
@@ -255,6 +261,11 @@ func refreshIdentity(account *models.ConnectedAccount, remote *providers.Account
 		// must not discard the kind an earlier connection reported, because the
 		// per-kind permission split depends on it (see providers.Permission.Kinds).
 		account.Kind = string(remote.Kind)
+	}
+	if org := strings.TrimSpace(remote.OrgID); org != "" {
+		// Never cleared: the organisation is what groups the administrator
+		// accounts of one tenant/domain under a single activity feed.
+		account.OrgID = org
 	}
 }
 

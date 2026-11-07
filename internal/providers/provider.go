@@ -9,6 +9,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -114,6 +115,13 @@ type Account struct {
 	// which permissions are applicable to it (see Permission.Kinds). Empty means
 	// the provider did not say, and nothing is filtered out then.
 	Kind AccountKind
+	// OrgID is the organisation the account belongs to, when the provider can
+	// tell: the Entra tenant id for Microsoft, the Workspace hosted domain for
+	// Google. It groups the administrator accounts of one organisation under a
+	// single tenant/domain-wide activity feed, so the audit-log collector reads
+	// that feed once (see providers.ActivityLogSource). Empty means unknown, and
+	// the collector falls back to the token claim or the e-mail domain.
+	OrgID string
 }
 
 // AccountClassifier is implemented by providers that can name the kind of the
@@ -127,6 +135,78 @@ type Account struct {
 // provider with the token it was handed.
 type AccountClassifier interface {
 	AccountKindOf(tokens *Tokens) AccountKind
+}
+
+// OrgIdentifier is implemented by providers that can name the organisation
+// (tenant or domain) a token set belongs to from the token itself, without a
+// provider call — Microsoft reads the `tid` claim of its access tokens. The
+// audit-log collector uses it to group the administrator accounts of one
+// organisation under a single tenant-wide feed, even for an account that was
+// connected before the organisation was recorded on the row.
+type OrgIdentifier interface {
+	OrgIDOf(tokens *Tokens) string
+}
+
+// ActivityEvent is one record of a provider's activity feed, already normalised
+// onto the vocabulary of models.AuditLogAction / models.AuditLogTarget. It is
+// what an ActivityLogSource returns and what the collector stores as a
+// models.AuditLogEvent; keeping it provider agnostic is what lets one screen and
+// one filter engine cover both clouds.
+type ActivityEvent struct {
+	// Source names the feed the record came from (directory, drive, unified,
+	// admin, login, token, …). Together with RemoteID it is the identity of the
+	// event, so two feeds may use unrelated id spaces.
+	Source   string
+	RemoteID string
+
+	Action models.AuditLogAction
+	Target models.AuditLogTarget
+
+	ActorEmail string
+	ActorName  string
+	ActorID    string
+
+	TargetName string
+	TargetID   string
+	DriveID    string
+	SiteID     string
+
+	// OccurredAt is when the vendor says the event happened.
+	OccurredAt time.Time
+	// Raw is the vendor record, kept for fields the normaliser did not map.
+	Raw json.RawMessage
+}
+
+// ActivityLogSource is the optional capability behind the Audit Logs screen:
+// providers able to read their organisation-wide activity feed. It is
+// implemented the same way as SiteBrowser / SiteResolver, so a provider that
+// cannot answer one simply does not implement it and the collector skips it.
+//
+// The feed is tenant/domain scoped, never per user: one call reads every event
+// of the organisation the tokens belong to. A provider rarely exposes one feed,
+// though — Microsoft answers directory changes from Graph and file activity from
+// the Office 365 management activity API, Google answers one application of the
+// Reports API per call — so a *stream* names the feed being read. The collector
+// stores one cursor per (provider, organisation, stream), which is what lets one
+// feed stay healthy while another one of the same tenant is waiting for a
+// consent, and what keeps the failures of one stream out of the other.
+type ActivityLogSource interface {
+	// ActivityLogStreams lists the feeds this provider reads, using the same
+	// names the events carry in ActivityEvent.Source. The collector calls
+	// ActivityLogs once per stream and keeps one cursor per stream.
+	ActivityLogStreams() []string
+
+	// ActivityLogScopes lists the extra scopes the collector needs, so the guide
+	// and the Accounts screen can ask an operator to reconnect an account that
+	// was granted before the feed existed.
+	ActivityLogScopes() []string
+
+	// ActivityLogs reads one feed (stream) of the organisation behind tokens,
+	// starting after cursor, and answers the normalised events plus the cursor of
+	// the next pass. cursor is empty on the first call; next may be empty when
+	// the provider has no meaningful resume token, in which case the collector
+	// keeps the previous position.
+	ActivityLogs(ctx context.Context, creds Credentials, tokens *Tokens, stream, cursor string) (events []ActivityEvent, next string, err error)
 }
 
 // Drive is a named root the operator can browse and pick a folder from. For
@@ -267,6 +347,9 @@ const (
 	CapabilityRoles Capability = "roles"
 	// CapabilityLicenses covers subscription and licence assignment.
 	CapabilityLicenses Capability = "licenses"
+	// CapabilityLogs covers reading the organisation-wide activity feed behind
+	// the Audit Logs screen (see ActivityLogSource).
+	CapabilityLogs Capability = "logs"
 )
 
 // ProviderCapabilities lists every capability in the order the UI displays them.
@@ -279,6 +362,7 @@ var ProviderCapabilities = []Capability{
 	CapabilityOrgUnits,
 	CapabilityRoles,
 	CapabilityLicenses,
+	CapabilityLogs,
 }
 
 // Permission documents one requested scope: why it is requested, which feature

@@ -30,6 +30,7 @@ var wantScopes = []string{
 	"https://graph.microsoft.com/RoleManagement.Read.All",
 	"https://graph.microsoft.com/Organization.Read.All",
 	"https://graph.microsoft.com/LicenseAssignment.ReadWrite.All",
+	"https://graph.microsoft.com/AuditLog.Read.All",
 }
 
 // TestScopesMatchThePermissionTable pins Scopes() to the table the guide renders.
@@ -165,8 +166,8 @@ func TestPersonalAccountsKeepOnlyTheScopesTheyCanHold(t *testing.T) {
 		t.Fatalf("a personal account is asked to reconnect for %v", report.Missing)
 	}
 
-	// Everything the account cannot hold — the 11 directory scopes behind these
-	// seven capabilities, and nothing else: files is reachable through OneDrive.
+	// Everything the account cannot hold — the 12 directory scopes behind these
+	// eight capabilities, and nothing else: files is reachable through OneDrive.
 	want := []providers.Capability{
 		providers.CapabilityUsers,
 		providers.CapabilityGroups,
@@ -175,6 +176,7 @@ func TestPersonalAccountsKeepOnlyTheScopesTheyCanHold(t *testing.T) {
 		providers.CapabilityOrgUnits,
 		providers.CapabilityRoles,
 		providers.CapabilityLicenses,
+		providers.CapabilityLogs,
 	}
 	if len(report.NotApplicable) != len(want) {
 		t.Fatalf("notApplicable = %v, want %v", report.NotApplicable, want)

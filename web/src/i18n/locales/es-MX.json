@@ -49,7 +49,7 @@
     "accounts": "Cuentas",
     "jobs": "Tareas",
     "runs": "Ejecuciones",
-    "audit": "Auditoría",
+    "audit": "Auditoría de almacenamiento",
     "billing": "Facturación",
     "notifications": "Notificaciones",
     "admin": "Administración",
@@ -490,7 +490,8 @@
       "domains": "Dominios",
       "orgunits": "Unidades organizativas",
       "roles": "Roles administrativos",
-      "licenses": "Licencias"
+      "licenses": "Licencias",
+      "logs": "Registros de auditoría"
     },
     "guide": {
       "title": "Guía de configuración",
@@ -618,7 +619,7 @@
     "billingSchema_custom": "Personalizado"
   },
   "audit": {
-    "title": "Auditoría",
+    "title": "Auditoría de almacenamiento",
     "subtitle": "Analiza un árbol de carpetas y descarga el informe de contenido.",
     "account": "Cuenta",
     "folder": "Carpeta",

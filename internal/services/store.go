@@ -710,6 +710,164 @@ func (s *Store) PurgeAuditsBefore(ctx context.Context, cutoff time.Time) (int64,
 	return int64(len(ids)), nil
 }
 
+// ---------------------------------------------------------------------------
+// Activity log (Audit Logs screen)
+// ---------------------------------------------------------------------------
+
+// AuditLogFilter narrows the activity log list. A zero field is ignored, so an
+// empty filter lists everything (bounded by Limit/Offset).
+type AuditLogFilter struct {
+	Provider string
+	OrgID    string
+	Action   string
+	Target   string
+	// Actor matches the actor e-mail exactly (a filter from the UI's actor box).
+	Actor string
+	// Search is a substring matched against the actor e-mail and the target name.
+	Search string
+	From   *time.Time
+	To     *time.Time
+	Limit  int
+	Offset int
+}
+
+// auditLogQuery builds the filtered activity-log query shared by the listing and
+// its count, so the two can never disagree.
+func (s *Store) auditLogQuery(ctx context.Context, filter AuditLogFilter) *gorm.DB {
+	query := s.db.WithContext(ctx).Model(&models.AuditLogEvent{})
+	if filter.Provider != "" {
+		query = query.Where("provider = ?", filter.Provider)
+	}
+	if filter.OrgID != "" {
+		query = query.Where("org_id = ?", filter.OrgID)
+	}
+	if filter.Action != "" {
+		query = query.Where("action = ?", filter.Action)
+	}
+	if filter.Target != "" {
+		query = query.Where("target = ?", filter.Target)
+	}
+	if filter.Actor != "" {
+		query = query.Where("actor_email = ?", filter.Actor)
+	}
+	if filter.Search != "" {
+		like := "%" + filter.Search + "%"
+		query = query.Where("actor_email LIKE ? OR target_name LIKE ?", like, like)
+	}
+	if filter.From != nil {
+		query = query.Where("occurred_at >= ?", *filter.From)
+	}
+	if filter.To != nil {
+		query = query.Where("occurred_at <= ?", *filter.To)
+	}
+	return query
+}
+
+// InsertAuditLogEvents stores a batch of normalised activity events and ignores
+// the ones already stored for the same (provider, source, remote id), which is
+// what makes a collector safe to re-run over an overlapping window.
+//
+// It answers no count on purpose: the number of rows a batch actually added is
+// not portable (the SQLite driver reports the rows the statement touched, not
+// the rows it inserted, when a batch mixes new and duplicate events), so a
+// caller that wants to log the volume logs len(events) and treats ingestion as
+// idempotent.
+func (s *Store) InsertAuditLogEvents(ctx context.Context, events []models.AuditLogEvent) error {
+	if len(events) == 0 {
+		return nil
+	}
+	err := s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "provider"}, {Name: "source"}, {Name: "remote_id"}},
+			DoNothing: true,
+		}).
+		CreateInBatches(&events, 200).Error
+	if err != nil {
+		return fmt.Errorf("services: storing the activity events: %w", err)
+	}
+	return nil
+}
+
+// ListAuditLogEvents returns one page of activity events, newest first, plus the
+// total of the whole filtered set so the screen can paginate without a second
+// request.
+func (s *Store) ListAuditLogEvents(ctx context.Context, filter AuditLogFilter) ([]models.AuditLogEvent, int64, error) {
+	var total int64
+	if err := s.auditLogQuery(ctx, filter).Count(&total).Error; err != nil {
+		return nil, 0, fmt.Errorf("services: counting the activity events: %w", err)
+	}
+	limit := filter.Limit
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	var rows []models.AuditLogEvent
+	err := s.auditLogQuery(ctx, filter).
+		Order("occurred_at DESC").
+		Order("id DESC").
+		Limit(limit).
+		Offset(offset).
+		Find(&rows).Error
+	if err != nil {
+		return nil, 0, fmt.Errorf("services: listing the activity events: %w", err)
+	}
+	return rows, total, nil
+}
+
+// AuditLogCursorFor returns the stored cursor of one feed, or a zero cursor when
+// the feed was never read (a fresh organisation starts from the provider's
+// default window).
+func (s *Store) AuditLogCursorFor(ctx context.Context, provider, orgID, stream string) (models.AuditLogCursor, error) {
+	var row models.AuditLogCursor
+	err := s.db.WithContext(ctx).
+		Where("provider = ? AND org_id = ? AND stream = ?", provider, orgID, stream).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return models.AuditLogCursor{Provider: provider, OrgID: orgID, Stream: stream}, nil
+	}
+	if err != nil {
+		return models.AuditLogCursor{}, fmt.Errorf("services: reading the activity cursor: %w", err)
+	}
+	return row, nil
+}
+
+// SaveAuditLogCursor upserts one feed's position, so the first read of an
+// organisation creates the row and every later pass updates it.
+func (s *Store) SaveAuditLogCursor(ctx context.Context, cursor *models.AuditLogCursor) error {
+	err := s.db.WithContext(ctx).
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "provider"}, {Name: "org_id"}, {Name: "stream"}},
+			DoUpdates: clause.AssignmentColumns([]string{"cursor", "last_event_at", "last_run_at", "last_error", "updated_at"}),
+		}).
+		Create(cursor).Error
+	if err != nil {
+		return fmt.Errorf("services: saving the activity cursor: %w", err)
+	}
+	return nil
+}
+
+// ListAuditLogCursors returns every feed position for the screen's status banner.
+func (s *Store) ListAuditLogCursors(ctx context.Context) ([]models.AuditLogCursor, error) {
+	var rows []models.AuditLogCursor
+	if err := s.db.WithContext(ctx).Order("provider, org_id, stream").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("services: listing the activity cursors: %w", err)
+	}
+	return rows, nil
+}
+
+// PurgeAuditLogsBefore deletes the activity events older than the cutoff and
+// answers how many rows went.
+func (s *Store) PurgeAuditLogsBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	result := s.db.WithContext(ctx).Where("occurred_at < ?", cutoff).Delete(&models.AuditLogEvent{})
+	if result.Error != nil {
+		return 0, fmt.Errorf("services: purging the activity events: %w", result.Error)
+	}
+	return result.RowsAffected, nil
+}
+
 // PurgeTrafficBefore drops the traffic rows of the days before the cutoff and
 // answers how many rows went. It bounds the cost history on its own, so a
 // deployment that keeps its run history for years can still drop old invoices.

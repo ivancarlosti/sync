@@ -87,6 +87,16 @@ func (p *Provider) Permissions() []providers.Permission {
 			Scope:        "https://www.googleapis.com/auth/apps.licensing",
 			AdminConsent: true,
 		},
+		{
+			// The Reports API behind the Audit Logs screen. One read-only scope
+			// covers every application of the feed (drive, user_accounts,
+			// groups, admin, login), which is why the collector asks for this
+			// one and nothing else.
+			Capability:   providers.CapabilityLogs,
+			Title:        "logs",
+			Scope:        reportsScope,
+			AdminConsent: true,
+		},
 	}
 }
 

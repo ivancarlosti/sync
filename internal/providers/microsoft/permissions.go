@@ -75,6 +75,14 @@ func (p *Provider) Permissions() []providers.Permission {
 		// assigns or removes a licence.
 		{Capability: providers.CapabilityLicenses, Title: "licenses", Scope: graphScope("Organization.Read.All"), AdminConsent: true, Kinds: workAccounts},
 		{Capability: providers.CapabilityLicenses, Title: "licenses", Scope: graphScope("LicenseAssignment.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
+
+		// The directory feed of the Audit Logs screen. AuditLog.Read.All is the
+		// read side of Graph's `auditLogs/directoryAudits`, and it is the whole
+		// delegated contract of the feature: the file/workload feed is read with
+		// an *application* permission (ActivityFeed.Read) that cannot be part of
+		// an authorization request — see unified.go and
+		// docs/app-registration.md.
+		{Capability: providers.CapabilityLogs, Title: "logs", Scope: auditLogScope, AdminConsent: true, Kinds: workAccounts},
 	}
 }
 
@@ -88,6 +96,11 @@ func (p *Provider) ConsoleURLs() map[string]string {
 		"entra_credentials":     "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Credentials",
 		"entra_api_permissions": "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI",
 		"graph_permissions":     "https://learn.microsoft.com/en-us/graph/permissions-reference",
+		// The management activity API (the file/workload feed of the Audit Logs
+		// screen) is app-only, so it has its own application-permission blade
+		// and its own subscription checklist.
+		"entra_app_permissions": "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/",
+		"office_activity_api":   "https://learn.microsoft.com/en-us/office/office-365-management-api/office-365-management-activity-api-reference",
 	}
 }
 

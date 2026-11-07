@@ -16,6 +16,10 @@ import (
 // account, so a renamed method must fail the build.
 var _ providers.AccountClassifier = (*Provider)(nil)
 
+// Compile time guard: the activity-log collector groups accounts by organisation
+// through this interface, so a renamed method must fail the build.
+var _ providers.OrgIdentifier = (*Provider)(nil)
+
 // consumerTenantID is the tenant Microsoft accounts (MSAs) live in. A personal
 // account is not a member of a directory: it is a tenant of its own, and the
 // tenant id is the well known *consumers* tenant Microsoft documents — every
@@ -45,6 +49,21 @@ func (p *Provider) AccountKindOf(tokens *providers.Tokens) providers.AccountKind
 	default:
 		return providers.AccountKindWork
 	}
+}
+
+// OrgIDOf implements providers.OrgIdentifier: the tenant of the access token,
+// lower-cased so one directory always groups under a single collector key. A
+// personal Microsoft account (an MSA) lives in the consumer tenant, which is not
+// an organisation to share a directory-wide feed with, so it answers "".
+func (p *Provider) OrgIDOf(tokens *providers.Tokens) string {
+	if tokens == nil {
+		return ""
+	}
+	tenant := tokenTenant(tokens.AccessToken)
+	if tenant == "" || strings.EqualFold(tenant, consumerTenantID) {
+		return ""
+	}
+	return strings.ToLower(tenant)
 }
 
 // accountKind names the account behind tokens during a connection (OAuth

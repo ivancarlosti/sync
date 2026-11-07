@@ -49,7 +49,7 @@
     "accounts": "Comptes",
     "jobs": "Tâches",
     "runs": "Exécutions",
-    "audit": "Audit",
+    "audit": "Audit du stockage",
     "billing": "Facturation",
     "notifications": "Notifications",
     "admin": "Administration",
@@ -490,7 +490,8 @@
       "domains": "Domaines",
       "orgunits": "Unités organisationnelles",
       "roles": "Rôles administratifs",
-      "licenses": "Licences"
+      "licenses": "Licences",
+      "logs": "Journaux d'audit"
     },
     "guide": {
       "title": "Guide de configuration",
@@ -618,7 +619,7 @@
     "billingSchema_custom": "Personnalisé"
   },
   "audit": {
-    "title": "Audit",
+    "title": "Audit du stockage",
     "subtitle": "Analysez une arborescence de dossiers et téléchargez le rapport de contenu.",
     "account": "Compte",
     "folder": "Dossier",

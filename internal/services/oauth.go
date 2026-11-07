@@ -259,6 +259,11 @@ func (o *OAuthService) Complete(ctx context.Context, provider models.ProviderNam
 		// per-kind permission split needs it (see providers.Permission.Kinds).
 		account.Kind = string(remote.Kind)
 	}
+	if org := strings.TrimSpace(remote.OrgID); org != "" {
+		// The organisation groups the administrator accounts of one tenant/domain
+		// under a single activity feed; never cleared for the same reason as Kind.
+		account.OrgID = org
+	}
 	if err := o.tokens.Persist(ctx, account, tokens); err != nil {
 		return nil, err
 	}

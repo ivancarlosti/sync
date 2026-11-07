@@ -49,7 +49,7 @@
     "accounts": "Contas",
     "jobs": "Tarefas",
     "runs": "Execuções",
-    "audit": "Auditoria",
+    "audit": "Auditoria de armazenamento",
     "billing": "Faturamento",
     "notifications": "Notificações",
     "admin": "Administração",
@@ -490,7 +490,8 @@
       "domains": "Domínios",
       "orgunits": "Unidades organizacionais",
       "roles": "Funções administrativas",
-      "licenses": "Licenças"
+      "licenses": "Licenças",
+      "logs": "Registros de auditoria"
     },
     "guide": {
       "title": "Guia de configuração",
@@ -618,7 +619,7 @@
     "billingSchema_custom": "Personalizado"
   },
   "audit": {
-    "title": "Auditoria",
+    "title": "Auditoria de armazenamento",
     "subtitle": "Analise uma árvore de pastas e baixe o relatório de conteúdo.",
     "account": "Conta",
     "folder": "Pasta",

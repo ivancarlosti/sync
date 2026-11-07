@@ -34,6 +34,15 @@ type ConnectedAccount struct {
 	// same. The API reports it as account_kind (see handlers.accountViewOf), which
 	// also derives it from the stored token when this column is empty.
 	Kind string `gorm:"size:16" json:"kind,omitempty"`
+	// OrgID is the organisation the account belongs to, as the provider last
+	// reported it: the Entra tenant id (the `tid` claim) for Microsoft, the
+	// Workspace hosted domain for Google. Several administrator accounts of the
+	// same organisation share it, which is what lets the activity-log collector
+	// read the tenant-wide feed once instead of once per account (see the audit
+	// logs plan). It is empty for a personal account and on rows written before
+	// the column existed; the collector falls back to the token claim or the
+	// account's e-mail domain then.
+	OrgID string `gorm:"size:191;index" json:"org_id,omitempty"`
 	// AccessToken/RefreshToken hold AES-GCM ciphertext, never a raw token, and
 	// are therefore never serialised to the API (json:"-").
 	AccessToken  string     `gorm:"type:text" json:"-"`

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"golang.org/x/oauth2"
@@ -149,6 +150,10 @@ func (p *Provider) Account(ctx context.Context, _ providers.Credentials, tokens 
 		Email   string `json:"email"`
 		Name    string `json:"name"`
 		Picture string `json:"picture"`
+		// Hd is the hosted domain (the Workspace domain) of the account; it is
+		// absent for a personal Google account. It is the organisation the
+		// activity feed of Google Reports is scoped to.
+		Hd string `json:"hd"`
 	}
 	if err := p.doJSON(ctx, p.client(tokens), http.MethodGet, userInfoURL, nil, &info); err != nil {
 		return nil, err
@@ -158,6 +163,7 @@ func (p *Provider) Account(ctx context.Context, _ providers.Credentials, tokens 
 		Email:     info.Email,
 		Name:      info.Name,
 		AvatarURL: info.Picture,
+		OrgID:     strings.ToLower(strings.TrimSpace(info.Hd)),
 	}
 	if account.ID == "" {
 		account.ID = info.Email

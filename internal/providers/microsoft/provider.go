@@ -434,6 +434,9 @@ func (p *Provider) Account(ctx context.Context, _ providers.Credentials, tokens 
 	// The kind decides which permissions are applicable to the account (see
 	// permissions.go); it is best effort, so a probe that fails leaves it unknown.
 	account.Kind = p.accountKind(ctx, client, tokens)
+	// The organisation groups the administrator accounts of one directory under a
+	// single activity feed (an MSA answers "", see OrgIDOf).
+	account.OrgID = p.OrgIDOf(tokens)
 	return account, nil
 }
 

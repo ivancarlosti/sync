@@ -49,7 +49,7 @@
     "accounts": "账户",
     "jobs": "任务",
     "runs": "执行记录",
-    "audit": "审计",
+    "audit": "存储审计",
     "billing": "计费",
     "notifications": "通知",
     "admin": "管理",
@@ -490,7 +490,8 @@
       "domains": "域名",
       "orgunits": "组织单位",
       "roles": "管理角色",
-      "licenses": "许可证"
+      "licenses": "许可证",
+      "logs": "审核日志"
     },
     "guide": {
       "title": "设置指南",
@@ -618,7 +619,7 @@
     "billingSchema_custom": "自定义"
   },
   "audit": {
-    "title": "审计",
+    "title": "存储审计",
     "subtitle": "分析文件夹树并下载内容报告。",
     "account": "账户",
     "folder": "文件夹",

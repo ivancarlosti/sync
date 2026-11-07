@@ -116,3 +116,43 @@ func TestProviderImplementsTheAccountClassifier(t *testing.T) {
 		t.Fatal("*Provider no longer implements providers.AccountClassifier")
 	}
 }
+
+// TestOrgIDOfReadsTheTenantClaim pins the organisation key the audit-log
+// collector groups accounts by: the tenant claim, lower-cased so one directory
+// always answers one key, and empty for a personal account (the consumer tenant
+// is not an organisation to share a directory-wide feed with), a token without
+// readable claims and a missing token.
+func TestOrgIDOfReadsTheTenantClaim(t *testing.T) {
+	provider := New()
+
+	cases := []struct {
+		name   string
+		tokens *providers.Tokens
+		want   string
+	}{
+		{"work account", &providers.Tokens{AccessToken: jwt(t, map[string]any{"tid": workTenant})}, workTenant},
+		{"work account in upper case", &providers.Tokens{AccessToken: jwt(t, map[string]any{"tid": strings.ToUpper(workTenant)})}, workTenant},
+		{"personal account", &providers.Tokens{AccessToken: jwt(t, map[string]any{"tid": consumerTenantID})}, ""},
+		{"issuer instead of tid", &providers.Tokens{AccessToken: jwt(t, map[string]any{"iss": "https://sts.windows.net/" + workTenant + "/"})}, workTenant},
+		{"opaque token", &providers.Tokens{AccessToken: "not-a-jwt"}, ""},
+		{"empty tokens", &providers.Tokens{}, ""},
+		{"nil tokens", nil, ""},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := provider.OrgIDOf(testCase.tokens); got != testCase.want {
+				t.Fatalf("OrgIDOf() = %q, want %q", got, testCase.want)
+			}
+		})
+	}
+}
+
+// TestProviderImplementsTheOrgIdentifier keeps the collector's type assertion
+// honest: it groups accounts through this interface, so a renamed method must
+// fail the build.
+func TestProviderImplementsTheOrgIdentifier(t *testing.T) {
+	var implementation providers.Provider = New()
+	if _, ok := implementation.(providers.OrgIdentifier); !ok {
+		t.Fatal("*Provider no longer implements providers.OrgIdentifier")
+	}
+}

@@ -156,6 +156,70 @@ const (
 	AuditKindFile AuditKind = "file"
 )
 
+// AuditLogAction is the normalised verb of an activity event. The vendor
+// spelling of the same act stays in AuditLogEvent.Raw; this is the vocabulary
+// every provider maps onto, so one screen can sort a Google and a Microsoft
+// event side by side.
+type AuditLogAction string
+
+const (
+	// AuditLogCreate is an object or membership being created.
+	AuditLogCreate AuditLogAction = "create"
+	// AuditLogDelete is an object or membership being removed.
+	AuditLogDelete AuditLogAction = "delete"
+	// AuditLogUpdate is an object being changed.
+	AuditLogUpdate AuditLogAction = "update"
+	// AuditLogMove is a file or folder being moved or renamed.
+	AuditLogMove AuditLogAction = "move"
+	// AuditLogShare is a permission or sharing change.
+	AuditLogShare AuditLogAction = "share"
+	// AuditLogLogin is a sign-in or token event.
+	AuditLogLogin AuditLogAction = "login"
+	// AuditLogOther is an event the normaliser did not recognise.
+	AuditLogOther AuditLogAction = "other"
+)
+
+// Valid reports whether the value is a supported action.
+func (a AuditLogAction) Valid() bool {
+	switch a {
+	case AuditLogCreate, AuditLogDelete, AuditLogUpdate, AuditLogMove, AuditLogShare, AuditLogLogin, AuditLogOther:
+		return true
+	default:
+		return false
+	}
+}
+
+// AuditLogTarget is the normalised kind of object an activity event touched.
+type AuditLogTarget string
+
+const (
+	// AuditLogTargetFile is a file (a Drive file, a SharePoint document).
+	AuditLogTargetFile AuditLogTarget = "file"
+	// AuditLogTargetFolder is a folder or document library folder.
+	AuditLogTargetFolder AuditLogTarget = "folder"
+	// AuditLogTargetUser is a user account.
+	AuditLogTargetUser AuditLogTarget = "user"
+	// AuditLogTargetGroup is a group, a distribution list or a membership.
+	AuditLogTargetGroup AuditLogTarget = "group"
+	// AuditLogTargetSite is a SharePoint site.
+	AuditLogTargetSite AuditLogTarget = "site"
+	// AuditLogTargetDrive is a drive or document library.
+	AuditLogTargetDrive AuditLogTarget = "drive"
+	// AuditLogTargetOther is a target the normaliser did not recognise.
+	AuditLogTargetOther AuditLogTarget = "other"
+)
+
+// Valid reports whether the value is a supported target.
+func (t AuditLogTarget) Valid() bool {
+	switch t {
+	case AuditLogTargetFile, AuditLogTargetFolder, AuditLogTargetUser, AuditLogTargetGroup,
+		AuditLogTargetSite, AuditLogTargetDrive, AuditLogTargetOther:
+		return true
+	default:
+		return false
+	}
+}
+
 // TrafficDirection is the side of a job one traffic row accounts for. The source
 // account is read from (inbound) and the destination is written to (outbound);
 // an operation that moves no payload (a delete, a folder creation) is attributed

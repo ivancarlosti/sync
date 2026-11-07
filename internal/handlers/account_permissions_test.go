@@ -40,6 +40,7 @@ var directoryCapabilities = []providers.Capability{
 	providers.CapabilityOrgUnits,
 	providers.CapabilityRoles,
 	providers.CapabilityLicenses,
+	providers.CapabilityLogs,
 }
 
 // accountJWT shapes claims into a JWT-shaped access token: the classifier reads
