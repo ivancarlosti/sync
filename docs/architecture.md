@@ -147,9 +147,10 @@ POST /api/reports ──► reserve account ──► report row (running)
                           │
                           └─► providers.ReportSource.CollectReport   (one table per section)
                                 users ─┐
-                                       ├─► guests (derived)
-                                groups ─┴─► distribution lists (derived)
-                                sites, licenses, domains, organization
+                                       ├─► guests / suspended users (derived)
+                                groups ─┴─► distribution lists (derived) / group members (one walk per group)
+                                sites, licenses, domains, organization,
+                                org units, roles, role assignments, shared drives
                                 │
                                 ▼
                         report_sections (columns + rows as JSON) ──► finalise row ──► prune
@@ -157,14 +158,25 @@ POST /api/reports ──► reserve account ──► report row (running)
 
 * The collector is an optional interface (`providers.ReportSource`), type-asserted
   like `ScopeCatalog` and `SiteBrowser`, so the mandatory `Provider` contract
-  stays about files: Google has no report source and the API answers
-  `supported:false` instead of starting a report nothing could build.
+  stays about files. Both providers implement it (`microsoft/report.go`,
+  `google/report.go`); a provider that does not is answered `supported:false`
+  instead of starting a report nothing could build.
+* The vocabulary is provider neutral and each collector advertises its half
+  (`providers.ReportSectionsFor`): `guests`, `distribution_lists` and `sites`
+  belong to Microsoft, `suspended_users`, `group_members`, `org_units`, `roles`,
+  `role_assignments` and `shared_drives` to Google. `ReportSections` stays the
+  validation union the API accepts, so a stored request never names a table no
+  collector can produce.
 * Every section is independent: a refused endpoint fails **that** section
   (`partial`), never the pass. Each section is bounded (20 000 rows, 500 pages)
   and says so through `truncated`; the pass has a 15 minute budget.
-* The two derived sections are the optimisation over the n8n flow: the users and
+* The derived sections are the optimisation over the n8n flow: the users and
   groups pages are read once and filtered, so the per-user `licenseDetails` loop
   (one call per account of the tenant) becomes a handful of paged reads.
+* Pagination is the one thing the two collectors do differently: Graph hands a
+  next link (guarded to the Graph host so a page cannot carry the token
+  elsewhere) while Google hands an opaque `nextPageToken` (validated and
+  percent-encoded before it joins the query).
 * `GET /api/reports/:id/export` streams a ZIP of one CSV per section from the
   stored tables; `PruneReports` keeps the newest 20 reports per account.
 

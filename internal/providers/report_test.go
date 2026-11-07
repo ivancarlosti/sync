@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/ivancarlosti/sync/internal/models"
 )
 
 // TestReportSectionsFromNormalisesTheRequest pins the vocabulary the API accepts:
@@ -35,6 +37,88 @@ func TestReportSectionsFromNormalisesTheRequest(t *testing.T) {
 
 	if _, err := ReportSectionsFrom([]string{"users", "teams"}); !errors.Is(err, ErrInvalidIdentifier) {
 		t.Fatalf("ReportSectionsFrom(teams) = %v, want an invalid identifier", err)
+	}
+}
+
+// TestReportSectionsForSplitsTheVocabulary pins the provider affinity of the
+// vocabulary: a collector is only offered the sections its directory can actually
+// produce, so the start form never lists a table that would fail on the first
+// call (SharePoint sites on a Workspace domain, shared drives on Entra ID).
+func TestReportSectionsForSplitsTheVocabulary(t *testing.T) {
+	microsoft := ReportSectionsFor(models.ProviderMicrosoft)
+	google := ReportSectionsFor(models.ProviderGoogle)
+
+	for _, section := range google {
+		if !section.Valid() {
+			t.Fatalf("ReportSectionsFor(google) returned the unknown section %q", section)
+		}
+	}
+	for _, section := range microsoft {
+		if !section.Valid() {
+			t.Fatalf("ReportSectionsFor(microsoft) returned the unknown section %q", section)
+		}
+	}
+	if containsSection(microsoft, ReportSectionSharedDrives) || containsSection(microsoft, ReportSectionOrgUnits) {
+		t.Fatal("a Microsoft account must not be offered a Google-only section")
+	}
+	if containsSection(google, ReportSectionSites) || containsSection(google, ReportSectionGuests) {
+		t.Fatal("a Google account must not be offered a Microsoft-only section")
+	}
+	// Every section of the vocabulary belongs to somebody: a section no provider
+	// collects would be a dead entry the UI would offer forever.
+	covered := map[ReportSection]bool{}
+	for _, section := range append(append([]ReportSection{}, microsoft...), google...) {
+		covered[section] = true
+	}
+	for _, section := range ReportSections {
+		if !covered[section] {
+			t.Fatalf("section %q is offered to no provider", section)
+		}
+	}
+	// The shared sections are the ones both collectors produce; a section that
+	// landed in neither exclusive list must be in both.
+	for _, section := range ReportSections {
+		inMicrosoft := containsSection(microsoft, section)
+		inGoogle := containsSection(google, section)
+		if inMicrosoft != inGoogle && !isExclusiveSection(section) {
+			t.Fatalf("section %q is shared but offered to one provider only", section)
+		}
+	}
+	if !containsSection(microsoft, ReportSectionSites) || !containsSection(google, ReportSectionSharedDrives) {
+		t.Fatal("the exclusive sections landed on the wrong provider")
+	}
+}
+
+// containsSection reports whether a section list holds a section.
+func containsSection(sections []ReportSection, want ReportSection) bool {
+	for _, section := range sections {
+		if section == want {
+			return true
+		}
+	}
+	return false
+}
+
+// isExclusiveSection reports whether a section belongs to one provider only.
+func isExclusiveSection(section ReportSection) bool {
+	_, exclusive := reportSectionExclusive[section]
+	return exclusive
+}
+
+// TestReportSectionsForUnknownProviderKeepsTheSharedOnes pins the fallback: a
+// provider with no collector of its own is still offered the sections every
+// directory has, which is what keeps the endpoint honest when a third provider
+// lands.
+func TestReportSectionsForUnknownProviderKeepsTheSharedOnes(t *testing.T) {
+	sections := ReportSectionsFor(models.ProviderName("unknown"))
+	if !containsSection(sections, ReportSectionUsers) || !containsSection(sections, ReportSectionDomains) {
+		t.Fatalf("ReportSectionsFor(unknown) = %v, want the shared sections", sections)
+	}
+	if containsSection(sections, ReportSectionSites) || containsSection(sections, ReportSectionSuspendedUsers) {
+		t.Fatalf("ReportSectionsFor(unknown) = %v, want no exclusive section", sections)
+	}
+	if len(sections) == len(ReportSections) {
+		t.Fatal("ReportSectionsFor(unknown) returned the whole vocabulary")
 	}
 }
 

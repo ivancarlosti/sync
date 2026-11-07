@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/ivancarlosti/sync/internal/models"
 )
 
 // ReportSection identifies one table of a directory report.
@@ -38,10 +40,35 @@ const (
 	ReportSectionLicenses ReportSection = "licenses"
 	// ReportSectionDomains is the verified and unverified domains of the tenant.
 	ReportSectionDomains ReportSection = "domains"
+	// ReportSectionSuspendedUsers is the subset of users whose account is
+	// suspended. It is derived from the users page instead of a second listing
+	// call, exactly like ReportSectionGuests, and it is the Google analogue of
+	// it: a Workspace directory has no guest accounts, it has blocked ones.
+	ReportSectionSuspendedUsers ReportSection = "suspended_users"
+	// ReportSectionGroupMembers is the membership of every group: who belongs
+	// to it, with which role and status.
+	ReportSectionGroupMembers ReportSection = "group_members"
+	// ReportSectionOrgUnits is the organisational unit tree, which is what
+	// places a Workspace user in the hierarchy of the domain.
+	ReportSectionOrgUnits ReportSection = "org_units"
+	// ReportSectionRoles is the administrative role catalogue (super admin,
+	// help desk, groups admin…).
+	ReportSectionRoles ReportSection = "roles"
+	// ReportSectionRoleAssignments is who holds which administrative role, over
+	// which scope: the "who can do what" table of the domain.
+	ReportSectionRoleAssignments ReportSection = "role_assignments"
+	// ReportSectionSharedDrives is every Google Shared Drive of the domain.
+	ReportSectionSharedDrives ReportSection = "shared_drives"
 )
 
 // ReportSections lists every section of the report vocabulary in the order the
 // report and the UI display them.
+//
+// It is the *vocabulary*, not the catalogue of one provider: a section a
+// provider cannot collect is filtered out by ReportSectionsFor before a report
+// is started (and refused again by the section endpoint, so a stored report can
+// never be read back as a table that was never built). New sections are appended
+// so the tables of an already collected report keep their order.
 var ReportSections = []ReportSection{
 	ReportSectionOrganization,
 	ReportSectionUsers,
@@ -51,6 +78,47 @@ var ReportSections = []ReportSection{
 	ReportSectionSites,
 	ReportSectionLicenses,
 	ReportSectionDomains,
+	ReportSectionSuspendedUsers,
+	ReportSectionGroupMembers,
+	ReportSectionOrgUnits,
+	ReportSectionRoles,
+	ReportSectionRoleAssignments,
+	ReportSectionSharedDrives,
+}
+
+// reportSectionExclusive names the sections exactly one provider can collect:
+// the rest of the vocabulary is shared, because the same concept exists in every
+// directory (a user is a user, whether it comes from Entra ID or from a
+// Workspace domain). The split is what keeps the two collectors honest — a
+// Microsoft account is never offered the organisational units of a Google
+// domain, and a Google account is never offered the SharePoint sites it does not
+// have.
+var reportSectionExclusive = map[ReportSection]models.ProviderName{
+	ReportSectionGuests:            models.ProviderMicrosoft,
+	ReportSectionDistributionLists: models.ProviderMicrosoft,
+	ReportSectionSites:             models.ProviderMicrosoft,
+
+	ReportSectionSuspendedUsers:  models.ProviderGoogle,
+	ReportSectionGroupMembers:    models.ProviderGoogle,
+	ReportSectionOrgUnits:        models.ProviderGoogle,
+	ReportSectionRoles:           models.ProviderGoogle,
+	ReportSectionRoleAssignments: models.ProviderGoogle,
+	ReportSectionSharedDrives:    models.ProviderGoogle,
+}
+
+// ReportSectionsFor answers the sections a provider can collect: the shared ones
+// plus the ones it owns, in the canonical order of ReportSections. A provider
+// with no collector of its own answers an empty list, which is what makes the
+// API answer `supported:false` instead of offering a report nothing could build.
+func ReportSectionsFor(name models.ProviderName) []ReportSection {
+	sections := make([]ReportSection, 0, len(ReportSections))
+	for _, section := range ReportSections {
+		if owner, exclusive := reportSectionExclusive[section]; exclusive && owner != name {
+			continue
+		}
+		sections = append(sections, section)
+	}
+	return sections
 }
 
 // Valid reports whether the value is a section of the vocabulary.

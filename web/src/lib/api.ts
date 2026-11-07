@@ -481,8 +481,16 @@ export interface AuditPayload {
 }
 
 /**
- * ReportSection is one table of a directory report. Every section is collected
- * by a scope Sync already holds, so no reconnect is needed to read them.
+ * ReportSection is one table of a directory report. The vocabulary is shared by
+ * every provider; which half an account can collect is what
+ * `GET /api/reports/sections` answers, so the start form only offers sections the
+ * account's directory actually has (SharePoint sites on a Workspace domain, shared
+ * drives on Entra ID).
+ *
+ * One scope is not part of the grant every connection already holds
+ * (`admin.directory.customer.readonly`, for the Google `organization` record); an
+ * account connected before it existed still reports, with the row derived from the
+ * domain list.
  */
 export type ReportSection =
   | 'organization'
@@ -492,7 +500,13 @@ export type ReportSection =
   | 'distribution_lists'
   | 'sites'
   | 'licenses'
-  | 'domains';
+  | 'domains'
+  | 'suspended_users'
+  | 'group_members'
+  | 'org_units'
+  | 'roles'
+  | 'role_assignments'
+  | 'shared_drives';
 
 /** ReportColumn is one column of a section (the CSV header and the UI label). */
 export interface ReportColumn {

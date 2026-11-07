@@ -365,10 +365,16 @@ provider again.
 ```
 
 `sections` is the closed vocabulary `organization`, `users`, `guests`, `groups`,
-`distribution_lists`, `sites`, `licenses`, `domains`; **an empty list means every
-section the provider supports**, and an unknown name is a **400**. A section the
-provider cannot collect is dropped from the run (the answered `section_list` is
-what was actually requested).
+`distribution_lists`, `sites`, `licenses`, `domains`, `suspended_users`,
+`group_members`, `org_units`, `roles`, `role_assignments`, `shared_drives`; **an
+empty list means every section the provider supports**, and an unknown name is a
+**400**. A section the provider cannot collect is dropped from the run (the
+answered `section_list` is what was actually requested), and `GET
+/api/reports/sections` is what tells the UI which half of the vocabulary the
+account's provider owns — `guests`, `distribution_lists` and `sites` belong to
+Microsoft, `suspended_users`, `group_members`, `org_units`, `roles`,
+`role_assignments` and `shared_drives` to Google (see
+[reports.md §1](reports.md#1-what-a-report-contains)).
 
 `reportView` = the `directory_reports` row (`id, account_id, account_email,
 provider, org_id, sections, status, trigger, started_at, finished_at, duration_ms,

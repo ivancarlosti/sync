@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ivancarlosti/sync/internal/models"
 	"github.com/ivancarlosti/sync/internal/providers"
 )
 
@@ -36,8 +37,12 @@ const (
 // MailboxSettings.Read (teams, channels, mailbox purpose) are deliberately
 // absent: they arrive when the permission table does, so the API can offer
 // "reconnect the account" instead of failing a section nobody can fix.
+//
+// The list is the shared vocabulary filtered to what an Entra ID directory has:
+// the Google-only sections (organisational units, administrative roles, shared
+// drives) are not offered to a Microsoft account (see providers.ReportSectionsFor).
 func (p *Provider) ReportSections() []providers.ReportSection {
-	return append([]providers.ReportSection(nil), providers.ReportSections...)
+	return providers.ReportSectionsFor(models.ProviderMicrosoft)
 }
 
 // reportUser is one user record, trimmed to the columns of the users section.

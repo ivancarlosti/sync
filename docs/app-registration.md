@@ -30,18 +30,24 @@ need.
 | `users` — user accounts | `admin.directory.user`, `admin.directory.user.alias` | `User.Read.All`, `User.ReadWrite.All` |
 | `groups` — groups and distribution lists | `admin.directory.group` | `Group.ReadWrite.All`, `Directory.ReadWrite.All` |
 | `members` — group membership | `admin.directory.group.member` | `GroupMember.ReadWrite.All` |
-| `domains` — verified domains | `admin.directory.domain.readonly` | `Domain.Read.All` |
+| `domains` — verified domains and the tenant record | `admin.directory.domain.readonly`, `admin.directory.customer.readonly` | `Domain.Read.All` |
 | `orgunits` — organisational units | `admin.directory.orgunit` | `AdministrativeUnit.ReadWrite.All` |
 | `roles` — administrative role catalogue (read-only) | `admin.directory.rolemanagement.readonly` | `RoleManagement.Read.All` |
 | `licenses` — subscriptions and licence assignment | `apps.licensing` | `Organization.Read.All`, `LicenseAssignment.ReadWrite.All` |
 | `logs` — the organisation-wide activity feed ([audit-logs.md](audit-logs.md)) | `admin.reports.audit.readonly` | `AuditLog.Read.All` |
 
-The **directory report** ([reports.md](reports.md)) adds no row to this table: it
-is built from `users`, `groups`, `domains`, `licenses` and `files` above, which is
-why a report can run on any account connected today. The sections that need a
-scope Sync does not request yet (`teams`, `channels`, `team_members`,
-`channel_members`, mailbox settings, per-user sign-in activity) are not offered
-until that row exists.
+The **directory report** ([reports.md](reports.md)) adds exactly one row to this
+table: `admin.directory.customer.readonly` under `domains`, which is what answers
+`GET /customers/my_customer` — the `organization` section of a Google report.
+Every other Google section is built from `users`, `groups`, `members`, `domains`,
+`orgunits`, `roles`, `licenses` and `files` above, and the whole Microsoft
+vocabulary is covered by the scopes already listed. A grant made before the
+customer scope existed still reports: the section is then derived from the domain
+list (see [reports.md §2](reports.md#2-permissions)), and Accounts → *Check the
+token* offers the upgrade. The collections that need a scope Sync does not
+request at all (Gmail delegates, YouTube CMS, Chrome management, per-user
+sign-in activity on the Microsoft side, teams and channels) are not offered until
+that row exists.
 
 `GET /api/accounts` reports, per connected account, which of these capabilities
 the *stored* grant satisfies (`capabilities`) and which the current release asks

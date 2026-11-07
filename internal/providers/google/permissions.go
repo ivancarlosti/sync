@@ -70,6 +70,19 @@ func (p *Provider) Permissions() []providers.Permission {
 			AdminConsent: true,
 		},
 		{
+			// The customer record behind the `organization` section of a
+			// directory report: the primary domain, the postal address and the
+			// administrator address of the tenant. It is the one call of a
+			// report the scopes above do not cover, so a grant made before this
+			// row existed answers 403 there — and the collector then derives the
+			// row from the domain list instead of failing the section (see
+			// google/report.go).
+			Capability:   providers.CapabilityDomains,
+			Title:        "domains",
+			Scope:        "https://www.googleapis.com/auth/admin.directory.customer.readonly",
+			AdminConsent: true,
+		},
+		{
 			Capability:   providers.CapabilityOrgUnits,
 			Title:        "orgunits",
 			Scope:        "https://www.googleapis.com/auth/admin.directory.orgunit",

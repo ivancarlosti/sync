@@ -2,10 +2,12 @@ package microsoft
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 
+	"github.com/ivancarlosti/sync/internal/models"
 	"github.com/ivancarlosti/sync/internal/providers"
 )
 
@@ -263,15 +265,27 @@ func TestCollectReportNeedsAToken(t *testing.T) {
 // TestReportSectionsAreTheHeldScopes pins the phase 1 promise: the sections the
 // collector advertises are exactly the ones the permission table already pays
 // for, so starting a report never asks the operator to reconnect an account.
+//
+// The vocabulary is provider neutral since the Google collector landed, so the
+// comparison is against the Microsoft half of it: a section only a Workspace
+// domain has (organisational units, administrative roles, shared drives) must not
+// be offered to an Entra ID directory.
 func TestReportSectionsAreTheHeldScopes(t *testing.T) {
 	provider := New()
 	sections := provider.ReportSections()
-	if len(sections) != len(providers.ReportSections) {
-		t.Fatalf("ReportSections = %v, want the whole vocabulary", sections)
+	want := providers.ReportSectionsFor(models.ProviderMicrosoft)
+	if fmt.Sprint(sections) != fmt.Sprint(want) {
+		t.Fatalf("ReportSections = %v, want %v", sections, want)
 	}
 	for _, section := range sections {
 		if !section.Valid() {
 			t.Errorf("ReportSections returned the unknown section %q", section)
+		}
+	}
+	for _, section := range sections {
+		if section == providers.ReportSectionOrgUnits || section == providers.ReportSectionSharedDrives ||
+			section == providers.ReportSectionRoles || section == providers.ReportSectionRoleAssignments {
+			t.Errorf("ReportSections offered the Google-only section %q", section)
 		}
 	}
 }

@@ -20,6 +20,7 @@ var wantScopes = []string{
 	"https://www.googleapis.com/auth/admin.directory.group",
 	"https://www.googleapis.com/auth/admin.directory.group.member",
 	"https://www.googleapis.com/auth/admin.directory.domain.readonly",
+	"https://www.googleapis.com/auth/admin.directory.customer.readonly",
 	"https://www.googleapis.com/auth/admin.directory.orgunit",
 	"https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly",
 	"https://www.googleapis.com/auth/apps.licensing",
