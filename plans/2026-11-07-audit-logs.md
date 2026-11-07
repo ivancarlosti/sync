@@ -1,6 +1,7 @@
 # Plan — Audit Logs (activity log) + rename current Audit to "Audit Storage"
 
-Status: in progress (started 2026-11-07). Phase 0, 1 and 2 done; Phases 3–8 pending.
+Status: **done** (2026-11-07). Phases 0–8 shipped; the deviations from the plan are
+recorded in §5.
 
 ## 1. Context
 
@@ -216,3 +217,44 @@ Phases are independently shippable; each ends with `go test ./...` and
 - **Volume.** Large tenants can emit many events; mitigated by pagination,
   incremental cursors, retention purge and indexes on
   `(provider, org_id, occurred_at)`.
+
+## 5. What was actually built (deviations from §3)
+
+Every phase shipped; the differences from the plan above, and why:
+
+1. **`ActivityLogSource` carries a stream.** The plan assumed one feed per
+   provider. Microsoft turned out to expose two with *different authorization*
+   (Graph delegated versus the app-only management activity API), so the
+   interface gained `ActivityLogStreams() []string` and a `stream` argument —
+   which also gave Google one stream per Reports application (`drive`,
+   `user_accounts`, `groups`, `admin`, `login`). The collector keeps one cursor
+   and one last error per `(provider, org, stream)`, so a tenant waiting for a
+   consent keeps its directory feed.
+2. **The Microsoft file feed is `manage.office.com`, not `/beta`.** The plan
+   hoped to avoid a second token audience; Graph v1.0 has no file-activity feed
+   at all and `/beta/security/auditLog/queries` is an asynchronous query job, not
+   a resumable feed. The app-only `ActivityFeed.Read` permission is therefore
+   documented (`docs/app-registration.md` §3.4) and deliberately **not** in the
+   permission table — declaring it would badge every existing account as missing
+   something a reconnect cannot add.
+3. **No `CapabilityLogs` badge from the app-only permission.** The capability
+   exists (`logs`) and is proven by the delegated scopes (`AuditLog.Read.All`,
+   `admin.reports.audit.readonly`), so an account connected today is badged
+   correctly; the workload feed degrades to a banner instead.
+4. **No `Deps.AuditLogs`.** The scheduler already owns the collector
+   (`Scheduler.RunAuditLogs`, wired in `NewScheduler`), so the maintenance
+   endpoint calls it exactly like `RunDue`/`RefreshTokens` instead of adding a
+   second dependency with its own lifetime.
+5. **The interval is a constant, not a setting.** `DefaultAuditLogInterval` is
+   10 minutes (the management activity API publishes with up to a 15 minute
+   delay), like every other loop period: the loops describe reaction time, not
+   what the operator wants synchronised.
+6. **`purge_auditlogs_days`** (one word, matching the `auditlogs` purge target)
+   rather than `purge_audit_logs_days`.
+7. **Screenshots.** `10-audit-logs` was captured against a local MariaDB 11 with
+   a seeded activity feed; the gallery moved 10–18 to 11–19 and the script gained
+   `SCREENSHOT_STEPS` so one screen can be refreshed alone (it also now sets the
+   session cookie per navigation, which that mode needs).
+
+Validation at the end of Phase 8: `gofmt -l ./cmd ./internal`, `go vet ./...`,
+`go test ./...`, `npm run typecheck` (i18n parity) and `npm run build` all green.
