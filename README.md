@@ -46,6 +46,11 @@
   and Google Workspace report (who created, deleted, moved or shared what, and
   who signed in), polled every ten minutes and stored past the retention of the
   vendors (see [docs/audit-logs.md](docs/audit-logs.md)).
+* **Directory reports** — a read-only inventory of the organisation behind an
+  account (tenant, users, guests, groups, distribution lists, sites, licence
+  consumption, domains), on an opt-in per-account schedule and downloadable as a
+  ZIP of CSVs, built only from permissions the account already holds (see
+  [docs/reports.md](docs/reports.md)).
 * **Encrypted at rest** — OAuth access/refresh tokens and notification secrets
   are AES-256-GCM ciphertexts (`v1:`); the database never holds a plaintext
   secret.

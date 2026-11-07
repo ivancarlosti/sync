@@ -25,8 +25,8 @@ internal/database      GORM connection, DSN, AutoMigrate, settings repository
 internal/models        GORM entities + every enum vocabulary (also the API contract)
 internal/providers     Provider interface, registry, google/, microsoft/
 internal/services      Store, AuthService, OAuthService, TokenManager, SettingsService,
-                       SyncService (engine), AuditService, Scheduler, Notifier,
-                       ProviderSettings, SecretBox
+                       SyncService (engine), AuditService, ReportService, Scheduler,
+                       Notifier, ProviderSettings, SecretBox
 internal/notify        senders: smtp, webhook, shoutrrr (no storage knowledge)
 internal/handlers      routing, session, validation, error → HTTP mapping, SPA fallback
 web/                   Vue 3 SPA + embed.go (//go:embed all:dist)
@@ -116,6 +116,12 @@ an in-memory SQLite database (`gorm.io/driver/sqlite`) and a fake provider, so n
 MariaDB, no network and no credentials are required. `internal/handlers` drives
 the real Gin router, which is why a routing change fails a test rather than a
 review.
+
+The directory report has two suites of its own: `internal/providers/microsoft/
+report_test.go` drives the collector against a scripted Graph transport (paging,
+the derived sections, the refused `$select`, a `nextLink` that leaves Graph) and
+`internal/services/report_test.go` covers the opt-in schedule, the stored tables,
+the pruner and the status mapping.
 
 ## 5. Adding things
 

@@ -1695,7 +1695,7 @@ func TestSchedulerBootstrapAndRunDue(t *testing.T) {
 		t.Fatalf("creating the interrupted run: %v", err)
 	}
 
-	scheduler := NewScheduler(env.store, env.sync, env.tokens, nil)
+	scheduler := NewScheduler(env.store, env.sync, env.tokens, nil, nil)
 	if err := scheduler.Bootstrap(ctx); err != nil {
 		t.Fatalf("bootstrapping the scheduler: %v", err)
 	}
@@ -1788,7 +1788,7 @@ func TestSchedulerRefreshTokens(t *testing.T) {
 	ctx := context.Background()
 	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
 
-	scheduler := NewScheduler(env.store, env.sync, env.tokens, nil)
+	scheduler := NewScheduler(env.store, env.sync, env.tokens, nil, nil)
 	// The accounts stored by the fixture are valid for an hour, far outside the
 	// refresh window, so nothing is refreshed.
 	if refreshed := scheduler.RefreshTokens(ctx); refreshed != 0 {

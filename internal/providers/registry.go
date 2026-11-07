@@ -76,3 +76,15 @@ func (r *Registry) SiteResolverFor(name models.ProviderName) (SiteResolver, bool
 	resolver, ok := provider.(SiteResolver)
 	return resolver, ok
 }
+
+// ReportSourceFor returns the ReportSource implementation of a provider, if any.
+// It is how the Reports screen knows which sections an account can collect
+// before a report is started (see internal/providers/report.go).
+func (r *Registry) ReportSourceFor(name models.ProviderName) (ReportSource, bool) {
+	provider, err := r.Get(name)
+	if err != nil {
+		return nil, false
+	}
+	source := ReportSourceOf(provider)
+	return source, source != nil
+}

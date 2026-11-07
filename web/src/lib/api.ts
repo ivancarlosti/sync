@@ -480,6 +480,99 @@ export interface AuditPayload {
   depth: number;
 }
 
+/**
+ * ReportSection is one table of a directory report. Every section is collected
+ * by a scope Sync already holds, so no reconnect is needed to read them.
+ */
+export type ReportSection =
+  | 'organization'
+  | 'users'
+  | 'guests'
+  | 'groups'
+  | 'distribution_lists'
+  | 'sites'
+  | 'licenses'
+  | 'domains';
+
+/** ReportColumn is one column of a section (the CSV header and the UI label). */
+export interface ReportColumn {
+  key: string;
+  title: string;
+}
+
+/** ReportRow is one record, aligned with the columns of its section. */
+export type ReportRow = string[];
+
+/** ReportSectionSummary is the table of contents entry of one stored section. */
+export interface ReportSectionSummary {
+  section: ReportSection;
+  columns: ReportColumn[];
+  row_count: number;
+  /** truncated is true when the section stopped at the server row cap. */
+  truncated: boolean;
+  /** error is the reason the section could not be collected; empty on success. */
+  error?: string;
+}
+
+/** ReportSectionPage is one page of a stored section. */
+export interface ReportSectionPage {
+  section: ReportSection;
+  columns: ReportColumn[];
+  rows: ReportRow[];
+  total: number;
+  offset: number;
+  limit: number;
+  truncated: boolean;
+  error?: string;
+}
+
+/** DirectoryReport is one execution of a directory report. */
+export interface DirectoryReport {
+  id: number;
+  account_id: number;
+  account_email: string;
+  provider: ProviderName;
+  org_id?: string;
+  /** sections is the stored comma separated list; section_list is its array. */
+  sections: string;
+  section_list: ReportSection[];
+  status: 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'timeout';
+  trigger: 'manual' | 'scheduled';
+  started_at: string;
+  finished_at?: string;
+  duration_ms: number;
+  section_count: number;
+  row_count: number;
+  /** failed counts the sections that could not be collected. */
+  failed: number;
+  truncated: boolean;
+  message?: string;
+  running?: boolean;
+  created_at: string;
+}
+
+/** ReportSchedule is the per-account opt-in of the automatic report. */
+export interface ReportSchedule {
+  id: number;
+  account_id: number;
+  enabled: boolean;
+  interval_minutes: number;
+  sections: string;
+  section_list: ReportSection[];
+  next_run_at?: string;
+  last_run_at?: string;
+  last_report_id?: number;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** ReportPayload is what POST /api/reports accepts. */
+export interface ReportPayload {
+  account_id: number;
+  sections: string[];
+}
+
 /** AuditLogEvent is one stored activity event (GET /api/audit-logs). */
 export interface AuditLogEvent {
   id: number;
@@ -851,6 +944,56 @@ export const audits = {
    * body the browser saves directly.
    */
   exportHref: (id: number) => `/api/audits/${id}/export`,
+};
+
+/**
+ * reports is the directory report behind the Reports screen: a read-only
+ * snapshot of an organisation (users, groups, sites, licences, domains) that is
+ * collected in the background and read one page of one section at a time.
+ */
+export const reports = {
+  /** sections lists what an account's provider can collect. */
+  sections: (accountId?: number) =>
+    request<{ sections: ReportSection[]; supported: boolean }>({
+      url: '/reports/sections',
+      params: { account_id: accountId },
+    }),
+  list: (limit = 50) => request<{ reports: DirectoryReport[] }>({ url: '/reports', params: { limit } }),
+  start: (payload: ReportPayload) =>
+    request<{ report: DirectoryReport }>({ url: '/reports', method: 'POST', data: payload }),
+  get: (id: number) =>
+    request<{ report: DirectoryReport; sections: ReportSectionSummary[] }>({
+      url: `/reports/${id}`,
+      method: 'GET',
+    }),
+  /** section reads one page of one stored table. */
+  section: (id: number, section: string, offset = 0, limit = 200) =>
+    request<ReportSectionPage>({
+      url: `/reports/${id}/sections/${section}`,
+      params: { offset, limit },
+    }),
+  cancel: (id: number) =>
+    request<{ id: number; cancelled: boolean }>({ url: `/reports/${id}/cancel`, method: 'POST' }),
+  /**
+   * exportHref is the browser URL of the ZIP download: the server streams one
+   * CSV per section, so the client never buffers the workbook.
+   */
+  exportHref: (id: number) => `/api/reports/${id}/export`,
+  schedules: () => request<{ schedules: ReportSchedule[] }>({ url: '/reports/schedules' }),
+  saveSchedule: (
+    accountId: number,
+    payload: { enabled: boolean; interval_minutes: number; sections: string[] },
+  ) =>
+    request<{ schedule: ReportSchedule }>({
+      url: `/reports/schedules/${accountId}`,
+      method: 'PUT',
+      data: payload,
+    }),
+  deleteSchedule: (accountId: number) =>
+    request<{ account_id: number; deleted: boolean }>({
+      url: `/reports/schedules/${accountId}`,
+      method: 'DELETE',
+    }),
 };
 
 /**

@@ -134,6 +134,23 @@ func (s *Store) DeleteAccount(ctx context.Context, id uint) (int64, error) {
 				return err
 			}
 		}
+		// The same holds for the directory reports: they describe an account
+		// that no longer exists, and their tables and opt-in go with them.
+		var reportIDs []uint
+		if err := tx.Model(&models.DirectoryReport{}).Where("account_id = ?", id).Pluck("id", &reportIDs).Error; err != nil {
+			return err
+		}
+		if len(reportIDs) > 0 {
+			if err := tx.Where("report_id IN ?", reportIDs).Delete(&models.ReportSectionData{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("id IN ?", reportIDs).Delete(&models.DirectoryReport{}).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Where("account_id = ?", id).Delete(&models.ReportSchedule{}).Error; err != nil {
+			return err
+		}
 		return tx.Delete(&models.ConnectedAccount{}, id).Error
 	})
 	if err != nil {
@@ -644,6 +661,255 @@ func (s *Store) PruneAudits(ctx context.Context, keep int) error {
 	}
 	if err := s.db.WithContext(ctx).Where("id IN ?", ids).Delete(&models.AuditRun{}).Error; err != nil {
 		return fmt.Errorf("services: pruning audits: %w", err)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Directory reports and their schedules
+// ---------------------------------------------------------------------------
+
+// CreateReport inserts a directory report row in the running state.
+func (s *Store) CreateReport(ctx context.Context, report *models.DirectoryReport) error {
+	if err := s.db.WithContext(ctx).Create(report).Error; err != nil {
+		return fmt.Errorf("services: creating the report: %w", err)
+	}
+	return nil
+}
+
+// UpdateReportProgress mirrors the live counters of a running report onto its
+// row (the tables are held in memory until the pass ends; this is only what the
+// polling UI reads).
+func (s *Store) UpdateReportProgress(ctx context.Context, id uint, sections, rows int) error {
+	err := s.db.WithContext(ctx).Model(&models.DirectoryReport{}).
+		Where("id = ?", id).
+		Updates(map[string]any{
+			"section_count": sections,
+			"row_count":     rows,
+		}).Error
+	if err != nil {
+		return fmt.Errorf("services: updating report %d: %w", id, err)
+	}
+	return nil
+}
+
+// FinishReport stores the final state of a report run.
+func (s *Store) FinishReport(ctx context.Context, report *models.DirectoryReport) error {
+	if err := s.db.WithContext(ctx).Save(report).Error; err != nil {
+		return fmt.Errorf("services: finishing report %d: %w", report.ID, err)
+	}
+	return nil
+}
+
+// AddReportSections appends the tables of a report in one batch.
+func (s *Store) AddReportSections(ctx context.Context, sections []models.ReportSectionData) error {
+	if len(sections) == 0 {
+		return nil
+	}
+	if err := s.db.WithContext(ctx).CreateInBatches(&sections, 20).Error; err != nil {
+		return fmt.Errorf("services: storing the report sections: %w", err)
+	}
+	return nil
+}
+
+// ListReports returns the reports, newest first.
+func (s *Store) ListReports(ctx context.Context, limit int) ([]models.DirectoryReport, error) {
+	query := s.db.WithContext(ctx).Order("id DESC")
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	var rows []models.DirectoryReport
+	if err := query.Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("services: listing the reports: %w", err)
+	}
+	return rows, nil
+}
+
+// GetReport returns one report by id.
+func (s *Store) GetReport(ctx context.Context, id uint) (*models.DirectoryReport, error) {
+	var row models.DirectoryReport
+	if err := s.db.WithContext(ctx).First(&row, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("services: loading report %d: %w", id, err)
+	}
+	return &row, nil
+}
+
+// ListReportSections returns the tables of a report in display order.
+func (s *Store) ListReportSections(ctx context.Context, reportID uint) ([]models.ReportSectionData, error) {
+	var rows []models.ReportSectionData
+	if err := s.db.WithContext(ctx).Where("report_id = ?", reportID).Order("id ASC").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("services: listing the report sections: %w", err)
+	}
+	return rows, nil
+}
+
+// GetReportSection returns one table of a report.
+func (s *Store) GetReportSection(ctx context.Context, reportID uint, section string) (*models.ReportSectionData, error) {
+	var row models.ReportSectionData
+	err := s.db.WithContext(ctx).
+		Where("report_id = ? AND section = ?", reportID, section).
+		First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("services: loading the report section %q: %w", section, err)
+	}
+	return &row, nil
+}
+
+// RunningReport returns the report of an account that is currently executing, if
+// any: it is what prevents the same account from being reported twice.
+func (s *Store) RunningReport(ctx context.Context, accountID uint) (*models.DirectoryReport, error) {
+	var row models.DirectoryReport
+	err := s.db.WithContext(ctx).
+		Where("account_id = ? AND status = ?", accountID, string(models.RunRunning)).
+		Order("id DESC").First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("services: loading the running report: %w", err)
+	}
+	return &row, nil
+}
+
+// FailInterruptedReports closes the reports a crash or a restart left behind, so
+// the history never shows a report that stays "running" forever.
+func (s *Store) FailInterruptedReports(ctx context.Context, now time.Time) (int64, error) {
+	result := s.db.WithContext(ctx).Model(&models.DirectoryReport{}).
+		Where("status = ?", string(models.RunRunning)).
+		Updates(map[string]any{
+			"status":      string(models.RunFailed),
+			"finished_at": &now,
+			"message":     "interrupted by a Sync restart",
+		})
+	if result.Error != nil {
+		return 0, fmt.Errorf("services: closing the interrupted reports: %w", result.Error)
+	}
+	return result.RowsAffected, nil
+}
+
+// PruneReports keeps the newest reports of every account and drops the older
+// ones with their tables, which bounds the growth of the report storage.
+func (s *Store) PruneReports(ctx context.Context, keep int) error {
+	if keep <= 0 {
+		return nil
+	}
+	var ids []uint
+	err := s.db.WithContext(ctx).Raw(
+		"SELECT id FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY account_id ORDER BY id DESC) AS rn FROM directory_reports) AS ranked WHERE rn > ?",
+		keep).Scan(&ids).Error
+	if err != nil {
+		return fmt.Errorf("services: selecting the prunable reports: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := s.db.WithContext(ctx).Where("report_id IN ?", ids).Delete(&models.ReportSectionData{}).Error; err != nil {
+		return fmt.Errorf("services: pruning the report sections: %w", err)
+	}
+	if err := s.db.WithContext(ctx).Where("id IN ?", ids).Delete(&models.DirectoryReport{}).Error; err != nil {
+		return fmt.Errorf("services: pruning the reports: %w", err)
+	}
+	return nil
+}
+
+// SaveReportSchedule inserts or updates the schedule of an account. The account
+// is the identity of the row, so an operator editing an existing schedule never
+// creates a second one.
+func (s *Store) SaveReportSchedule(ctx context.Context, schedule *models.ReportSchedule) error {
+	var existing models.ReportSchedule
+	err := s.db.WithContext(ctx).Where("account_id = ?", schedule.AccountID).First(&existing).Error
+	switch {
+	case err == nil:
+		schedule.ID = existing.ID
+		schedule.CreatedAt = existing.CreatedAt
+		if err := s.db.WithContext(ctx).Save(schedule).Error; err != nil {
+			return fmt.Errorf("services: updating the report schedule: %w", err)
+		}
+		return nil
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		if err := s.db.WithContext(ctx).Create(schedule).Error; err != nil {
+			return fmt.Errorf("services: creating the report schedule: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("services: loading the report schedule: %w", err)
+	}
+}
+
+// GetReportSchedule returns the schedule of an account.
+func (s *Store) GetReportSchedule(ctx context.Context, accountID uint) (*models.ReportSchedule, error) {
+	var row models.ReportSchedule
+	err := s.db.WithContext(ctx).Where("account_id = ?", accountID).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("services: loading the report schedule: %w", err)
+	}
+	return &row, nil
+}
+
+// ListReportSchedules returns every schedule, by account.
+func (s *Store) ListReportSchedules(ctx context.Context) ([]models.ReportSchedule, error) {
+	var rows []models.ReportSchedule
+	if err := s.db.WithContext(ctx).Order("account_id ASC").Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("services: listing the report schedules: %w", err)
+	}
+	return rows, nil
+}
+
+// DueReportSchedules returns the enabled schedules whose next execution elapsed.
+func (s *Store) DueReportSchedules(ctx context.Context, now time.Time) ([]models.ReportSchedule, error) {
+	var rows []models.ReportSchedule
+	err := s.db.WithContext(ctx).
+		Where("enabled = ? AND next_run_at IS NOT NULL AND next_run_at <= ?", true, now).
+		Order("next_run_at ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("services: listing the due report schedules: %w", err)
+	}
+	return rows, nil
+}
+
+// ScheduleReportNext stores the next execution of a schedule; nil means "not
+// scheduled" (the schedule is disabled).
+func (s *Store) ScheduleReportNext(ctx context.Context, id uint, next *time.Time) error {
+	err := s.db.WithContext(ctx).Model(&models.ReportSchedule{}).
+		Where("id = ?", id).
+		Update("next_run_at", next).Error
+	if err != nil {
+		return fmt.Errorf("services: scheduling report %d: %w", id, err)
+	}
+	return nil
+}
+
+// RecordReportRun stamps a schedule with the report its last automatic run
+// produced, so the screen can link to it and show why a run failed.
+func (s *Store) RecordReportRun(ctx context.Context, accountID uint, reportID *uint, at time.Time, message string) error {
+	err := s.db.WithContext(ctx).Model(&models.ReportSchedule{}).
+		Where("account_id = ?", accountID).
+		Updates(map[string]any{
+			"last_run_at":    &at,
+			"last_report_id": reportID,
+			"last_error":     message,
+		}).Error
+	if err != nil {
+		return fmt.Errorf("services: recording the report run of account %d: %w", accountID, err)
+	}
+	return nil
+}
+
+// DeleteReportSchedule removes the schedule of an account. Deleting a schedule
+// that does not exist is not an error, which keeps the endpoint idempotent.
+func (s *Store) DeleteReportSchedule(ctx context.Context, accountID uint) error {
+	if err := s.db.WithContext(ctx).Where("account_id = ?", accountID).Delete(&models.ReportSchedule{}).Error; err != nil {
+		return fmt.Errorf("services: deleting the report schedule: %w", err)
 	}
 	return nil
 }

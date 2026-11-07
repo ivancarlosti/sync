@@ -128,6 +128,23 @@ walk could not descend into the folder), `listed` (false when the folder's
 children are not part of the report), `modified_at` and `mime_type`. The rows are
 batch-inserted after the walk, so their `id` order is the DFS preorder of the tree.
 
+`directory_reports` — one row per directory report (see [reports.md](reports.md)):
+`account_id`, `account_email`, `provider`, `org_id` (the tenant), `sections` (the
+comma separated list of the sections requested), `status`/`trigger`/timing like
+`sync_runs`, and the summary counters `section_count`, `row_count`, `failed` (the
+sections that could not be collected) and `truncated`.
+
+`report_sections` — one stored table per report: `report_id` + `section`
+(`uniqueIndex idx_report_section`) and the `columns` and `rows` JSON documents
+(`TEXT`) with `row_count`, `truncated` and the `error` of a section that could not
+be collected. The columns are stored beside the rows, so a report written before a
+column was added keeps rendering with the header it was collected with.
+
+`report_schedules` — the **opt-in** of the automatic report: one row per
+`account_id` (`uniqueIndex`) with `enabled`, `interval_minutes` (15 … 43200),
+`sections`, `next_run_at`, `last_run_at`, `last_report_id` and `last_error`. No
+row means "do not report this account automatically".
+
 `audit_log_events` — **the activity feed** behind [audit-logs.md](audit-logs.md):
 one row per vendor record (`provider`, `source` (`directory` \| `unified` \|
 `drive` \| `user_accounts` \| `groups` \| `admin` \| `login`), `remote_id`,
@@ -186,6 +203,8 @@ connected_accounts ──1:N──► sync_jobs (source_account_id / destination
 sync_jobs ──1:N──► sync_runs ──1:N──► sync_items
 sync_jobs ──1:N──► sync_files          (state, one row per path)
 connected_accounts ──1:N──► audit_runs ──1:N──► audit_entries
+connected_accounts ──1:N──► directory_reports ──1:N──► report_sections
+connected_accounts ──1:1──► report_schedules    (the opt-in of the automatic report)
 connected_accounts ──N:1──► audit_log_cursors   (one feed per provider + org_id + stream)
 audit_log_cursors ──1:N──► audit_log_events     (by provider + org_id, no foreign key)
 notification_channels ──N:M──► events (JSON array inside the row, no join table)
@@ -195,9 +214,10 @@ oauth_states ──► ephemeral (deleted after 10 minutes or on redemption)
 
 There are deliberately **no foreign key constraints**
 (`DisableForeignKeyConstraintWhenMigrating`): deleting an account cascades in the
-service layer, where the jobs that use it (and that account's audits, with their
-report rows) are removed together with it (that is what the accounts screen warns
-about before confirming).
+service layer, where the jobs that use it (and that account's audits and
+directory reports, with their report rows and opt-in schedule) are removed
+together with it (that is what the accounts screen warns about before
+confirming).
 
 ## 5. Upgrade path
 
@@ -224,6 +244,7 @@ it (an unknown `status` renders as-is in the UI).
 | `oauth_states` | 10 minutes | pruned at boot and through `POST /api/maintenance/oauth/states/prune` |
 | `sync_files` | one row per path, updated in place | nothing to prune; deleting a job deletes its state |
 | `audit_runs` + `audit_entries` | `auditKeepCount = 50` newest audits per account | `Store.PruneAudits` — called on demand through `POST /api/maintenance/audits/prune` (default `keep: 50`, allowed 1…10000) |
+| `directory_reports` + `report_sections` | `reportKeepCount = 20` newest reports per account | `Store.PruneReports` — at the end of every report pass |
 | `audit_log_events` | `purge_auditlogs_days` (default 180, 1…3650 days) | `Store.PurgeAuditLogsBefore` — the retention pass of the scheduler, or `POST /api/maintenance/purge` with `target: "auditlogs"` |
 
 ## 7. Backup and restore

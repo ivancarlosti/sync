@@ -36,6 +36,13 @@ need.
 | `licenses` — subscriptions and licence assignment | `apps.licensing` | `Organization.Read.All`, `LicenseAssignment.ReadWrite.All` |
 | `logs` — the organisation-wide activity feed ([audit-logs.md](audit-logs.md)) | `admin.reports.audit.readonly` | `AuditLog.Read.All` |
 
+The **directory report** ([reports.md](reports.md)) adds no row to this table: it
+is built from `users`, `groups`, `domains`, `licenses` and `files` above, which is
+why a report can run on any account connected today. The sections that need a
+scope Sync does not request yet (`teams`, `channels`, `team_members`,
+`channel_members`, mailbox settings, per-user sign-in activity) are not offered
+until that row exists.
+
 `GET /api/accounts` reports, per connected account, which of these capabilities
 the *stored* grant satisfies (`capabilities`) and which the current release asks
 for on top of it (`missing_capabilities`, `needs_reconnect`), which is what the

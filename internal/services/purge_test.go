@@ -226,7 +226,7 @@ func TestPurgeRunHonoursTheSwitchAndTheScheduler(t *testing.T) {
 
 	// Switched on: the scheduler erases what aged out of every target.
 	setSettings(t, store, map[string]string{models.SettingPurgeEnabled: "true"})
-	scheduler := NewScheduler(store, nil, nil, nil)
+	scheduler := NewScheduler(store, nil, nil, nil, nil)
 	scheduler.purge.now = func() time.Time { return now }
 	removed := scheduler.RunRetention(ctx)
 	if removed.Audits != 1 {

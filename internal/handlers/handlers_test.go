@@ -150,6 +150,7 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 	notifier.SetLink(cfg.AppURL)
 	engine := services.NewSyncService(store, tokens, appSettings, notifier)
 	audit := services.NewAuditService(store, tokens)
+	reports := services.NewReportService(store, tokens)
 
 	deps := Deps{
 		Config:      cfg,
@@ -165,7 +166,8 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 		Notifier:    notifier,
 		Sync:        engine,
 		Audit:       audit,
-		Scheduler:   services.NewScheduler(store, engine, tokens, notifier),
+		Reports:     reports,
+		Scheduler:   services.NewScheduler(store, engine, tokens, notifier, reports),
 		Purge:       services.NewPurgeService(store),
 		Assets:      testAssets(),
 		Info:        version.Get(),

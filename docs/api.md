@@ -336,6 +336,59 @@ last_run_at?, healthy, needs_consent, last_error?}`: `healthy` is false when the
 last pass failed, and `needs_consent` marks the one failure an operator can fix
 with a grant.
 
+### 8.2 Directory reports
+
+A directory report is the read-only inventory of an organisation (see
+[reports.md](reports.md)). It is async like an audit: the start answers **202**
+and every section is persisted, so reading or exporting it never touches the
+provider again.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/reports/sections?account_id=` | `{sections:[name], supported}` — what the account's provider can collect |
+| `POST` | `/api/reports` | body below → **202** `{report}`; **409 busy** while another report of the same account runs |
+| `GET` | `/api/reports?limit=` | `{reports:[reportView]}` (`limit` 50, max 200, newest first) |
+| `GET` | `/api/reports/:id` | `{report, sections:[reportSectionView]}` — the table of contents, without the rows |
+| `GET` | `/api/reports/:id/sections/:section?offset=&limit=` | `{section, columns, rows, total, offset, limit, truncated, error?}` — one page of one table |
+| `GET` | `/api/reports/:id/export` | `application/zip` download of one CSV per section (`report-<id>.zip`) |
+| `POST` | `/api/reports/:id/cancel` | `{id, cancelled}` — idempotent |
+| `GET` | `/api/reports/schedules` | `{schedules:[reportScheduleView]}` |
+| `PUT` | `/api/reports/schedules/:account_id` | body below → `{schedule}` |
+| `DELETE` | `/api/reports/schedules/:account_id` | `{account_id, deleted}` — idempotent |
+
+```json
+{ "account_id": 1, "sections": ["users", "groups", "licenses"] }
+```
+
+```json
+{ "enabled": true, "interval_minutes": 1440, "sections": [] }
+```
+
+`sections` is the closed vocabulary `organization`, `users`, `guests`, `groups`,
+`distribution_lists`, `sites`, `licenses`, `domains`; **an empty list means every
+section the provider supports**, and an unknown name is a **400**. A section the
+provider cannot collect is dropped from the run (the answered `section_list` is
+what was actually requested).
+
+`reportView` = the `directory_reports` row (`id, account_id, account_email,
+provider, org_id, sections, status, trigger, started_at, finished_at, duration_ms,
+section_count, row_count, failed, truncated, message, created_at`) plus `running`
+and `section_list` (the stored comma separated list as an array).
+`reportSectionView` = `{section, columns:[{key,title}], row_count, truncated,
+error?}`.
+
+`status` is the lifecycle of the pass (`running | success | partial | failed |
+cancelled | timeout`): **partial** means at least one section carries an `error` (a refused
+endpoint, a personal account without `/sites`). Column keys and titles are
+stable and English — a report is a data export, so the CSV header does not
+follow the UI locale.
+
+`reportScheduleView` = the `report_schedules` row (`id, account_id, enabled,
+interval_minutes, sections, next_run_at?, last_run_at?, last_report_id?,
+last_error?, created_at, updated_at`) plus `section_list`. `interval_minutes` is
+clamped to `15 … 43200` (a value outside is a **400**) and defaults to `1440`; a
+disabled schedule has no `next_run_at`.
+
 ## 9. Notifications
 
 | Method | Path | Payload / answer |

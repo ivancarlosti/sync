@@ -17,8 +17,8 @@ database, one HTTP port.
 │                                                                                         │
 │  internal/handlers  ── routing, session, validation, error → HTTP status mapping          │
 │  internal/services  ── Store, AuthService, OAuthService, TokenManager, SettingsService,   │
-│                        SyncService (engine), AuditService, Scheduler, Notifier,           │
-│                        ProviderSettings                                                   │
+│                        SyncService (engine), AuditService, ReportService, Scheduler,      │
+│                        Notifier, ProviderSettings                                         │
 │  internal/providers ── provider interface + google + microsoft implementations            │
 │  internal/notify    ── SMTP / webhook / shoutrrr senders                                  │
 │  internal/database  ── GORM connection, AutoMigrate, settings repository                  │
@@ -35,11 +35,11 @@ Four background loops run inside the same process (`internal/services/scheduler.
 
 | Loop | Period | What it does |
 |---|---|---|
-| schedule | 30 s (`DefaultScheduleInterval`) | starts every enabled job whose `next_run_at` elapsed |
+| schedule | 30 s (`DefaultScheduleInterval`) | starts every enabled job whose `next_run_at` elapsed, and every opted-in directory report whose slot elapsed |
 | tokens | 60 s (`DefaultTokenInterval`) | renews access tokens that expire inside the 5 min window (`DefaultRefreshWindow`) |
 | retention | 6 h (`DefaultPurgeInterval`) | applies the retention of Admin > Settings > Purge (runs, audit reports, traffic days, activity events) |
 | logs | 10 min (`DefaultAuditLogInterval`) | polls the activity feeds of the connected organisations ([audit-logs.md](audit-logs.md)) |
-| (on boot) bootstrap | once | closes runs a restart interrupted, recomputes `next_run_at` for every scheduled job |
+| (on boot) bootstrap | once | closes runs, audits and reports a restart interrupted, recomputes `next_run_at` for every scheduled job |
 
 Sync runs are goroutines owned by `SyncService`; a per-job lease guarantees that
 one job never runs twice, even when the binary is started twice against the same
@@ -135,7 +135,45 @@ list folder tree to a depth ──► buffer entries (DFS preorder) ──► ba
 Cancellation is cooperative too (`AuditService.Cancel`), and the scheduler
 `Bootstrap` closes the audits a restart interrupted.
 
-## 3c. Traffic accounting (billing)
+## 3c. Directory report pipeline
+
+`ReportService.Start` (`internal/services/report.go`) is the second read-only
+sibling of the run pipeline: it claims a per-account lease, writes a
+`directory_reports` row (`status=running`) and collects the organisation behind
+the account in the background ([reports.md](reports.md)).
+
+```text
+POST /api/reports ──► reserve account ──► report row (running)
+                          │
+                          └─► providers.ReportSource.CollectReport   (one table per section)
+                                users ─┐
+                                       ├─► guests (derived)
+                                groups ─┴─► distribution lists (derived)
+                                sites, licenses, domains, organization
+                                │
+                                ▼
+                        report_sections (columns + rows as JSON) ──► finalise row ──► prune
+```
+
+* The collector is an optional interface (`providers.ReportSource`), type-asserted
+  like `ScopeCatalog` and `SiteBrowser`, so the mandatory `Provider` contract
+  stays about files: Google has no report source and the API answers
+  `supported:false` instead of starting a report nothing could build.
+* Every section is independent: a refused endpoint fails **that** section
+  (`partial`), never the pass. Each section is bounded (20 000 rows, 500 pages)
+  and says so through `truncated`; the pass has a 15 minute budget.
+* The two derived sections are the optimisation over the n8n flow: the users and
+  groups pages are read once and filtered, so the per-user `licenseDetails` loop
+  (one call per account of the tenant) becomes a handful of paged reads.
+* `GET /api/reports/:id/export` streams a ZIP of one CSV per section from the
+  stored tables; `PruneReports` keeps the newest 20 reports per account.
+
+The automatic report is opt in per account (`report_schedules`):
+`ReportService.RunDue` runs inside the schedule loop, pushes the slot forward
+before starting (so a failing account retries once per interval) and records the
+report id and the last error on the row.
+
+## 3d. Traffic accounting (billing)
 
 `internal/services/billing.go` sits beside the engine: the three places that touch
 a provider (`copy`, `remove`, `ensureFolder`) report what they moved, and the run
@@ -164,7 +202,7 @@ delete / folder created ─► one operation (the account it acts on)           
   (`none`, `oci`, `aws`, `gcp`, `custom`): the labels, the unit and the price per
   GiB. The quantities stay bytes in the database.
 
-## 3d. API tokens
+## 3e. API tokens
 
 `internal/services/apitokens.go` mints `sync_<prefix>.<secret>`: 4 random bytes as
 the public, unique-indexed prefix and 32 random bytes as the secret, of which only

@@ -34,6 +34,7 @@ const LINKS: NavLink[] = [
   { route: 'runs', label: 'nav.runs', matches: ['runs'] },
   { route: 'audit', label: 'nav.audit', matches: ['audit'] },
   { route: 'audit-logs', label: 'nav.auditLogs', matches: ['audit-logs'] },
+  { route: 'reports', label: 'nav.reports', matches: ['reports'] },
   { route: 'billing', label: 'nav.billing', matches: ['billing'] },
   { route: 'notifications', label: 'nav.notifications', matches: ['notifications'] },
   {

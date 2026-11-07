@@ -66,6 +66,22 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		audits.POST("/:id/cancel", s.handleCancelAudit)
 		audits.GET("/:id/export", s.handleExportAudit)
 
+		// The directory reports of the Reports screen: a read-only snapshot of
+		// the organisation behind an account (users, groups, sites, licences,
+		// domains), its section catalogue, the opt-in schedules and the ZIP
+		// export.
+		reports := secured.Group("/reports")
+		reports.GET("", s.handleListReports)
+		reports.POST("", s.handleStartReport)
+		reports.GET("/sections", s.handleReportSections)
+		reports.GET("/schedules", s.handleListReportSchedules)
+		reports.PUT("/schedules/:account_id", s.handleSaveReportSchedule)
+		reports.DELETE("/schedules/:account_id", s.handleDeleteReportSchedule)
+		reports.GET("/:id", s.handleGetReport)
+		reports.POST("/:id/cancel", s.handleCancelReport)
+		reports.GET("/:id/export", s.handleExportReport)
+		reports.GET("/:id/sections/:section", s.handleGetReportSection)
+
 		// The activity feed of the Audit Logs screen: the stored history, its
 		// export and the status of every feed.
 		auditLogs := secured.Group("/audit-logs")

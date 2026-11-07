@@ -19,6 +19,7 @@ export type RouteName =
   | 'runs'
   | 'audit'
   | 'audit-logs'
+  | 'reports'
   | 'billing'
   | 'notifications'
   | 'admin-providers'
@@ -81,6 +82,13 @@ const routes: RouteRecordRaw[] = [
         path: 'audit-logs',
         name: 'audit-logs',
         component: () => import('@/views/AuditLogsView.vue'),
+      },
+      {
+        // The directory report: the read-only inventory of an organisation
+        // (see views/ReportsView.vue).
+        path: 'reports',
+        name: 'reports',
+        component: () => import('@/views/ReportsView.vue'),
       },
       {
         // The traffic report: what the instance moved, by day, month, account

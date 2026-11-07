@@ -36,7 +36,8 @@ const (
 
 // Scheduler is the in-process time source of Sync. It owns four loops:
 //
-//   - the schedule loop starts every enabled job whose next_run_at elapsed;
+//   - the schedule loop starts every enabled job whose next_run_at elapsed and
+//     every opted-in directory report whose slot elapsed;
 //   - the token loop renews the access tokens that expire inside the refresh
 //     window of every connected account;
 //   - the retention loop applies the purge policy (runs, audits, traffic days and
@@ -55,6 +56,7 @@ type Scheduler struct {
 	notifier *Notifier
 	purge    *PurgeService
 	logs     *AuditLogService
+	reports  *ReportService
 	now      func() time.Time
 
 	scheduleEvery time.Duration
@@ -69,8 +71,10 @@ type Scheduler struct {
 	wg      sync.WaitGroup
 }
 
-// NewScheduler builds the scheduler with the default intervals.
-func NewScheduler(store *Store, engine *SyncService, tokens *TokenManager, notifier *Notifier) *Scheduler {
+// NewScheduler builds the scheduler with the default intervals. reports may be
+// nil (a test that only exercises the sync schedule), in which case the reports
+// pass is a no-op.
+func NewScheduler(store *Store, engine *SyncService, tokens *TokenManager, notifier *Notifier, reports *ReportService) *Scheduler {
 	return &Scheduler{
 		store:         store,
 		engine:        engine,
@@ -78,6 +82,7 @@ func NewScheduler(store *Store, engine *SyncService, tokens *TokenManager, notif
 		notifier:      notifier,
 		purge:         NewPurgeService(store),
 		logs:          NewAuditLogService(store, tokens),
+		reports:       reports,
 		now:           func() time.Time { return time.Now().UTC() },
 		scheduleEvery: DefaultScheduleInterval,
 		tokenEvery:    DefaultTokenInterval,
@@ -101,6 +106,11 @@ func (s *Scheduler) Bootstrap(ctx context.Context) error {
 		return err
 	} else if closed > 0 {
 		slog.Warn("closed the audits interrupted by a restart", "audits", closed)
+	}
+	if closed, err := s.store.FailInterruptedReports(ctx, s.now()); err != nil {
+		return err
+	} else if closed > 0 {
+		slog.Warn("closed the reports interrupted by a restart", "reports", closed)
 	}
 
 	jobs, err := s.store.ListJobs(ctx)
@@ -137,7 +147,13 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	s.wg.Add(4)
 	go func() {
 		defer s.wg.Done()
-		s.loop(ctx, "schedule", s.scheduleEvery, func(ctx context.Context) { s.RunDue(ctx) })
+		// The reports pass shares the schedule loop: it ticks at the same rate
+		// and only looks at the opt-in schedules of ReportService, so a fifth
+		// goroutine would buy nothing but another timer.
+		s.loop(ctx, "schedule", s.scheduleEvery, func(ctx context.Context) {
+			s.RunDue(ctx)
+			s.RunDueReports(ctx)
+		})
 	}()
 	go func() {
 		defer s.wg.Done()
@@ -253,6 +269,17 @@ func (s *Scheduler) RunRetention(ctx context.Context) PurgeResult {
 		return PurgeResult{}
 	}
 	return outcome.Removed
+}
+
+// RunDueReports starts every directory report whose schedule elapsed and answers
+// how many were launched. It runs inside the schedule loop, is a no-op when the
+// scheduler was built without a ReportService, and never panics the loop: a
+// broken schedule is logged and the next tick retries.
+func (s *Scheduler) RunDueReports(ctx context.Context) int {
+	if s.reports == nil {
+		return 0
+	}
+	return s.reports.RunDue(ctx)
 }
 
 // RunAuditLogs polls every activity feed once and answers what the pass did. It
