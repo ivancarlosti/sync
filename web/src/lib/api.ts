@@ -159,6 +159,8 @@ export interface AppSettings {
   purge_audits_days: number;
   /** purge_billing_days is the age of a traffic day of the billing report. */
   purge_billing_days: number;
+  /** purge_auditlogs_days is the age of a stored activity event. */
+  purge_auditlogs_days: number;
 }
 
 /**
@@ -470,6 +472,88 @@ export interface AuditPayload {
   depth: number;
 }
 
+/** AuditLogEvent is one stored activity event (GET /api/audit-logs). */
+export interface AuditLogEvent {
+  id: number;
+  provider: ProviderName;
+  /** source is the vendor feed the record came from (directory, drive, unified, …). */
+  source: string;
+  remote_id: string;
+  /** org_id is the tenant (Microsoft) or Workspace domain (Google) of the event. */
+  org_id: string;
+  action: AuditLogAction;
+  target: AuditLogTarget;
+  actor_email: string;
+  actor_name?: string;
+  actor_id?: string;
+  target_name?: string;
+  target_id?: string;
+  drive_id?: string;
+  site_id?: string;
+  occurred_at: string;
+}
+
+/** AuditLogAction is the normalised verb of an activity event. */
+export type AuditLogAction = 'create' | 'delete' | 'update' | 'move' | 'share' | 'login' | 'other';
+
+/** AuditLogTarget is the normalised kind of object an activity event touched. */
+export type AuditLogTarget =
+  | 'file'
+  | 'folder'
+  | 'user'
+  | 'group'
+  | 'site'
+  | 'drive'
+  | 'other';
+
+/**
+ * AuditLogCursor is the position and health of one feed: where the collector
+ * stands for one organisation and stream, and why a list may be stale.
+ */
+export interface AuditLogCursor {
+  provider: ProviderName;
+  org_id: string;
+  stream: string;
+  cursor?: string;
+  last_event_at?: string;
+  last_run_at?: string;
+  healthy: boolean;
+  /** needs_consent marks a feed waiting for a grant the operator has to make. */
+  needs_consent: boolean;
+  last_error?: string;
+}
+
+/** AuditLogFilters are the query parameters of the list and the export. */
+export interface AuditLogFilters {
+  provider?: string;
+  org_id?: string;
+  action?: string;
+  target?: string;
+  actor?: string;
+  search?: string;
+  from?: string;
+  to?: string;
+}
+
+/** AuditLogPage is one page of the activity feed. */
+export interface AuditLogPage {
+  events: AuditLogEvent[];
+  total: number;
+  limit: number;
+  offset: number;
+  cursors: AuditLogCursor[];
+}
+
+/** AuditLogCollectResult is what POST /api/maintenance/auditlogs/collect answers. */
+export interface AuditLogCollectResult {
+  organisations: number;
+  streams: number;
+  failed: number;
+  events: number;
+  duration_ms: number;
+  errors?: string[];
+}
+
 /** Stats is the aggregate the dashboard displays. */
 export interface Stats {
   accounts: number;
@@ -742,6 +826,38 @@ export const audits = {
   exportHref: (id: number) => `/api/audits/${id}/export`,
 };
 
+/**
+ * auditLogs is the activity feed behind the Audit Logs screen: the stored
+ * history with its filters, the status of every feed, the CSV export and the
+ * on-demand collector pass.
+ */
+export const auditLogs = {
+  list: (filters: AuditLogFilters = {}, limit = 50, offset = 0) =>
+    request<AuditLogPage>({
+      url: '/audit-logs',
+      params: { ...filters, limit, offset },
+    }),
+  cursors: () => request<{ cursors: AuditLogCursor[] }>({ url: '/audit-logs/cursors' }),
+  /**
+   * exportHref is the browser URL of the CSV download. It is an absolute path
+   * (not a request through the JSON client) because the server answers a file
+   * body the browser saves directly.
+   */
+  exportHref: (filters: AuditLogFilters = {}) => {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (typeof value === 'string' && value !== '') {
+        query.set(key, value);
+      }
+    }
+    const suffix = query.toString();
+    return `/api/audit-logs/export${suffix ? `?${suffix}` : ''}`;
+  },
+  /** collect asks the server to poll every feed right away. */
+  collect: () =>
+    request<AuditLogCollectResult>({ url: '/maintenance/auditlogs/collect', method: 'POST' }),
+};
+
 export const dashboard = {
   stats: (days = 1) =>
     request<{
@@ -868,14 +984,14 @@ export const notifications = {
 };
 
 /** PurgeTarget is what a purge pass erases. */
-export type PurgeTarget = 'all' | 'jobs' | 'audits' | 'billing';
+export type PurgeTarget = 'all' | 'jobs' | 'audits' | 'billing' | 'auditlogs';
 
 /** PurgeOutcome is what a purge pass erased and the age it applied. */
 export interface PurgeOutcome {
   target: string;
   /** days is the age applied to each target, keyed by target name. */
   days: Record<string, number>;
-  removed: { jobs: number; audits: number; billing: number };
+  removed: { jobs: number; audits: number; billing: number; auditlogs: number };
 }
 
 export const maintenance = {

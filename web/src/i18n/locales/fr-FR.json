@@ -63,7 +63,8 @@
     "toggleTheme": "Changer de thème",
     "changeLanguage": "Changer de langue",
     "skipToContent": "Aller au contenu",
-    "primaryNavigation": "Navigation principale"
+    "primaryNavigation": "Navigation principale",
+    "auditLogs": "Journaux d'audit"
   },
   "auth": {
     "title": "Connexion à Sync",
@@ -467,7 +468,7 @@
     "purgeNow": "Purger maintenant",
     "purgeAge": "Âge en jours",
     "purgeAgeHint": "Zéro applique la rétention enregistrée sur cet écran.",
-    "purged": "Supprimés : {jobs} exécutions, {audits} rapports d'audit, {traffic} lignes de trafic.",
+    "purged": "Supprimés : {jobs} exécutions, {audits} rapports d'audit, {traffic} lignes de trafic, {activity} événements d'activité.",
     "purgeError": "La purge a échoué.",
     "version": "Version",
     "commit": "Commit",
@@ -616,7 +617,9 @@
     "billingSchema_oci": "Oracle Cloud (OCI)",
     "billingSchema_aws": "Amazon Web Services",
     "billingSchema_gcp": "Google Cloud",
-    "billingSchema_custom": "Personnalisé"
+    "billingSchema_custom": "Personnalisé",
+    "purgeAuditLogsDays": "Événements d'activité (jours)",
+    "purgeTargetAuditLogs": "Événements d'activité"
   },
   "audit": {
     "title": "Audit du stockage",
@@ -755,5 +758,61 @@
     "h-CN": "中文（简体）",
     "hi-IN": "हिन्दी",
     "ar-SA": "العربية"
+  },
+  "auditLogs": {
+    "title": "Journaux d'audit",
+    "subtitle": "Chaque changement signalé par Microsoft 365 et Google Workspace, collecté par tâche planifiée et conservé au-delà de la rétention des fournisseurs.",
+    "provider": "Fournisseur",
+    "search": "Rechercher",
+    "searchHint": "Auteur ou nom de l'objet",
+    "from": "Du",
+    "to": "Au",
+    "summary": "{total} événements · page {page} sur {pages}",
+    "page": "Page {page} sur {pages}",
+    "clear": "Réinitialiser",
+    "collect": "Collecter maintenant",
+    "collecting": "Collecte…",
+    "export": "Exporter en CSV",
+    "loadError": "Le journal d'audit n'a pas pu être chargé.",
+    "empty": "Aucune activité enregistrée pour l'instant.",
+    "emptyHint": "Connectez un compte administrateur : le flux de son organisation est lu toutes les dix minutes.",
+    "when": "Quand",
+    "object": "Objet",
+    "actor": "Auteur",
+    "organisation": "Organisation",
+    "consentTitle": "Un flux attend une autorisation",
+    "consentHint": "{feeds} flux ne peuvent pas être lus tant que l'autorisation n'est pas accordée. Suivez le guide de configuration puis relancez la collecte.",
+    "staleTitle": "Un flux n'a pas pu être lu",
+    "staleHint": "{feeds} flux ont échoué lors de leur dernière passe. Ce qui est affiché ci-dessous a été collecté avant.",
+    "collected": "{events} événement(s) lus dans {streams} flux.",
+    "collectedWithFailures": "{failed} flux sur {streams} ont échoué. Voir la bannière pour la raison.",
+    "action": {
+      "create": "Créé",
+      "delete": "Supprimé",
+      "update": "Modifié",
+      "move": "Déplacé",
+      "share": "Partagé",
+      "login": "Connexion",
+      "other": "Autre"
+    },
+    "target": {
+      "file": "Fichier",
+      "folder": "Dossier",
+      "user": "Utilisateur",
+      "group": "Groupe",
+      "site": "Site",
+      "drive": "Périphérique",
+      "other": "Autre"
+    },
+    "actionLabel": "Action",
+    "targetLabel": "Objet",
+    "error_validation": "Vérifiez les filtres : l'un d'eux n'est pas une valeur connue.",
+    "error_busy": "Une collecte est déjà en cours.",
+    "error_not_found": "L'événement n'existe plus.",
+    "error_reconnect": "Reconnectez le compte : ses jetons ne sont plus valides.",
+    "error_consent_required": "L'application manque d'une autorisation ; accordez-la depuis le guide de configuration.",
+    "error_rate_limited": "Le fournisseur limite ce compte. Réessayez plus tard.",
+    "error_internal": "Le serveur n'a pas pu terminer la requête.",
+    "error_unknown": "La requête a échoué."
   }
 }

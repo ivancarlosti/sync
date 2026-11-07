@@ -63,7 +63,8 @@
     "toggleTheme": "Change the theme",
     "changeLanguage": "Change the language",
     "skipToContent": "Skip to the content",
-    "primaryNavigation": "Primary navigation"
+    "primaryNavigation": "Primary navigation",
+    "auditLogs": "Audit Logs"
   },
   "auth": {
     "title": "Sign in to Sync",
@@ -467,7 +468,7 @@
     "purgeNow": "Purge now",
     "purgeAge": "Age in days",
     "purgeAgeHint": "Zero applies the retention saved on this screen.",
-    "purged": "Removed: {jobs} runs, {audits} audit reports, {traffic} traffic rows.",
+    "purged": "Removed: {jobs} runs, {audits} audit reports, {traffic} traffic rows, {activity} activity events.",
     "purgeError": "The purge failed.",
     "version": "Version",
     "commit": "Commit",
@@ -616,7 +617,9 @@
     "billingSchema_oci": "Oracle Cloud (OCI)",
     "billingSchema_aws": "Amazon Web Services",
     "billingSchema_gcp": "Google Cloud",
-    "billingSchema_custom": "Custom"
+    "billingSchema_custom": "Custom",
+    "purgeAuditLogsDays": "Activity events (days)",
+    "purgeTargetAuditLogs": "Activity events"
   },
   "audit": {
     "title": "Audit Storage",
@@ -755,5 +758,61 @@
     "h-CN": "中文（简体）",
     "hi-IN": "हिन्दी",
     "ar-SA": "العربية"
+  },
+  "auditLogs": {
+    "title": "Audit Logs",
+    "subtitle": "Every change Microsoft 365 and Google Workspace reported, collected on a schedule and kept past the retention of the providers.",
+    "provider": "Provider",
+    "action": {
+      "create": "Created",
+      "delete": "Deleted",
+      "update": "Updated",
+      "move": "Moved",
+      "share": "Shared",
+      "login": "Signed in",
+      "other": "Other"
+    },
+    "target": {
+      "file": "File",
+      "folder": "Folder",
+      "user": "User",
+      "group": "Group",
+      "site": "Site",
+      "drive": "Drive",
+      "other": "Other"
+    },
+    "actionLabel": "Action",
+    "targetLabel": "Object",
+    "search": "Search",
+    "searchHint": "Actor or object name",
+    "from": "From",
+    "to": "To",
+    "summary": "{total} events · page {page} of {pages}",
+    "page": "Page {page} of {pages}",
+    "clear": "Clear",
+    "collect": "Collect now",
+    "collecting": "Collecting…",
+    "export": "Export CSV",
+    "loadError": "The activity log could not be loaded.",
+    "empty": "No activity recorded yet.",
+    "emptyHint": "Connect an administrator account: its organisation feed is read every ten minutes.",
+    "when": "When",
+    "object": "Object",
+    "actor": "Actor",
+    "organisation": "Organisation",
+    "consentTitle": "A feed is waiting for a permission",
+    "consentHint": "{feeds} feed(s) cannot be read until the permission is granted. Follow the setup guide, then collect again.",
+    "staleTitle": "A feed could not be read",
+    "staleHint": "{feeds} feed(s) failed on their last pass. What is listed below was collected before.",
+    "collected": "{events} event(s) read from {streams} feed(s).",
+    "collectedWithFailures": "{failed} of {streams} feed(s) failed. See the banner for the reason.",
+    "error_validation": "Check the filters: one of them is not a known value.",
+    "error_busy": "A collection pass is already running.",
+    "error_not_found": "The event does not exist any more.",
+    "error_reconnect": "Reconnect the account: its tokens are no longer valid.",
+    "error_consent_required": "The application is missing a permission; grant it from the setup guide.",
+    "error_rate_limited": "The provider is throttling the account. Try again later.",
+    "error_internal": "The server could not complete the request.",
+    "error_unknown": "The request failed."
   }
 }

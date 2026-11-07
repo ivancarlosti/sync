@@ -83,6 +83,7 @@ const purgeForm = reactive({
   jobsDays: '' as string | number,
   auditsDays: '' as string | number,
   billingDays: '' as string | number,
+  auditLogsDays: '' as string | number,
   target: 'all' as PurgeTarget,
   days: '' as string | number,
 });
@@ -145,6 +146,7 @@ const purgeOptions = computed(() => [
   { value: 'jobs', label: t('admin.purgeTargetJobs') },
   { value: 'audits', label: t('admin.purgeTargetAudits') },
   { value: 'billing', label: t('admin.purgeTargetBilling') },
+  { value: 'auditlogs', label: t('admin.purgeTargetAuditLogs') },
 ]);
 
 /** rawRows is the stored key/value list, sorted once for display. */
@@ -177,6 +179,7 @@ async function load(): Promise<void> {
     purgeForm.jobsDays = answer.settings.purge_jobs_days;
     purgeForm.auditsDays = answer.settings.purge_audits_days;
     purgeForm.billingDays = answer.settings.purge_billing_days;
+    purgeForm.auditLogsDays = answer.settings.purge_auditlogs_days;
   } catch (error) {
     failure.value = messageOf(error);
   } finally {
@@ -214,6 +217,7 @@ async function save(): Promise<void> {
     purge_jobs_days: asNumber(purgeForm.jobsDays, DEFAULT_RETENTION),
     purge_audits_days: asNumber(purgeForm.auditsDays, DEFAULT_RETENTION),
     purge_billing_days: asNumber(purgeForm.billingDays, DEFAULT_RETENTION),
+    purge_auditlogs_days: asNumber(purgeForm.auditLogsDays, DEFAULT_RETENTION),
   };
   const answer = await runSave(() => settingsApi.update(body), {
     success: t('admin.savedSettings'),
@@ -300,6 +304,7 @@ async function purgeNow(): Promise<void> {
         jobs: answer.removed.jobs,
         audits: answer.removed.audits,
         traffic: answer.removed.billing,
+        activity: answer.removed.auditlogs,
       }),
     );
     await loadRaw();
@@ -457,7 +462,7 @@ onMounted(() => {
           />
         </div>
 
-        <div class="grid gap-3 sm:grid-cols-3">
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div class="space-y-1.5">
             <Label for="purge-jobs">{{ t('admin.purgeJobsDays') }}</Label>
             <Input id="purge-jobs" v-model="purgeForm.jobsDays" type="number" numeric :min="1" />
@@ -477,6 +482,16 @@ onMounted(() => {
             <Input
               id="purge-billing"
               v-model="purgeForm.billingDays"
+              type="number"
+              numeric
+              :min="1"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="purge-auditlogs">{{ t('admin.purgeAuditLogsDays') }}</Label>
+            <Input
+              id="purge-auditlogs"
+              v-model="purgeForm.auditLogsDays"
               type="number"
               numeric
               :min="1"

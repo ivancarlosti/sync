@@ -63,7 +63,8 @@
     "toggleTheme": "थीम बदलें",
     "changeLanguage": "भाषा बदलें",
     "skipToContent": "सामग्री पर जाएँ",
-    "primaryNavigation": "मुख्य नेविगेशन"
+    "primaryNavigation": "मुख्य नेविगेशन",
+    "auditLogs": "ऑडिट लॉग"
   },
   "auth": {
     "title": "Sync में साइन इन करें",
@@ -467,7 +468,7 @@
     "purgeNow": "अभी साफ़ करें",
     "purgeAge": "आयु (दिन)",
     "purgeAgeHint": "शून्य इस स्क्रीन पर सहेजी गई अवधारण लागू करता है।",
-    "purged": "हटाए गए: {jobs} निष्पादन, {audits} ऑडिट रिपोर्ट, {traffic} ट्रैफ़िक पंक्तियाँ।",
+    "purged": "हटाए गए: {jobs} रन, {audits} ऑडिट रिपोर्ट, {traffic} ट्रैफ़िक पंक्तियाँ, {activity} गतिविधि घटनाएँ।",
     "purgeError": "सफ़ाई विफल रही।",
     "version": "संस्करण",
     "commit": "Commit",
@@ -616,7 +617,9 @@
     "billingSchema_oci": "Oracle Cloud (OCI)",
     "billingSchema_aws": "Amazon Web Services",
     "billingSchema_gcp": "Google Cloud",
-    "billingSchema_custom": "कस्टम"
+    "billingSchema_custom": "कस्टम",
+    "purgeAuditLogsDays": "गतिविधि घटनाएँ (दिन)",
+    "purgeTargetAuditLogs": "गतिविधि घटनाएँ"
   },
   "audit": {
     "title": "स्टोरेज ऑडिट",
@@ -755,5 +758,61 @@
     "h-CN": "中文（简体）",
     "hi-IN": "हिन्दी",
     "ar-SA": "العربية"
+  },
+  "auditLogs": {
+    "title": "ऑडिट लॉग",
+    "subtitle": "Microsoft 365 और Google Workspace द्वारा बताया गया हर परिवर्तन, निर्धारित अंतराल पर एकत्रित और प्रदाताओं की प्रतिधारण अवधि से आगे सुरक्षित।",
+    "provider": "प्रदाता",
+    "search": "खोजें",
+    "searchHint": "कर्ता या ऑब्जेक्ट का नाम",
+    "from": "से",
+    "to": "तक",
+    "summary": "{total} घटनाएँ · पृष्ठ {page} / {pages}",
+    "page": "पृष्ठ {page} / {pages}",
+    "clear": "साफ़ करें",
+    "collect": "अभी एकत्र करें",
+    "collecting": "एकत्र कर रहे हैं…",
+    "export": "CSV निर्यात करें",
+    "loadError": "ऑडिट लॉग लोड नहीं हो सका।",
+    "empty": "अभी तक कोई गतिविधि दर्ज नहीं हुई।",
+    "emptyHint": "एक व्यवस्थापक खाता कनेक्ट करें: उसके संगठन का फ़ीड हर दस मिनट में पढ़ा जाता है।",
+    "when": "कब",
+    "object": "ऑब्जेक्ट",
+    "actor": "कर्ता",
+    "organisation": "संगठन",
+    "consentTitle": "एक फ़ीड अनुमति की प्रतीक्षा में है",
+    "consentHint": "अनुमति दिए जाने तक {feeds} फ़ीड पढ़े नहीं जा सकते। सेटअप गाइड देखें और फिर से एकत्र करें।",
+    "staleTitle": "एक फ़ीड पढ़ा नहीं जा सका",
+    "staleHint": "पिछले चक्र में {feeds} फ़ीड विफल रहे। नीचे जो है वह उससे पहले एकत्र हुआ है।",
+    "collected": "{streams} फ़ीड से {events} घटनाएँ पढ़ी गईं।",
+    "collectedWithFailures": "{streams} में से {failed} फ़ीड विफल रहे। कारण बैनर में देखें।",
+    "action": {
+      "create": "बनाया",
+      "delete": "हटाया",
+      "update": "अद्यतन",
+      "move": "ले जाया",
+      "share": "साझा",
+      "login": "साइन इन",
+      "other": "अन्य"
+    },
+    "target": {
+      "file": "फ़ाइल",
+      "folder": "फ़ोल्डर",
+      "user": "उपयोगकर्ता",
+      "group": "समूह",
+      "site": "साइट",
+      "drive": "ड्राइव",
+      "other": "अन्य"
+    },
+    "actionLabel": "क्रिया",
+    "targetLabel": "ऑब्जेक्ट",
+    "error_validation": "फ़िल्टर जाँचें: इनमें से कोई ज्ञात मान नहीं है।",
+    "error_busy": "एक संग्रह पहले से चल रहा है।",
+    "error_not_found": "यह घटना अब मौजूद नहीं है।",
+    "error_reconnect": "खाता फिर से कनेक्ट करें: उसके टोकन अब मान्य नहीं हैं।",
+    "error_consent_required": "एप्लिकेशन में एक अनुमति कम है; सेटअप गाइड से दें।",
+    "error_rate_limited": "प्रदाता खाते को सीमित कर रहा है। बाद में प्रयास करें।",
+    "error_internal": "सर्वर अनुरोध पूरा नहीं कर सका।",
+    "error_unknown": "अनुरोध विफल रहा।"
   }
 }

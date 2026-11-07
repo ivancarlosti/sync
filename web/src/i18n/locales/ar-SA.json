@@ -63,7 +63,8 @@
     "toggleTheme": "تبديل المظهر",
     "changeLanguage": "تغيير اللغة",
     "skipToContent": "الانتقال إلى المحتوى",
-    "primaryNavigation": "التنقل الرئيسي"
+    "primaryNavigation": "التنقل الرئيسي",
+    "auditLogs": "سجلات التدقيق"
   },
   "auth": {
     "title": "تسجيل الدخول إلى Sync",
@@ -467,7 +468,7 @@
     "purgeNow": "تنظيف الآن",
     "purgeAge": "المدة بالأيام",
     "purgeAgeHint": "الصفر يطبّق مدة الاحتفاظ المحفوظة في هذه الشاشة.",
-    "purged": "تم الحذف: {jobs} عملية تشغيل، {audits} تقرير تدقيق، {traffic} صف حركة بيانات.",
+    "purged": "تمت الإزالة: {jobs} تشغيلًا، {audits} تقرير تدقيق، {traffic} صفوف حركة، {activity} أحداث نشاط.",
     "purgeError": "فشل التنظيف.",
     "version": "الإصدار",
     "commit": "Commit",
@@ -616,7 +617,9 @@
     "billingSchema_oci": "Oracle Cloud (OCI)",
     "billingSchema_aws": "Amazon Web Services",
     "billingSchema_gcp": "Google Cloud",
-    "billingSchema_custom": "مخصص"
+    "billingSchema_custom": "مخصص",
+    "purgeAuditLogsDays": "أحداث النشاط (أيام)",
+    "purgeTargetAuditLogs": "أحداث النشاط"
   },
   "audit": {
     "title": "تدقيق التخزين",
@@ -755,5 +758,61 @@
     "h-CN": "中文（简体）",
     "hi-IN": "हिन्दी",
     "ar-SA": "العربية"
+  },
+  "auditLogs": {
+    "title": "سجلات التدقيق",
+    "subtitle": "كل تغيير أبلغ عنه Microsoft 365 وGoogle Workspace، يُجمع وفق جدولة ويُحفظ بعد انتهاء مدة الاحتفاظ لدى المزوّدين.",
+    "provider": "المزوّد",
+    "search": "بحث",
+    "searchHint": "المنفّذ أو اسم الكائن",
+    "from": "من",
+    "to": "إلى",
+    "summary": "{total} حدثًا · الصفحة {page} من {pages}",
+    "page": "الصفحة {page} من {pages}",
+    "clear": "مسح",
+    "collect": "اجمع الآن",
+    "collecting": "جارٍ الجمع…",
+    "export": "تصدير CSV",
+    "loadError": "تعذّر تحميل سجل التدقيق.",
+    "empty": "لا يوجد نشاط مسجّل بعد.",
+    "emptyHint": "اربط حساب مسؤول: يُقرأ تدفّق مؤسسته كل عشر دقائق.",
+    "when": "الوقت",
+    "object": "الكائن",
+    "actor": "المنفّذ",
+    "organisation": "المؤسسة",
+    "consentTitle": "تدفّق بانتظار إذن",
+    "consentHint": "لا يمكن قراءة {feeds} تدفّقًا حتى يُمنح الإذن. اتبع دليل الإعداد ثم اجمع مرة أخرى.",
+    "staleTitle": "تعذّرت قراءة تدفّق",
+    "staleHint": "فشل {feeds} تدفّقًا في آخر مرور. ما يظهر أدناه جُمع قبل ذلك.",
+    "collected": "تمت قراءة {events} حدثًا من {streams} تدفّقًا.",
+    "collectedWithFailures": "فشل {failed} من {streams} تدفّقًا. راجع التنبيه للسبب.",
+    "action": {
+      "create": "أُنشئ",
+      "delete": "حُذف",
+      "update": "حُدّث",
+      "move": "نُقل",
+      "share": "شورك",
+      "login": "سجّل الدخول",
+      "other": "أخرى"
+    },
+    "target": {
+      "file": "ملف",
+      "folder": "مجلد",
+      "user": "مستخدم",
+      "group": "مجموعة",
+      "site": "موقع",
+      "drive": "وحدة تخزين",
+      "other": "أخرى"
+    },
+    "actionLabel": "الإجراء",
+    "targetLabel": "الكائن",
+    "error_validation": "تحقق من عوامل التصفية: أحدها قيمة غير معروفة.",
+    "error_busy": "هناك عملية جمع قيد التشغيل بالفعل.",
+    "error_not_found": "لم يعد الحدث موجودًا.",
+    "error_reconnect": "أعد ربط الحساب: رموزه لم تعد صالحة.",
+    "error_consent_required": "ينقص التطبيق إذن؛ امنحه من دليل الإعداد.",
+    "error_rate_limited": "المزوّد يحدّ من الحساب. أعد المحاولة لاحقًا.",
+    "error_internal": "لم يتمكن الخادم من إكمال الطلب.",
+    "error_unknown": "فشل الطلب."
   }
 }

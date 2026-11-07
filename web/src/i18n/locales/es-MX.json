@@ -63,7 +63,8 @@
     "toggleTheme": "Cambiar el tema",
     "changeLanguage": "Cambiar el idioma",
     "skipToContent": "Ir al contenido",
-    "primaryNavigation": "Navegación principal"
+    "primaryNavigation": "Navegación principal",
+    "auditLogs": "Registros de auditoría"
   },
   "auth": {
     "title": "Iniciar sesión en Sync",
@@ -467,7 +468,7 @@
     "purgeNow": "Purgar ahora",
     "purgeAge": "Antigüedad en días",
     "purgeAgeHint": "Cero aplica la retención guardada en esta pantalla.",
-    "purged": "Eliminados: {jobs} ejecuciones, {audits} informes de auditoría, {traffic} líneas de tráfico.",
+    "purged": "Eliminados: {jobs} ejecuciones, {audits} informes de auditoría, {traffic} filas de tráfico, {activity} eventos de actividad.",
     "purgeError": "La purga falló.",
     "version": "Versión",
     "commit": "Commit",
@@ -616,7 +617,9 @@
     "billingSchema_oci": "Oracle Cloud (OCI)",
     "billingSchema_aws": "Amazon Web Services",
     "billingSchema_gcp": "Google Cloud",
-    "billingSchema_custom": "Personalizado"
+    "billingSchema_custom": "Personalizado",
+    "purgeAuditLogsDays": "Eventos de actividad (días)",
+    "purgeTargetAuditLogs": "Eventos de actividad"
   },
   "audit": {
     "title": "Auditoría de almacenamiento",
@@ -755,5 +758,61 @@
     "h-CN": "中文（简体）",
     "hi-IN": "हिन्दी",
     "ar-SA": "العربية"
+  },
+  "auditLogs": {
+    "title": "Registros de auditoría",
+    "subtitle": "Cada cambio que Microsoft 365 y Google Workspace informaron, recopilado con una tarea programada y conservado más allá de la retención de los proveedores.",
+    "provider": "Proveedor",
+    "action": {
+      "create": "Creado",
+      "delete": "Eliminado",
+      "update": "Actualizado",
+      "move": "Movido",
+      "share": "Compartido",
+      "login": "Inició sesión",
+      "other": "Otro"
+    },
+    "target": {
+      "file": "Archivo",
+      "folder": "Carpeta",
+      "user": "Usuario",
+      "group": "Grupo",
+      "site": "Sitio",
+      "drive": "Unidad",
+      "other": "Otro"
+    },
+    "actionLabel": "Acción",
+    "targetLabel": "Objeto",
+    "search": "Buscar",
+    "searchHint": "Autor o nombre del objeto",
+    "from": "Desde",
+    "to": "Hasta",
+    "summary": "{total} eventos · página {page} de {pages}",
+    "page": "Página {page} de {pages}",
+    "clear": "Limpiar",
+    "collect": "Recopilar ahora",
+    "collecting": "Recopilando…",
+    "export": "Exportar CSV",
+    "loadError": "No se pudo cargar el registro de auditoría.",
+    "empty": "Aún no hay actividad registrada.",
+    "emptyHint": "Conecta una cuenta de administrador: su feed de organización se lee cada diez minutos.",
+    "when": "Cuándo",
+    "object": "Objeto",
+    "actor": "Autor",
+    "organisation": "Organización",
+    "consentTitle": "Un feed espera un permiso",
+    "consentHint": "{feeds} feed(s) no se pueden leer hasta que se conceda el permiso. Sigue la guía de configuración y vuelve a recopilar.",
+    "staleTitle": "No se pudo leer un feed",
+    "staleHint": "{feeds} feed(s) fallaron en su última pasada. Lo que se muestra abajo se recopiló antes.",
+    "collected": "Se leyeron {events} evento(s) de {streams} feed(s).",
+    "collectedWithFailures": "Fallaron {failed} de {streams} feed(s). Revisa el aviso para ver el motivo.",
+    "error_validation": "Revisa los filtros: alguno no es un valor conocido.",
+    "error_busy": "Ya hay una recopilación en curso.",
+    "error_not_found": "El evento ya no existe.",
+    "error_reconnect": "Vuelve a conectar la cuenta: sus tokens ya no son válidos.",
+    "error_consent_required": "A la aplicación le falta un permiso; concédelo desde la guía de configuración.",
+    "error_rate_limited": "El proveedor está limitando la cuenta. Inténtalo más tarde.",
+    "error_internal": "El servidor no pudo completar la solicitud.",
+    "error_unknown": "La solicitud falló."
   }
 }

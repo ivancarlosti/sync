@@ -63,7 +63,8 @@
     "toggleTheme": "切换主题",
     "changeLanguage": "切换语言",
     "skipToContent": "跳到内容",
-    "primaryNavigation": "主导航"
+    "primaryNavigation": "主导航",
+    "auditLogs": "审核日志"
   },
   "auth": {
     "title": "登录 Sync",
@@ -467,7 +468,7 @@
     "purgeNow": "立即清理",
     "purgeAge": "期限（天）",
     "purgeAgeHint": "零表示应用本页面保存的保留策略。",
-    "purged": "已删除：{jobs} 条执行记录、{audits} 份审计报告、{traffic} 行流量。",
+    "purged": "已删除：{jobs} 次运行、{audits} 份审核报告、{traffic} 行流量、{activity} 条活动事件。",
     "purgeError": "清理失败。",
     "version": "版本",
     "commit": "Commit",
@@ -616,7 +617,9 @@
     "billingSchema_oci": "Oracle Cloud (OCI)",
     "billingSchema_aws": "Amazon Web Services",
     "billingSchema_gcp": "Google Cloud",
-    "billingSchema_custom": "自定义"
+    "billingSchema_custom": "自定义",
+    "purgeAuditLogsDays": "活动事件（天）",
+    "purgeTargetAuditLogs": "活动事件"
   },
   "audit": {
     "title": "存储审计",
@@ -755,5 +758,61 @@
     "h-CN": "中文（简体）",
     "hi-IN": "हिन्दी",
     "ar-SA": "العربية"
+  },
+  "auditLogs": {
+    "title": "审核日志",
+    "subtitle": "Microsoft 365 与 Google Workspace 报告的每一项变更，按计划采集，并在供应商保留期之后继续保存。",
+    "provider": "提供商",
+    "search": "搜索",
+    "searchHint": "操作者或对象名称",
+    "from": "起始",
+    "to": "结束",
+    "summary": "{total} 条事件 · 第 {page} / {pages} 页",
+    "page": "第 {page} / {pages} 页",
+    "clear": "清除",
+    "collect": "立即采集",
+    "collecting": "正在采集…",
+    "export": "导出 CSV",
+    "loadError": "无法加载审核日志。",
+    "empty": "尚无活动记录。",
+    "emptyHint": "连接一个管理员账户：其组织的数据流每十分钟读取一次。",
+    "when": "时间",
+    "object": "对象",
+    "actor": "操作者",
+    "organisation": "组织",
+    "consentTitle": "有数据流在等待授权",
+    "consentHint": "在授权之前无法读取 {feeds} 个数据流。请按照设置指南操作，然后重新采集。",
+    "staleTitle": "有数据流读取失败",
+    "staleHint": "{feeds} 个数据流在上一次采集时失败。下面显示的是此前采集的内容。",
+    "collected": "从 {streams} 个数据流读取了 {events} 条事件。",
+    "collectedWithFailures": "{streams} 个数据流中有 {failed} 个失败。请查看提示了解原因。",
+    "action": {
+      "create": "创建",
+      "delete": "删除",
+      "update": "更新",
+      "move": "移动",
+      "share": "共享",
+      "login": "登录",
+      "other": "其他"
+    },
+    "target": {
+      "file": "文件",
+      "folder": "文件夹",
+      "user": "用户",
+      "group": "组",
+      "site": "站点",
+      "drive": "驱动器",
+      "other": "其他"
+    },
+    "actionLabel": "操作",
+    "targetLabel": "对象",
+    "error_validation": "请检查筛选条件：其中一项不是已知取值。",
+    "error_busy": "已有采集任务在运行。",
+    "error_not_found": "该事件已不存在。",
+    "error_reconnect": "请重新连接账户：其令牌已失效。",
+    "error_consent_required": "应用缺少权限；请在设置指南中授予。",
+    "error_rate_limited": "提供商正在限制该账户。请稍后再试。",
+    "error_internal": "服务器无法完成请求。",
+    "error_unknown": "请求失败。"
   }
 }

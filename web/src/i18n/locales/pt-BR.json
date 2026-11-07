@@ -63,7 +63,8 @@
     "toggleTheme": "Alterar o tema",
     "changeLanguage": "Alterar o idioma",
     "skipToContent": "Ir para o conteúdo",
-    "primaryNavigation": "Navegação principal"
+    "primaryNavigation": "Navegação principal",
+    "auditLogs": "Registros de auditoria"
   },
   "auth": {
     "title": "Entrar no Sync",
@@ -467,7 +468,7 @@
     "purgeNow": "Limpar agora",
     "purgeAge": "Idade em dias",
     "purgeAgeHint": "Zero aplica a retenção salva nesta tela.",
-    "purged": "Removidos: {jobs} execuções, {audits} relatórios de auditoria, {traffic} linhas de tráfego.",
+    "purged": "Removidos: {jobs} execuções, {audits} relatórios de auditoria, {traffic} linhas de tráfego, {activity} eventos de atividade.",
     "purgeError": "A limpeza falhou.",
     "version": "Versão",
     "commit": "Commit",
@@ -616,7 +617,9 @@
     "billingSchema_oci": "Oracle Cloud (OCI)",
     "billingSchema_aws": "Amazon Web Services",
     "billingSchema_gcp": "Google Cloud",
-    "billingSchema_custom": "Personalizado"
+    "billingSchema_custom": "Personalizado",
+    "purgeAuditLogsDays": "Eventos de atividade (dias)",
+    "purgeTargetAuditLogs": "Eventos de atividade"
   },
   "audit": {
     "title": "Auditoria de armazenamento",
@@ -755,5 +758,61 @@
     "h-CN": "中文（简体）",
     "hi-IN": "हिन्दी",
     "ar-SA": "العربية"
+  },
+  "auditLogs": {
+    "title": "Registros de auditoria",
+    "subtitle": "Cada alteração informada pelo Microsoft 365 e pelo Google Workspace, coletada por tarefa agendada e mantida além da retenção dos provedores.",
+    "provider": "Provedor",
+    "search": "Pesquisar",
+    "searchHint": "Autor ou nome do objeto",
+    "from": "De",
+    "to": "Até",
+    "summary": "{total} eventos · página {page} de {pages}",
+    "page": "Página {page} de {pages}",
+    "clear": "Limpar",
+    "collect": "Coletar agora",
+    "collecting": "Coletando…",
+    "export": "Exportar CSV",
+    "loadError": "Não foi possível carregar o registro de auditoria.",
+    "empty": "Nenhuma atividade registrada ainda.",
+    "emptyHint": "Conecte uma conta de administrador: o feed da organização dela é lido a cada dez minutos.",
+    "when": "Quando",
+    "object": "Objeto",
+    "actor": "Autor",
+    "organisation": "Organização",
+    "consentTitle": "Um feed aguarda uma permissão",
+    "consentHint": "{feeds} feed(s) não podem ser lidos até que a permissão seja concedida. Siga o guia de configuração e colete novamente.",
+    "staleTitle": "Não foi possível ler um feed",
+    "staleHint": "{feeds} feed(s) falharam na última passagem. O que está listado abaixo foi coletado antes.",
+    "collected": "{events} evento(s) lidos de {streams} feed(s).",
+    "collectedWithFailures": "{failed} de {streams} feed(s) falharam. Veja o aviso para o motivo.",
+    "action": {
+      "create": "Criado",
+      "delete": "Excluído",
+      "update": "Atualizado",
+      "move": "Movido",
+      "share": "Compartilhado",
+      "login": "Entrou",
+      "other": "Outro"
+    },
+    "target": {
+      "file": "Arquivo",
+      "folder": "Pasta",
+      "user": "Usuário",
+      "group": "Grupo",
+      "site": "Site",
+      "drive": "Unidade",
+      "other": "Outro"
+    },
+    "actionLabel": "Ação",
+    "targetLabel": "Objeto",
+    "error_validation": "Verifique os filtros: algum deles não é um valor conhecido.",
+    "error_busy": "Já existe uma coleta em andamento.",
+    "error_not_found": "O evento não existe mais.",
+    "error_reconnect": "Reconecte a conta: os tokens dela não são mais válidos.",
+    "error_consent_required": "Falta uma permissão ao aplicativo; conceda-a no guia de configuração.",
+    "error_rate_limited": "O provedor está limitando a conta. Tente novamente mais tarde.",
+    "error_internal": "O servidor não conseguiu concluir a solicitação.",
+    "error_unknown": "A solicitação falhou."
   }
 }

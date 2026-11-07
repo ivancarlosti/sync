@@ -18,6 +18,7 @@ export type RouteName =
   | 'job-edit'
   | 'runs'
   | 'audit'
+  | 'audit-logs'
   | 'billing'
   | 'notifications'
   | 'admin-providers'
@@ -73,6 +74,13 @@ const routes: RouteRecordRaw[] = [
         path: 'audit',
         name: 'audit',
         component: () => import('@/views/AuditView.vue'),
+      },
+      {
+        // The organisation-wide activity feed: the stored copy of the Microsoft
+        // and Google audit logs (see views/AuditLogsView.vue).
+        path: 'audit-logs',
+        name: 'audit-logs',
+        component: () => import('@/views/AuditLogsView.vue'),
       },
       {
         // The traffic report: what the instance moved, by day, month, account
