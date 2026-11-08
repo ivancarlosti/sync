@@ -38,7 +38,7 @@ Four background loops run inside the same process (`internal/services/scheduler.
 | schedule | 30 s (`DefaultScheduleInterval`) | starts every enabled job whose `next_run_at` elapsed, and every opted-in directory report whose slot elapsed |
 | tokens | 60 s (`DefaultTokenInterval`) | renews access tokens that expire inside the 5 min window (`DefaultRefreshWindow`) |
 | retention | 6 h (`DefaultPurgeInterval`) | applies the retention of Admin > Settings > Purge (runs, audit reports, traffic days, activity events) |
-| logs | 10 min (`DefaultAuditLogInterval`) | polls the activity feeds of the connected organisations ([audit-logs.md](audit-logs.md)) |
+| logs | 1 min tick (`DefaultAuditLogTick`), a pass every `auditlogs_interval_minutes` (10 by default) | polls the activity feeds of the connected organisations while `auditlogs_enabled` is on, paced by `auditlogs_request_delay_seconds` ([audit-logs.md](audit-logs.md)) |
 | (on boot) bootstrap | once | closes runs, audits and reports a restart interrupted, recomputes `next_run_at` for every scheduled job |
 
 Sync runs are goroutines owned by `SyncService`; a per-job lease guarantees that

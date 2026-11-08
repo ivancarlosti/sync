@@ -1679,6 +1679,10 @@ func TestSettingsReadAndUpdate(t *testing.T) {
 		t.Errorf("settings = %+v, want the seeded numeric defaults %d/%d",
 			view.Settings, services.DefaultSyncInterval, services.DefaultRunTimeout)
 	}
+	if !view.Settings.AuditLogsEnabled || view.Settings.AuditLogsIntervalMinutes != services.DefaultAuditLogIntervalMinutes {
+		t.Errorf("settings = %+v, want the activity feed capture armed at %d minutes",
+			view.Settings, services.DefaultAuditLogIntervalMinutes)
+	}
 	if len(view.Locales) != len(config.SupportedLocales) || len(view.Themes) != len(config.SupportedThemes) {
 		t.Errorf("locales/themes = %v/%v, want the supported vocabularies", view.Locales, view.Themes)
 	}
@@ -1686,20 +1690,23 @@ func TestSettingsReadAndUpdate(t *testing.T) {
 	// An unsupported locale, theme or out-of-range number is refused.
 	base := func(extra map[string]any) map[string]any {
 		payload := map[string]any{
-			"default_locale":                "en-US",
-			"default_theme":                 "system",
-			"sync_default_interval_minutes": 30,
-			"sync_run_timeout_minutes":      60,
-			"billing_schema":                "none",
-			"billing_schema_custom":         "",
-			"billing_rate_in_per_gib":       0,
-			"billing_rate_out_per_gib":      0,
-			"billing_currency":              "USD",
-			"purge_enabled":                 true,
-			"purge_jobs_days":               180,
-			"purge_audits_days":             180,
-			"purge_billing_days":            180,
-			"purge_auditlogs_days":          180,
+			"default_locale":                  "en-US",
+			"default_theme":                   "system",
+			"sync_default_interval_minutes":   30,
+			"sync_run_timeout_minutes":        60,
+			"billing_schema":                  "none",
+			"billing_schema_custom":           "",
+			"billing_rate_in_per_gib":         0,
+			"billing_rate_out_per_gib":        0,
+			"billing_currency":                "USD",
+			"purge_enabled":                   true,
+			"purge_jobs_days":                 180,
+			"purge_audits_days":               180,
+			"purge_billing_days":              180,
+			"purge_auditlogs_days":            180,
+			"auditlogs_enabled":               true,
+			"auditlogs_interval_minutes":      10,
+			"auditlogs_request_delay_seconds": 0,
 		}
 		for key, value := range extra {
 			payload[key] = value
@@ -1715,6 +1722,12 @@ func TestSettingsReadAndUpdate(t *testing.T) {
 		"jobs retention":    base(map[string]any{"purge_jobs_days": 0}),
 		"audits retention":  base(map[string]any{"purge_audits_days": services.MaxRetentionDays + 1}),
 		"billing retention": base(map[string]any{"purge_billing_days": -5}),
+		"activity interval": base(map[string]any{"auditlogs_interval_minutes": 0}),
+		"activity ceiling":  base(map[string]any{"auditlogs_interval_minutes": services.MaxAuditLogIntervalMinutes + 1}),
+		"activity pause":    base(map[string]any{"auditlogs_request_delay_seconds": -1}),
+		"activity pause cap": base(map[string]any{
+			"auditlogs_request_delay_seconds": services.MaxAuditLogRequestDelaySeconds + 1,
+		}),
 	} {
 		recorder = call(t, server, http.MethodPut, "/api/settings", payload)
 		if recorder.Code != http.StatusBadRequest {
@@ -1771,6 +1784,35 @@ func TestSettingsReadAndUpdate(t *testing.T) {
 		if strings.HasPrefix(key, "provider.") || strings.Contains(strings.ToLower(key), "secret") {
 			t.Errorf("raw values leak %q", key)
 		}
+	}
+
+	// The activity log capture round-trips too: the switch off, a half-hour
+	// interval and a pause between the provider calls.
+	recorder = call(t, server, http.MethodPut, "/api/settings", base(map[string]any{
+		"auditlogs_enabled":               false,
+		"auditlogs_interval_minutes":      30,
+		"auditlogs_request_delay_seconds": 15,
+	}))
+	requireStatus(t, recorder, http.StatusOK)
+	capture := decodeJSON[struct {
+		Settings services.AppSettings `json:"settings"`
+	}](t, recorder)
+	if capture.Settings.AuditLogsEnabled {
+		t.Error("auditlogs_enabled = true, want the switch stored off")
+	}
+	if capture.Settings.AuditLogsIntervalMinutes != 30 || capture.Settings.AuditLogsRequestDelaySeconds != 15 {
+		t.Errorf("capture settings = %+v, want the stored 30 minutes and 15 second pause", capture.Settings)
+	}
+	// The raw keys are the ones the collector reads, so the SPA toggle and the
+	// scheduler agree.
+	recorder = call(t, server, http.MethodGet, "/api/settings/raw", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	raw = decodeJSON[struct {
+		Values map[string]string `json:"values"`
+	}](t, recorder)
+	if raw.Values["auditlogs_enabled"] != "false" || raw.Values["auditlogs_interval_minutes"] != "30" ||
+		raw.Values["auditlogs_request_delay_seconds"] != "15" {
+		t.Errorf("raw values = %v, want the stored capture keys", raw.Values)
 	}
 }
 
@@ -3043,20 +3085,23 @@ func TestBillingExportAndValidation(t *testing.T) {
 	}
 
 	recorder = call(t, server, http.MethodPut, "/api/settings", map[string]any{
-		"default_locale":                "en-US",
-		"default_theme":                 "system",
-		"sync_default_interval_minutes": 60,
-		"sync_run_timeout_minutes":      30,
-		"billing_schema":                "oci",
-		"billing_schema_custom":         "",
-		"billing_rate_in_per_gib":       1000,
-		"billing_rate_out_per_gib":      2000,
-		"billing_currency":              "usd",
-		"purge_enabled":                 true,
-		"purge_jobs_days":               180,
-		"purge_audits_days":             180,
-		"purge_billing_days":            180,
-		"purge_auditlogs_days":          180,
+		"default_locale":                  "en-US",
+		"default_theme":                   "system",
+		"sync_default_interval_minutes":   60,
+		"sync_run_timeout_minutes":        30,
+		"billing_schema":                  "oci",
+		"billing_schema_custom":           "",
+		"billing_rate_in_per_gib":         1000,
+		"billing_rate_out_per_gib":        2000,
+		"billing_currency":                "usd",
+		"purge_enabled":                   true,
+		"purge_jobs_days":                 180,
+		"purge_audits_days":               180,
+		"purge_billing_days":              180,
+		"purge_auditlogs_days":            180,
+		"auditlogs_enabled":               true,
+		"auditlogs_interval_minutes":      10,
+		"auditlogs_request_delay_seconds": 0,
 	})
 	requireStatus(t, recorder, http.StatusOK)
 
@@ -3088,20 +3133,23 @@ func TestBillingExportAndValidation(t *testing.T) {
 
 	// An unknown schema is refused by the settings validation.
 	recorder = call(t, server, http.MethodPut, "/api/settings", map[string]any{
-		"default_locale":                "en-US",
-		"default_theme":                 "system",
-		"sync_default_interval_minutes": 60,
-		"sync_run_timeout_minutes":      30,
-		"billing_schema":                "weekly",
-		"billing_schema_custom":         "",
-		"billing_rate_in_per_gib":       0,
-		"billing_rate_out_per_gib":      0,
-		"billing_currency":              "USD",
-		"purge_enabled":                 true,
-		"purge_jobs_days":               180,
-		"purge_audits_days":             180,
-		"purge_billing_days":            180,
-		"purge_auditlogs_days":          180,
+		"default_locale":                  "en-US",
+		"default_theme":                   "system",
+		"sync_default_interval_minutes":   60,
+		"sync_run_timeout_minutes":        30,
+		"billing_schema":                  "weekly",
+		"billing_schema_custom":           "",
+		"billing_rate_in_per_gib":         0,
+		"billing_rate_out_per_gib":        0,
+		"billing_currency":                "USD",
+		"purge_enabled":                   true,
+		"purge_jobs_days":                 180,
+		"purge_audits_days":               180,
+		"purge_billing_days":              180,
+		"purge_auditlogs_days":            180,
+		"auditlogs_enabled":               true,
+		"auditlogs_interval_minutes":      10,
+		"auditlogs_request_delay_seconds": 0,
 	})
 	requireStatus(t, recorder, http.StatusBadRequest)
 	requireErrorCode(t, recorder, codeValidation)

@@ -360,6 +360,17 @@ const (
 	SettingPurgeAuditsDays    = "purge_audits_days"
 	SettingPurgeBillingDays   = "purge_billing_days"
 	SettingPurgeAuditLogsDays = "purge_auditlogs_days"
+	// SettingAuditLogsEnabled arms the scheduled pass of the activity feed
+	// collector (and leaves the manual "collect now" action available either
+	// way). Off is what an operator uses when the vendor throttles the tenant.
+	SettingAuditLogsEnabled = "auditlogs_enabled"
+	// SettingAuditLogsIntervalMinutes is how often the collector polls the
+	// activity feeds of the connected organisations.
+	SettingAuditLogsIntervalMinutes = "auditlogs_interval_minutes"
+	// SettingAuditLogsRequestDelaySeconds is the pause the pass waits between
+	// the provider calls it makes: the pace that keeps one busy tenant from
+	// answering 429 to its second feed.
+	SettingAuditLogsRequestDelaySeconds = "auditlogs_request_delay_seconds"
 )
 
 // ProviderConfigPrefix is the settings-key prefix holding credentials entered

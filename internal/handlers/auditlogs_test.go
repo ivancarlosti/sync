@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ivancarlosti/sync/internal/models"
+	"github.com/ivancarlosti/sync/internal/services"
 )
 
 // seedAuditLog stores a handful of activity events spread over two providers and
@@ -59,13 +60,24 @@ type auditLogCursorAnswer struct {
 	LastError    string     `json:"last_error,omitempty"`
 }
 
+// auditLogScheduleAnswer is the JSON shape of the collector schedule in the
+// answer, declared here so the assertions also pin the field names the SPA reads.
+type auditLogScheduleAnswer struct {
+	Enabled             bool       `json:"enabled"`
+	IntervalMinutes     int        `json:"interval_minutes"`
+	RequestDelaySeconds int        `json:"request_delay_seconds"`
+	LastRunAt           *time.Time `json:"last_run_at,omitempty"`
+	NextRunAt           *time.Time `json:"next_run_at,omitempty"`
+}
+
 // auditLogPageAnswer is the JSON shape of GET /api/audit-logs.
 type auditLogPageAnswer struct {
-	Events  []auditLogView         `json:"events"`
-	Total   int64                  `json:"total"`
-	Limit   int                    `json:"limit"`
-	Offset  int                    `json:"offset"`
-	Cursors []auditLogCursorAnswer `json:"cursors"`
+	Events   []auditLogView         `json:"events"`
+	Total    int64                  `json:"total"`
+	Limit    int                    `json:"limit"`
+	Offset   int                    `json:"offset"`
+	Cursors  []auditLogCursorAnswer `json:"cursors"`
+	Schedule auditLogScheduleAnswer `json:"schedule"`
 }
 
 // TestListAuditLogsAnswersTheNewestFirst pins the list endpoint: the events, the
@@ -256,6 +268,58 @@ func TestAuditLogCursorsReportTheHealthOfEveryFeed(t *testing.T) {
 	page := decodeJSON[auditLogPageAnswer](t, recorder)
 	if len(page.Cursors) != 2 {
 		t.Fatalf("cursors in the list = %+v, want both feeds", page.Cursors)
+	}
+}
+
+// TestAuditLogAnswerCarriesTheCollectorSchedule pins the schedule object of the
+// answer: the screen tells a paused collector from a stale grant, so the switch,
+// the interval and the next pass have to reach the SPA.
+func TestAuditLogAnswerCarriesTheCollectorSchedule(t *testing.T) {
+	server, store := newTestServer(t, models.AuthModeNone)
+	ctx := context.Background()
+
+	// The seeded settings leave the capture armed at the documented interval;
+	// nothing has run in this process yet, so the next pass is due now.
+	recorder := call(t, server, http.MethodGet, "/api/audit-logs", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	page := decodeJSON[auditLogPageAnswer](t, recorder)
+	if !page.Schedule.Enabled || page.Schedule.IntervalMinutes != services.DefaultAuditLogIntervalMinutes {
+		t.Fatalf("schedule = %+v, want the capture armed at %d minutes",
+			page.Schedule, services.DefaultAuditLogIntervalMinutes)
+	}
+	if page.Schedule.LastRunAt != nil || page.Schedule.NextRunAt == nil {
+		t.Fatalf("schedule = %+v, want no last pass and a pass due now", page.Schedule)
+	}
+
+	// Switching the capture off drops the scheduled pass, which is what lets the
+	// banner say why the list stopped growing.
+	if err := store.Settings().SetMany(ctx, map[string]string{
+		models.SettingAuditLogsEnabled:             "false",
+		models.SettingAuditLogsIntervalMinutes:     "45",
+		models.SettingAuditLogsRequestDelaySeconds: "30",
+	}); err != nil {
+		t.Fatalf("saving the capture settings: %v", err)
+	}
+	recorder = call(t, server, http.MethodGet, "/api/audit-logs/cursors", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	status := decodeJSON[struct {
+		Schedule auditLogScheduleAnswer `json:"schedule"`
+	}](t, recorder)
+	if status.Schedule.Enabled || status.Schedule.NextRunAt != nil {
+		t.Fatalf("schedule = %+v, want an off switch with nothing scheduled", status.Schedule)
+	}
+	if status.Schedule.IntervalMinutes != 45 || status.Schedule.RequestDelaySeconds != 30 {
+		t.Fatalf("schedule = %+v, want the stored 45 minutes and 30 second pause", status.Schedule)
+	}
+
+	// Collect now runs whether or not the capture is armed, and is reported back
+	// as the last pass.
+	recorder = call(t, server, http.MethodPost, "/api/maintenance/auditlogs/collect", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	recorder = call(t, server, http.MethodGet, "/api/audit-logs", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	if after := decodeJSON[auditLogPageAnswer](t, recorder); after.Schedule.LastRunAt == nil {
+		t.Fatalf("schedule = %+v, want the forced pass recorded", after.Schedule)
 	}
 }
 

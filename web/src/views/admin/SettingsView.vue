@@ -38,6 +38,9 @@ const DEFAULT_KEEP = 200;
 /** DEFAULT_RETENTION mirrors the server default of an emptied retention field. */
 const DEFAULT_RETENTION = 180;
 
+/** DEFAULT_AUDIT_LOG_INTERVAL mirrors the server default of the polling interval. */
+const DEFAULT_AUDIT_LOG_INTERVAL = 10;
+
 const { t, te } = useI18n();
 const auth = useAuthStore();
 const feedback = useFeedbackStore();
@@ -86,6 +89,19 @@ const purgeForm = reactive({
   auditLogsDays: '' as string | number,
   target: 'all' as PurgeTarget,
   days: '' as string | number,
+});
+
+/**
+ * captureForm is the activity feed collector: whether the scheduler polls the
+ * feeds at all, how often, and how long a pass waits between two provider calls.
+ * The pause is what an operator reaches for when a tenant answers HTTP 429 to the
+ * audit endpoints; the Collect button on the Audit Logs screen keeps working while
+ * the switch is off, which is the documented way to verify a grant.
+ */
+const captureForm = reactive({
+  enabled: true,
+  intervalMinutes: '' as string | number,
+  delaySeconds: '' as string | number,
 });
 
 /** keep is how many runs the trim task leaves behind. */
@@ -180,6 +196,9 @@ async function load(): Promise<void> {
     purgeForm.auditsDays = answer.settings.purge_audits_days;
     purgeForm.billingDays = answer.settings.purge_billing_days;
     purgeForm.auditLogsDays = answer.settings.purge_auditlogs_days;
+    captureForm.enabled = answer.settings.auditlogs_enabled;
+    captureForm.intervalMinutes = answer.settings.auditlogs_interval_minutes;
+    captureForm.delaySeconds = answer.settings.auditlogs_request_delay_seconds;
   } catch (error) {
     failure.value = messageOf(error);
   } finally {
@@ -218,6 +237,12 @@ async function save(): Promise<void> {
     purge_audits_days: asNumber(purgeForm.auditsDays, DEFAULT_RETENTION),
     purge_billing_days: asNumber(purgeForm.billingDays, DEFAULT_RETENTION),
     purge_auditlogs_days: asNumber(purgeForm.auditLogsDays, DEFAULT_RETENTION),
+    auditlogs_enabled: captureForm.enabled,
+    auditlogs_interval_minutes: asNumber(
+      captureForm.intervalMinutes,
+      DEFAULT_AUDIT_LOG_INTERVAL,
+    ),
+    auditlogs_request_delay_seconds: asNumber(captureForm.delaySeconds, 0),
   };
   const answer = await runSave(() => settingsApi.update(body), {
     success: t('admin.savedSettings'),
@@ -520,6 +545,58 @@ onMounted(() => {
             {{ t('admin.purgeNow') }}
           </Button>
         </div>
+      </div>
+      <template #footer>
+        <Button :loading="saving" @click="save">
+          <Save class="h-4 w-4" aria-hidden="true" />
+          {{ saving ? t('common.saving') : t('common.save') }}
+        </Button>
+      </template>
+    </Card>
+
+    <Card :title="t('admin.capture')" :description="t('admin.captureSubtitle')">
+      <div class="space-y-4">
+        <div class="flex items-start justify-between gap-4">
+          <div class="space-y-1">
+            <Label for="capture-enabled">{{ t('admin.captureEnabled') }}</Label>
+            <p class="text-xs text-muted-foreground">{{ t('admin.captureEnabledHint') }}</p>
+          </div>
+          <Switch
+            id="capture-enabled"
+            v-model="captureForm.enabled"
+            :label="t('admin.captureEnabled')"
+          />
+        </div>
+
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="space-y-1.5">
+            <Label for="capture-interval" :hint="t('admin.captureIntervalHint')">
+              {{ t('admin.captureInterval') }}
+            </Label>
+            <Input
+              id="capture-interval"
+              v-model="captureForm.intervalMinutes"
+              type="number"
+              numeric
+              :min="1"
+              :max="1440"
+            />
+          </div>
+          <div class="space-y-1.5">
+            <Label for="capture-delay" :hint="t('admin.captureDelayHint')">
+              {{ t('admin.captureDelay') }}
+            </Label>
+            <Input
+              id="capture-delay"
+              v-model="captureForm.delaySeconds"
+              type="number"
+              numeric
+              :min="0"
+              :max="300"
+            />
+          </div>
+        </div>
+        <p class="text-sm text-muted-foreground">{{ t('admin.captureHint') }}</p>
       </div>
       <template #footer>
         <Button :loading="saving" @click="save">

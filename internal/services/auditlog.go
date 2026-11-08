@@ -57,6 +57,68 @@ func NewAuditLogService(store *Store, tokens *TokenManager) *AuditLogService {
 	}
 }
 
+// AuditLogPolicy is how the operator configured the collector: whether the
+// scheduled pass runs at all, how often it runs, and how long it waits between
+// the provider calls of one pass.
+//
+// The pause is the answer to a throttled tenant: `directoryAuditLogs` and the
+// management activity API count requests per tenant, so a pass that reads four
+// streams back to back can spend the limit before the second one and answer 429
+// even though the retry policy would have absorbed a single refusal.
+type AuditLogPolicy struct {
+	// Enabled arms the scheduled pass. A forced pass (the Collect button) runs
+	// either way, which is what the switch promises.
+	Enabled bool
+	// Interval is the minimum age of the previous pass before the next one runs.
+	Interval time.Duration
+	// RequestDelay is the pause between two provider calls of the same pass.
+	RequestDelay time.Duration
+}
+
+// Policy reads the three capture keys, clamping what a hand-edited database could
+// have left behind. It is read on every pass instead of being cached, so a save
+// in Admin > Settings applies to the next tick (the purge reads its policy the
+// same way).
+func (s *AuditLogService) Policy(ctx context.Context) AuditLogPolicy {
+	settings := s.store.Settings()
+	return AuditLogPolicy{
+		Enabled: settings.Bool(ctx, models.SettingAuditLogsEnabled, true),
+		Interval: time.Duration(clampAuditLogInterval(
+			settings.Int(ctx, models.SettingAuditLogsIntervalMinutes, DefaultAuditLogIntervalMinutes))) * time.Minute,
+		RequestDelay: time.Duration(clampAuditLogDelay(
+			settings.Int(ctx, models.SettingAuditLogsRequestDelaySeconds, DefaultAuditLogRequestDelaySeconds))) * time.Second,
+	}
+}
+
+// auditLogPace is the pacing state of one pass: the pause to wait before every
+// provider call but the first. It lives on the stack of Collect, so the loop and
+// a forced collect running at once never share it.
+type auditLogPace struct {
+	delay  time.Duration
+	called bool
+}
+
+// wait blocks for the configured pause before the next provider call and answers
+// false when the pass was cancelled while waiting. The first call of a pass never
+// waits: the pause is about the calls that follow one another.
+func (p *auditLogPace) wait(ctx context.Context) bool {
+	if !p.called {
+		p.called = true
+		return true
+	}
+	if p.delay <= 0 {
+		return true
+	}
+	timer := time.NewTimer(p.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
 // AuditLogCollectResult reports what one pass did. It is returned (never
 // swallowed) so the maintenance endpoint can log the pass and the API can show
 // it.
@@ -98,12 +160,14 @@ func (s *AuditLogService) Collect(ctx context.Context) AuditLogCollectResult {
 		result.DurationMS = result.Duration.Milliseconds()
 		return result
 	}
+	policy := s.Policy(ctx)
+	pace := &auditLogPace{delay: policy.RequestDelay}
 	for _, group := range groups {
 		if ctx.Err() != nil {
 			break
 		}
 		result.Organisations++
-		s.collectGroup(ctx, group, &result)
+		s.collectGroup(ctx, group, &result, pace)
 	}
 	// The vendor documents the collector keeps make an upgrade self-repairing:
 	// the history a previous release mapped with a single actor slot is re-read
@@ -206,8 +270,9 @@ func (s *AuditLogService) organisations(ctx context.Context) ([]auditLogOrganisa
 	return groups, nil
 }
 
-// collectGroup reads every stream of one organisation.
-func (s *AuditLogService) collectGroup(ctx context.Context, group auditLogOrganisation, result *AuditLogCollectResult) {
+// collectGroup reads every stream of one organisation, waiting the configured
+// pause between the provider calls it makes.
+func (s *AuditLogService) collectGroup(ctx context.Context, group auditLogOrganisation, result *AuditLogCollectResult, pace *auditLogPace) {
 	session, err := s.tokens.Resolve(ctx, group.accountID)
 	if err != nil {
 		result.Failed++
@@ -222,6 +287,11 @@ func (s *AuditLogService) collectGroup(ctx context.Context, group auditLogOrgani
 	}
 	for _, stream := range source.ActivityLogStreams() {
 		if ctx.Err() != nil {
+			return
+		}
+		// The pause that keeps a busy tenant from answering 429 to the next
+		// stream of the same pass; a cancelled pass stops here.
+		if !pace.wait(ctx) {
 			return
 		}
 		result.Streams++

@@ -2,19 +2,21 @@
 // AuditLogsView — the organisation-wide activity feed.
 //
 // The list is the *stored* copy of the vendor feeds (see docs/audit-logs.md), not
-// a live query: the collector polls every ten minutes (or on demand from here),
-// which is what keeps the history past the retention window of the providers and
-// what makes the screen a single table instead of two provider-shaped ones.
+// a live query: the collector polls on the interval configured in Admin >
+// Settings (or on demand from here), which is what keeps the history past the
+// retention window of the providers and what makes the screen a single table
+// instead of two provider-shaped ones.
 //
-// The cursor banner is the health of each feed: a tenant waiting for a consent
-// still shows its directory activity and explains why the file feed is empty,
-// instead of looking broken.
+// The schedule line under the header answers "why is nothing new?": the capture
+// is off, or the next pass is hours away. The cursor banner is the health of each
+// feed: a tenant waiting for a consent still shows its directory activity and
+// explains why the file feed is empty, instead of looking broken.
 //
 // The account filter is the same design seen from the operator's side: an account
 // is turned into the organisation feed it reads, because two administrators of one
 // tenant share a single feed, and that is the finest scope the stored events can
 // honour.
-import { Download, RefreshCw, ScrollText } from '@lucide/vue';
+import { Clock, Download, PauseCircle, RefreshCw, ScrollText } from '@lucide/vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 
@@ -35,10 +37,11 @@ import {
   type AuditLogCursor,
   type AuditLogEvent,
   type AuditLogFilters,
+  type AuditLogSchedule,
   type AuditLogTarget,
   type ConnectedAccount,
 } from '@/lib/api';
-import { formatDateTime, formatNumber } from '@/lib/format';
+import { formatDateTime, formatNumber, formatRelative } from '@/lib/format';
 import { useFeedbackStore } from '@/stores/feedback';
 
 /** PAGE_SIZE is how many events one page of the table shows. */
@@ -63,6 +66,8 @@ const feedback = useFeedbackStore();
 
 const events = ref<AuditLogEvent[]>([]);
 const cursors = ref<AuditLogCursor[]>([]);
+/** schedule is the collector as configured, the answer to "why nothing new?". */
+const schedule = ref<AuditLogSchedule | null>(null);
 const total = ref(0);
 const offset = ref(0);
 const loading = ref(true);
@@ -229,6 +234,18 @@ const staleFeeds = computed(() => cursors.value.filter((cursor) => !cursor.healt
 /** consentFeeds are the ones an operator can unblock with a grant. */
 const consentFeeds = computed(() => cursors.value.filter((cursor) => cursor.needs_consent));
 
+/**
+ * nextPass is when the loop polls again, relative to now ("in 4 minutes"), which
+ * is what makes a quiet list explainable. The server leaves it out while the
+ * capture is switched off.
+ */
+const nextPass = computed(() => formatRelative(schedule.value?.next_run_at, locale.value));
+
+/** lastPass is when the previous pass finished in this process. */
+const lastPass = computed(() =>
+  schedule.value?.last_run_at ? when(schedule.value.last_run_at) : '',
+);
+
 /** page counts the pages of the filtered set for the pager. */
 const page = computed(() => Math.floor(offset.value / PAGE_SIZE) + 1);
 const pages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
@@ -260,6 +277,7 @@ async function load(): Promise<void> {
     const answer = await auditLogsApi.list(applied.value, PAGE_SIZE, offset.value);
     events.value = answer.events;
     cursors.value = answer.cursors;
+    schedule.value = answer.schedule ?? null;
     total.value = answer.total;
   } catch (error) {
     failure.value = errorText(error);
@@ -366,6 +384,37 @@ onMounted(() => {
         </Button>
       </template>
     </PageHeader>
+
+    <!--
+      The schedule line: the one thing that explains a list that stopped growing.
+      A switched-off capture is stated in the warning tone because it needs an
+      action; a running one only names the next pass.
+    -->
+    <div
+      v-if="schedule && !schedule.enabled"
+      class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm"
+    >
+      <PauseCircle class="h-4 w-4 text-amber-600" aria-hidden="true" />
+      <span class="font-medium">{{ t('auditLogs.pausedTitle') }}</span>
+      <span class="text-muted-foreground">{{ t('auditLogs.pausedHint') }}</span>
+      <RouterLink
+        :to="{ name: 'admin-settings' }"
+        class="font-medium text-primary underline-offset-4 hover:underline"
+      >
+        {{ t('auditLogs.pausedLink') }}
+      </RouterLink>
+    </div>
+    <div
+      v-else-if="schedule"
+      class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm text-muted-foreground"
+    >
+      <Clock class="h-4 w-4" aria-hidden="true" />
+      <span class="font-medium text-foreground">
+        {{ t('auditLogs.nextPass', { when: nextPass }) }}
+      </span>
+      <span>{{ t('auditLogs.interval', { count: schedule.interval_minutes }) }}</span>
+      <span v-if="lastPass">· {{ t('auditLogs.lastPass', { when: lastPass }) }}</span>
+    </div>
 
     <Alert v-if="failure" tone="destructive" :title="t('auditLogs.loadError')" :message="failure">
       <template #footer>

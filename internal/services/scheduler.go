@@ -21,12 +21,18 @@ const (
 	// DefaultRefreshWindow refreshes an access token before it actually expires,
 	// so a scheduled run never has to refresh on its critical path.
 	DefaultRefreshWindow = 5 * time.Minute
-	// DefaultAuditLogInterval is how often the activity feeds of the connected
-	// organisations are polled. Ten minutes is the finest interval Microsoft
-	// documents for the management activity API (its content becomes available
-	// with a delay of up to fifteen minutes) and comfortably inside every vendor
-	// quota, so a shorter one would only repeat the same window.
-	DefaultAuditLogInterval = 10 * time.Minute
+	// DefaultAuditLogInterval is the default of the polling interval of the
+	// activity feeds, which an operator can change in Admin > Settings. Ten
+	// minutes is the finest interval Microsoft documents for the management
+	// activity API (its content becomes available with a delay of up to fifteen
+	// minutes) and comfortably inside every vendor quota, so a shorter one would
+	// only repeat the same window.
+	DefaultAuditLogInterval = time.Duration(DefaultAuditLogIntervalMinutes) * time.Minute
+	// DefaultAuditLogTick is the resolution of the logs loop. The operator's
+	// interval is a setting, so the loop wakes at a fixed rate and asks the
+	// collector whether the next pass is due; the pass itself still runs at the
+	// configured interval, and the wake-up costs one settings read.
+	DefaultAuditLogTick = time.Minute
 	// DefaultPurgeInterval is how often the retention policy of Admin > Settings
 	// > Purge is applied. Age is measured in days, so an hourly pass would only
 	// churn through the same rows: six hours keeps the tables bounded without
@@ -44,7 +50,8 @@ const (
 //     activity events older than the configured age) once at start-up and every
 //     DefaultPurgeInterval afterwards;
 //   - the logs loop polls the activity feeds of the connected organisations once
-//     at start-up and every DefaultAuditLogInterval afterwards.
+//     at start-up and every interval configured in Admin > Settings afterwards,
+//     and does nothing while the capture is switched off.
 //
 // The loops are plain goroutines with a ticker, so running the binary twice
 // against the same database only causes jobs to be attempted twice (each
@@ -63,12 +70,16 @@ type Scheduler struct {
 	tokenEvery    time.Duration
 	refreshWindow time.Duration
 	purgeEvery    time.Duration
-	logsEvery     time.Duration
+	logsTick      time.Duration
 
-	mu      sync.Mutex
-	started bool
-	stop    chan struct{}
-	wg      sync.WaitGroup
+	mu sync.Mutex
+	// logsLast is when the previous activity feed pass finished, which is what
+	// the configured interval is measured against. It lives in memory: a restart
+	// runs the first pass immediately, the way a fresh instance backfills.
+	logsLast time.Time
+	started  bool
+	stop     chan struct{}
+	wg       sync.WaitGroup
 }
 
 // NewScheduler builds the scheduler with the default intervals. reports may be
@@ -88,7 +99,7 @@ func NewScheduler(store *Store, engine *SyncService, tokens *TokenManager, notif
 		tokenEvery:    DefaultTokenInterval,
 		refreshWindow: DefaultRefreshWindow,
 		purgeEvery:    DefaultPurgeInterval,
-		logsEvery:     DefaultAuditLogInterval,
+		logsTick:      DefaultAuditLogTick,
 		stop:          make(chan struct{}),
 	}
 }
@@ -174,9 +185,15 @@ func (s *Scheduler) Start(ctx context.Context) error {
 	go func() {
 		defer s.wg.Done()
 		// The first pass runs immediately: a fresh instance shows the activity
-		// of the last week without waiting for the first tick.
-		s.RunAuditLogs(ctx)
-		s.loop(ctx, "logs", s.logsEvery, func(ctx context.Context) { s.RunAuditLogs(ctx) })
+		// of the last week without waiting for the first tick. The pass honours
+		// the switch, so an instance with the capture off reads nothing.
+		policy := s.logs.Policy(ctx)
+		slog.Info("activity feed collector armed",
+			"enabled", policy.Enabled,
+			"interval", policy.Interval.String(),
+			"request_delay", policy.RequestDelay.String())
+		s.RunScheduledAuditLogs(ctx)
+		s.loop(ctx, "logs", s.logsTick, func(ctx context.Context) { s.RunScheduledAuditLogs(ctx) })
 	}()
 	return nil
 }
@@ -291,8 +308,13 @@ func (s *Scheduler) RunDueReports(ctx context.Context) int {
 // is the body of the logs loop, exported so the API can force a pass and so tests
 // can drive the collector deterministically. A failure is logged and reported as
 // an empty pass: an unreachable provider must never take the scheduler down.
+//
+// A forced pass ignores the switch and the interval — that is what an operator
+// pressing Collect expects — but it still counts as the previous pass, so the
+// schedule resumes one interval later instead of polling twice within a minute.
 func (s *Scheduler) RunAuditLogs(ctx context.Context) AuditLogCollectResult {
 	outcome := s.logs.Collect(ctx)
+	s.markAuditLogPass()
 	if outcome.Failed > 0 {
 		slog.Warn("the activity feed pass finished with failures",
 			"streams", outcome.Streams,
@@ -300,6 +322,85 @@ func (s *Scheduler) RunAuditLogs(ctx context.Context) AuditLogCollectResult {
 			"errors", len(outcome.Errors))
 	}
 	return outcome
+}
+
+// RunScheduledAuditLogs runs the activity feed pass when the operator enabled the
+// capture and the configured interval elapsed since the previous pass finished,
+// and answers the pass with true. It answers false, and reads nothing, when the
+// capture is off or the interval has not elapsed.
+func (s *Scheduler) RunScheduledAuditLogs(ctx context.Context) (AuditLogCollectResult, bool) {
+	policy := s.logs.Policy(ctx)
+	if !policy.Enabled {
+		return AuditLogCollectResult{}, false
+	}
+	if last := s.auditLogLastPass(); !last.IsZero() && s.clock().Sub(last) < policy.Interval {
+		return AuditLogCollectResult{}, false
+	}
+	return s.RunAuditLogs(ctx), true
+}
+
+// AuditLogSchedule describes the collector as the operator configured it, which
+// is what the Audit Logs screen shows next to the list: whether the schedule is
+// off, how often it polls and when the next pass is due.
+type AuditLogSchedule struct {
+	Enabled bool `json:"enabled"`
+	// IntervalMinutes and RequestDelaySeconds mirror the Admin > Settings form.
+	IntervalMinutes     int `json:"interval_minutes"`
+	RequestDelaySeconds int `json:"request_delay_seconds"`
+	// LastRunAt is when the previous pass finished in this process, absent when
+	// it has not run yet.
+	LastRunAt *time.Time `json:"last_run_at,omitempty"`
+	// NextRunAt is when the loop will poll again, absent while the capture is
+	// switched off (nothing is scheduled then).
+	NextRunAt *time.Time `json:"next_run_at,omitempty"`
+}
+
+// AuditLogSchedule answers the configuration of the collector and the pass the
+// loop has scheduled.
+func (s *Scheduler) AuditLogSchedule(ctx context.Context) AuditLogSchedule {
+	policy := s.logs.Policy(ctx)
+	schedule := AuditLogSchedule{
+		Enabled:             policy.Enabled,
+		IntervalMinutes:     int(policy.Interval / time.Minute),
+		RequestDelaySeconds: int(policy.RequestDelay / time.Second),
+	}
+	if last := s.auditLogLastPass(); !last.IsZero() {
+		schedule.LastRunAt = timePointer(last)
+		if policy.Enabled {
+			next := last.Add(policy.Interval)
+			schedule.NextRunAt = &next
+		}
+	} else if policy.Enabled {
+		next := s.clock()
+		schedule.NextRunAt = &next
+	}
+	return schedule
+}
+
+// markAuditLogPass records the end of a pass, which is the start of the next
+// interval.
+func (s *Scheduler) markAuditLogPass() {
+	now := s.clock()
+	s.mu.Lock()
+	s.logsLast = now
+	s.mu.Unlock()
+}
+
+// auditLogLastPass answers when the previous pass finished (zero when this
+// process has not run one yet).
+func (s *Scheduler) auditLogLastPass() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.logsLast
+}
+
+// clock answers the time source of the scheduler, tolerating one built without it
+// (a test that only drives a single pass).
+func (s *Scheduler) clock() time.Time {
+	if s.now == nil {
+		return time.Now().UTC()
+	}
+	return s.now()
 }
 
 // RunAuditLogRepair re-reads the history of the activity feed and re-attributes

@@ -161,6 +161,18 @@ export interface AppSettings {
   purge_billing_days: number;
   /** purge_auditlogs_days is the age of a stored activity event. */
   purge_auditlogs_days: number;
+  /** auditlogs_enabled arms the scheduled pass of the activity feed collector. */
+  auditlogs_enabled: boolean;
+  /**
+   * auditlogs_interval_minutes is how often the collector polls the feeds; the
+   * server bounds it to 1–1440 minutes.
+   */
+  auditlogs_interval_minutes: number;
+  /**
+   * auditlogs_request_delay_seconds is the pause between two provider calls of
+   * one pass, the answer to a tenant that answers 429; 0 leaves it unpaced.
+   */
+  auditlogs_request_delay_seconds: number;
 }
 
 /**
@@ -752,6 +764,21 @@ export interface AuditLogFilters {
   to?: string;
 }
 
+/**
+ * AuditLogSchedule is the collector as the operator configured it, answered next
+ * to the list: whether the schedule runs, how often it polls and when the next
+ * pass is due. It explains a list that stops growing.
+ */
+export interface AuditLogSchedule {
+  enabled: boolean;
+  interval_minutes: number;
+  request_delay_seconds: number;
+  /** last_run_at is when the previous pass finished in this process. */
+  last_run_at?: string;
+  /** next_run_at is absent while the capture is switched off. */
+  next_run_at?: string;
+}
+
 /** AuditLogPage is one page of the activity feed. */
 export interface AuditLogPage {
   events: AuditLogEvent[];
@@ -759,6 +786,13 @@ export interface AuditLogPage {
   limit: number;
   offset: number;
   cursors: AuditLogCursor[];
+  schedule: AuditLogSchedule;
+}
+
+/** AuditLogCursors is the status of every feed behind the list. */
+export interface AuditLogCursors {
+  cursors: AuditLogCursor[];
+  schedule: AuditLogSchedule;
 }
 
 /** AuditLogCollectResult is what POST /api/maintenance/auditlogs/collect answers. */
@@ -1143,7 +1177,7 @@ export const auditLogs = {
       url: '/audit-logs',
       params: { ...filters, limit, offset },
     }),
-  cursors: () => request<{ cursors: AuditLogCursor[] }>({ url: '/audit-logs/cursors' }),
+  cursors: () => request<AuditLogCursors>({ url: '/audit-logs/cursors' }),
   /**
    * exportHref is the browser URL of the CSV download. It is an absolute path
    * (not a request through the JSON client) because the server answers a file

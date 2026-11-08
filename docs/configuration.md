@@ -166,6 +166,8 @@ Google Drive; the same applies to Microsoft 365.
 | What | Where | Effect |
 |---|---|---|
 | default locale / theme, default interval, run timeout | Admin > Settings (`PUT /api/settings`) | validated (`0–10080` min interval, `1–1440` min timeout) and stored in `settings`; applied to visitors without their own choice |
+| retention of runs, audit reports, traffic days, activity events | Admin > Settings (`PUT /api/settings`) | validated (`1–3650` days) and applied by the retention loop on its next pass; *Purge now* applies it immediately |
+| activity log capture (switch, interval, pause between requests) | Admin > Settings (`PUT /api/settings`) | validated (`1–1440` min interval, `0–300` s pause) and read by the `logs` loop on its next wake-up (at most a minute); *Collect now* always works, switch or not ([audit-logs.md](audit-logs.md) §3) |
 | provider OAuth client (client id, secret, redirect URI, tenant) | Admin > Providers (`PUT /api/providers/:provider`) | the secret is encrypted (`v1:`) and overrides the environment; `DELETE` clears the override |
 | job schedule, direction, conflict policy, excludes, deletions | job editor (`PUT /api/jobs/:id`) | stored on the job; `next_run_at` is recomputed immediately |
 

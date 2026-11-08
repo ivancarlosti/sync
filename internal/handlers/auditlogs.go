@@ -213,6 +213,9 @@ func (s *Server) handleListAuditLogs(c *gin.Context) {
 		"limit":   filter.Limit,
 		"offset":  filter.Offset,
 		"cursors": services.NewAuditLogCursorViews(cursors, s.deps.Scheduler.AuditLogOrganisationNames()),
+		// The schedule explains a list that stops growing: the collector is
+		// switched off, or the next pass is hours away.
+		"schedule": s.deps.Scheduler.AuditLogSchedule(c.Request.Context()),
 	})
 }
 
@@ -225,7 +228,10 @@ func (s *Server) handleAuditLogCursors(c *gin.Context) {
 		fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"cursors": services.NewAuditLogCursorViews(cursors, s.deps.Scheduler.AuditLogOrganisationNames())})
+	c.JSON(http.StatusOK, gin.H{
+		"cursors":  services.NewAuditLogCursorViews(cursors, s.deps.Scheduler.AuditLogOrganisationNames()),
+		"schedule": s.deps.Scheduler.AuditLogSchedule(c.Request.Context()),
+	})
 }
 
 // handleExportAuditLogs answers GET /api/audit-logs/export: it streams the

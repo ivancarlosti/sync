@@ -84,10 +84,21 @@ retirement costs one extra request instead of the stream.
 
 `services.AuditLogService.Collect` (see `internal/services/auditlog.go`) runs:
 
-* once at start-up, then **every ten minutes** (the `logs` loop of
-  `services.Scheduler`), and
+* once at start-up, then on the interval of **Admin > Settings > Activity log
+  capture** (`auditlogs_interval_minutes`, ten minutes by default, bounded to
+  1–1440). The `logs` loop of `services.Scheduler` wakes once a minute and runs a
+  pass only when the switch `auditlogs_enabled` is on **and** the previous pass
+  finished at least one interval ago; and
 * on demand through `POST /api/maintenance/auditlogs/collect` (the
-  **Collect now** button).
+  **Collect now** button), which ignores the switch and the interval — that is the
+  documented way to verify a grant — but counts as the previous pass, so the
+  schedule resumes one interval later instead of polling twice within a minute.
+
+The switch stores *nothing* between passes and deletes nothing: with it off the
+stored history keeps working (list, filters, export, retention) and only stops
+growing. The Audit Logs screen says so above the table (`schedule.enabled` in
+`GET /api/audit-logs`, §4), because a list that stops growing otherwise reads as a
+broken grant.
 
 One pass:
 
@@ -118,7 +129,20 @@ because the audit endpoints answer a throttle with a minute or more and the
 default 30 s cap would retry too early. Google requests retry through `doJSON`
 already, and a rejected `eventName` is trimmed and retried (see §2).
 
-### Cursors
+### Pacing and throttling
+
+`auditlogs_request_delay_seconds` (Admin > Settings > Activity log capture, 0–300,
+0 by default) is the pause a pass takes **between two provider calls**. The first
+call runs immediately; every later one waits first, and the wait is abandoned with
+the pass when the context is cancelled. The pause exists because the audit endpoints
+are counted per tenant: a pass that reads four streams of one organisation back to
+back can spend the limit on the second one and answer `HTTP 429` even though
+`DoWithRetry` would have absorbed a single refusal (see above).
+
+When a tenant still throttles, raise the pause and widen the interval: the retry
+policy wins against a one-off refusal, not against a pass that returns to the same
+tenant within the minute. Both values apply to the next wake-up of the loop (at most
+one minute later), so no restart is needed.
 
 The cursor is opaque to the store — an RFC3339 UTC watermark for every stream. It
 only moves after the events were stored, so a failed write re-reads the same
@@ -231,6 +255,15 @@ line: the account reading that feed cannot look the owner up, which is what an
 administrator has to grant a directory permission to fix. The hint is derived from
 the `missing_capabilities` of the accounts of that organisation, so it appears only
 when the screen knows the grant is missing.
+
+Above the table, the schedule line answers "why is nothing new?":
+
+* **automatic collection is off** — `schedule.enabled` is false: nothing is polled
+  in the background, *Collect now* still works, and the link opens Admin >
+  Settings;
+* otherwise it names the next pass and the configured interval
+  (`schedule.next_run_at`, `schedule.interval_minutes`), plus when the previous
+  pass finished.
 
 Above the table, the feed banner explains a stale list:
 

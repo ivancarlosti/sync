@@ -70,8 +70,8 @@ and protected by the signed `state` parameter instead.
 | Method | Path | Payload / answer |
 |---|---|---|
 | `GET` | `/api/stats?days=30` | `{days, since, stats:{accounts,jobs,enabled_jobs,runs,succeeded,partial,failed,cancelled,timed_out,conflicts,files_created,files_updated,files_deleted,bytes_transferred}, running_jobs, running_ids}` — `days=0` means *since the beginning* |
-| `GET` | `/api/settings` | `{settings:{default_locale,default_theme,sync_default_interval_minutes,sync_run_timeout_minutes,billing_schema,billing_schema_custom,billing_rate_per_gib,billing_currency}, locales[], themes[], billing_schemas[], billing_schema_default}` |
-| `PUT` | `/api/settings` | same `settings` object as body (`locale` ∈ the 7 codes, `theme` ∈ light/dark/system, interval `0–10080`, timeout `1–1440`, `billing_schema` ∈ `none`/`oci`/`aws`/`gcp`/`custom`, rate `0–100000` per GiB, currency a three letter code, `billing_schema_custom` a JSON document) → `{settings}` |
+| `GET` | `/api/settings` | `{settings:{default_locale,default_theme,sync_default_interval_minutes,sync_run_timeout_minutes,billing_schema,billing_schema_custom,billing_rate_in_per_gib,billing_rate_out_per_gib,billing_currency,purge_enabled,purge_jobs_days,purge_audits_days,purge_billing_days,purge_auditlogs_days,auditlogs_enabled,auditlogs_interval_minutes,auditlogs_request_delay_seconds}, locales[], themes[], billing_schemas[], billing_schema_default}` |
+| `PUT` | `/api/settings` | same `settings` object as body (`locale` ∈ the 7 codes, `theme` ∈ light/dark/system, interval `0–10080`, timeout `1–1440`, `billing_schema` ∈ `none`/`oci`/`aws`/`gcp`/`custom`, rate `0–100000` per GiB, currency a three letter code, `billing_schema_custom` a JSON document, retention `1–3650` days each, `auditlogs_interval_minutes` `1–1440`, `auditlogs_request_delay_seconds` `0–300`) → `{settings}` |
 | `GET` | `/api/settings/raw` | `{values:{key:value}}` — every stored key except `provider.*` |
 
 `billing_schemas` is the list the Admin > Settings form offers:
@@ -304,9 +304,9 @@ the retention of the vendors.
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/audit-logs` | `{events:[auditLogView], total, limit, offset, cursors:[auditLogCursor]}` |
+| `GET` | `/api/audit-logs` | `{events:[auditLogView], total, limit, offset, cursors:[auditLogCursor], schedule:auditLogSchedule}` |
 | `GET` | `/api/audit-logs/export` | `text/csv; charset=utf-8` download, same filters, capped at 5000 rows (`X-Total-Count` carries the filtered total) |
-| `GET` | `/api/audit-logs/cursors` | `{cursors:[auditLogCursor]}` — the position and health of every feed |
+| `GET` | `/api/audit-logs/cursors` | `{cursors:[auditLogCursor], schedule:auditLogSchedule}` — the position and health of every feed |
 
 Query parameters of the list and the export (every one optional):
 
@@ -338,6 +338,13 @@ but **never serialised**.
 last_run_at?, healthy, needs_consent, last_error?}`: `healthy` is false when the
 last pass failed, and `needs_consent` marks the one failure an operator can fix
 with a grant.
+
+`auditLogSchedule` = `{enabled, interval_minutes, request_delay_seconds,
+last_run_at?, next_run_at?}` — the collector as configured in Admin > Settings
+(§3): `enabled` is the `auditlogs_enabled` switch, and `next_run_at` is absent
+while it is off, so the screen can say why the list stopped growing.
+`last_run_at`/`next_run_at` describe the pass of the running process, not the
+database: a restart polls immediately and reports from there.
 
 ### 8.2 Directory reports
 

@@ -31,6 +31,29 @@ const (
 	MaxRetentionDays = 3650
 )
 
+// Polling bounds of the activity feed collector (Admin > Settings > Activity log
+// capture). The interval and the pause are what an operator tunes when a tenant
+// answers 429: a longer interval reads the same window less often, and a pause
+// between the calls of one pass keeps the streams of one organisation from
+// tripping its throttling limit in a row.
+const (
+	// DefaultAuditLogIntervalMinutes is how often the feeds are polled when
+	// nothing was configured yet.
+	DefaultAuditLogIntervalMinutes = 10
+	// MinAuditLogIntervalMinutes and MaxAuditLogIntervalMinutes bound the
+	// choice. One minute is the floor that keeps a typo from turning the loop
+	// into a request storm; a day is the ceiling of "keep the history, barely
+	// poll for it".
+	MinAuditLogIntervalMinutes = 1
+	MaxAuditLogIntervalMinutes = 1440
+	// DefaultAuditLogRequestDelaySeconds leaves the pass unpaced, which is what
+	// a single organisation instance needs.
+	DefaultAuditLogRequestDelaySeconds = 0
+	// MaxAuditLogRequestDelaySeconds bounds the pause one pass may wait between
+	// two calls.
+	MaxAuditLogRequestDelaySeconds = 300
+)
+
 // Rates bound what an operator may price one GiB at: the cost columns of the
 // billing report stay readable numbers. The bound itself lives next to the
 // billing schema vocabulary, where ValidateBillingSettings applies it.
@@ -67,6 +90,14 @@ type AppSettings struct {
 	PurgeAuditsDays    int `json:"purge_audits_days"`
 	PurgeBillingDays   int `json:"purge_billing_days"`
 	PurgeAuditLogsDays int `json:"purge_auditlogs_days"`
+	// AuditLogsEnabled arms the scheduled pass of the activity feed collector.
+	// It never disables the "collect now" action of the Audit Logs screen.
+	AuditLogsEnabled bool `json:"auditlogs_enabled"`
+	// AuditLogsIntervalMinutes is how often the collector polls the feeds.
+	AuditLogsIntervalMinutes int `json:"auditlogs_interval_minutes"`
+	// AuditLogsRequestDelaySeconds is the pause the pass waits between the
+	// provider calls it makes, which is the pace that avoids a throttle.
+	AuditLogsRequestDelaySeconds int `json:"auditlogs_request_delay_seconds"`
 }
 
 // SettingsService reads and writes the editable settings.
@@ -87,20 +118,23 @@ func NewSettingsService(cfg *config.Config, settings *database.Settings) *Settin
 // before the split keeps its price and a fresh one never grows a dead key.
 func Defaults(cfg *config.Config) map[string]string {
 	return map[string]string{
-		models.SettingDefaultLocale:        cfg.DefaultLocale,
-		models.SettingDefaultTheme:         cfg.DefaultTheme,
-		models.SettingSyncInterval:         strconv.Itoa(DefaultSyncInterval),
-		models.SettingSyncTimeout:          strconv.Itoa(DefaultRunTimeout),
-		models.SettingBillingSchema:        BillingSchemaNone,
-		models.SettingBillingSchemaCustom:  DefaultBillingSchemaDocument(),
-		models.SettingBillingRateInPerGiB:  "0",
-		models.SettingBillingRateOutPerGiB: "0",
-		models.SettingBillingCurrency:      "USD",
-		models.SettingPurgeEnabled:         "true",
-		models.SettingPurgeJobsDays:        strconv.Itoa(DefaultRetentionDays),
-		models.SettingPurgeAuditsDays:      strconv.Itoa(DefaultRetentionDays),
-		models.SettingPurgeBillingDays:     strconv.Itoa(DefaultRetentionDays),
-		models.SettingPurgeAuditLogsDays:   strconv.Itoa(DefaultRetentionDays),
+		models.SettingDefaultLocale:                cfg.DefaultLocale,
+		models.SettingDefaultTheme:                 cfg.DefaultTheme,
+		models.SettingSyncInterval:                 strconv.Itoa(DefaultSyncInterval),
+		models.SettingSyncTimeout:                  strconv.Itoa(DefaultRunTimeout),
+		models.SettingBillingSchema:                BillingSchemaNone,
+		models.SettingBillingSchemaCustom:          DefaultBillingSchemaDocument(),
+		models.SettingBillingRateInPerGiB:          "0",
+		models.SettingBillingRateOutPerGiB:         "0",
+		models.SettingBillingCurrency:              "USD",
+		models.SettingPurgeEnabled:                 "true",
+		models.SettingPurgeJobsDays:                strconv.Itoa(DefaultRetentionDays),
+		models.SettingPurgeAuditsDays:              strconv.Itoa(DefaultRetentionDays),
+		models.SettingPurgeBillingDays:             strconv.Itoa(DefaultRetentionDays),
+		models.SettingPurgeAuditLogsDays:           strconv.Itoa(DefaultRetentionDays),
+		models.SettingAuditLogsEnabled:             "true",
+		models.SettingAuditLogsIntervalMinutes:     strconv.Itoa(DefaultAuditLogIntervalMinutes),
+		models.SettingAuditLogsRequestDelaySeconds: strconv.Itoa(DefaultAuditLogRequestDelaySeconds),
 	}
 }
 
@@ -108,17 +142,20 @@ func Defaults(cfg *config.Config) map[string]string {
 // and clamping malformed values instead of failing the request.
 func (s *SettingsService) Load(ctx context.Context) (AppSettings, error) {
 	out := AppSettings{
-		DefaultLocale:       s.cfg.DefaultLocale,
-		DefaultTheme:        s.cfg.DefaultTheme,
-		SyncIntervalMinutes: DefaultSyncInterval,
-		RunTimeoutMinutes:   DefaultRunTimeout,
-		BillingSchema:       BillingSchemaNone,
-		BillingCurrency:     "USD",
-		PurgeEnabled:        true,
-		PurgeJobsDays:       DefaultRetentionDays,
-		PurgeAuditsDays:     DefaultRetentionDays,
-		PurgeBillingDays:    DefaultRetentionDays,
-		PurgeAuditLogsDays:  DefaultRetentionDays,
+		DefaultLocale:                s.cfg.DefaultLocale,
+		DefaultTheme:                 s.cfg.DefaultTheme,
+		SyncIntervalMinutes:          DefaultSyncInterval,
+		RunTimeoutMinutes:            DefaultRunTimeout,
+		BillingSchema:                BillingSchemaNone,
+		BillingCurrency:              "USD",
+		PurgeEnabled:                 true,
+		PurgeJobsDays:                DefaultRetentionDays,
+		PurgeAuditsDays:              DefaultRetentionDays,
+		PurgeBillingDays:             DefaultRetentionDays,
+		PurgeAuditLogsDays:           DefaultRetentionDays,
+		AuditLogsEnabled:             true,
+		AuditLogsIntervalMinutes:     DefaultAuditLogIntervalMinutes,
+		AuditLogsRequestDelaySeconds: DefaultAuditLogRequestDelaySeconds,
 	}
 	if locale := strings.TrimSpace(s.settings.Value(ctx, models.SettingDefaultLocale, out.DefaultLocale)); locale != "" {
 		out.DefaultLocale = locale
@@ -146,6 +183,11 @@ func (s *SettingsService) Load(ctx context.Context) (AppSettings, error) {
 	out.PurgeAuditsDays = clampDays(s.settings.Int(ctx, models.SettingPurgeAuditsDays, out.PurgeAuditsDays))
 	out.PurgeBillingDays = clampDays(s.settings.Int(ctx, models.SettingPurgeBillingDays, out.PurgeBillingDays))
 	out.PurgeAuditLogsDays = clampDays(s.settings.Int(ctx, models.SettingPurgeAuditLogsDays, out.PurgeAuditLogsDays))
+	out.AuditLogsEnabled = s.settings.Bool(ctx, models.SettingAuditLogsEnabled, out.AuditLogsEnabled)
+	out.AuditLogsIntervalMinutes = clampAuditLogInterval(
+		s.settings.Int(ctx, models.SettingAuditLogsIntervalMinutes, out.AuditLogsIntervalMinutes))
+	out.AuditLogsRequestDelaySeconds = clampAuditLogDelay(
+		s.settings.Int(ctx, models.SettingAuditLogsRequestDelaySeconds, out.AuditLogsRequestDelaySeconds))
 	return out, nil
 }
 
@@ -159,6 +201,30 @@ func clampDays(days int) int {
 		return MaxRetentionDays
 	}
 	return days
+}
+
+// clampAuditLogInterval keeps a stored polling interval inside its bounds, so a
+// hand-edited database cannot turn the collector into a request storm.
+func clampAuditLogInterval(minutes int) int {
+	if minutes < MinAuditLogIntervalMinutes {
+		return MinAuditLogIntervalMinutes
+	}
+	if minutes > MaxAuditLogIntervalMinutes {
+		return MaxAuditLogIntervalMinutes
+	}
+	return minutes
+}
+
+// clampAuditLogDelay keeps a stored pause between calls inside its bounds; a
+// negative value reads as "unpaced".
+func clampAuditLogDelay(seconds int) int {
+	if seconds < 0 {
+		return 0
+	}
+	if seconds > MaxAuditLogRequestDelaySeconds {
+		return MaxAuditLogRequestDelaySeconds
+	}
+	return seconds
 }
 
 // float reads a numeric setting, falling back to the default when the stored
@@ -211,21 +277,32 @@ func (s *SettingsService) Update(ctx context.Context, in AppSettings) (AppSettin
 				ErrValidation, retention.name, MinRetentionDays, MaxRetentionDays)
 		}
 	}
+	if in.AuditLogsIntervalMinutes < MinAuditLogIntervalMinutes || in.AuditLogsIntervalMinutes > MaxAuditLogIntervalMinutes {
+		return AppSettings{}, fmt.Errorf("%w: the activity log interval must be between %d and %d minutes",
+			ErrValidation, MinAuditLogIntervalMinutes, MaxAuditLogIntervalMinutes)
+	}
+	if in.AuditLogsRequestDelaySeconds < 0 || in.AuditLogsRequestDelaySeconds > MaxAuditLogRequestDelaySeconds {
+		return AppSettings{}, fmt.Errorf("%w: the pause between activity feed calls must be between 0 and %d seconds",
+			ErrValidation, MaxAuditLogRequestDelaySeconds)
+	}
 	values := map[string]string{
-		models.SettingDefaultLocale:        in.DefaultLocale,
-		models.SettingDefaultTheme:         theme,
-		models.SettingSyncInterval:         strconv.Itoa(in.SyncIntervalMinutes),
-		models.SettingSyncTimeout:          strconv.Itoa(in.RunTimeoutMinutes),
-		models.SettingBillingSchema:        schema,
-		models.SettingBillingSchemaCustom:  document,
-		models.SettingBillingRateInPerGiB:  strconv.FormatFloat(in.BillingRateInPerGiB, 'f', -1, 64),
-		models.SettingBillingRateOutPerGiB: strconv.FormatFloat(in.BillingRateOutPerGiB, 'f', -1, 64),
-		models.SettingBillingCurrency:      currency,
-		models.SettingPurgeEnabled:         strconv.FormatBool(in.PurgeEnabled),
-		models.SettingPurgeJobsDays:        strconv.Itoa(in.PurgeJobsDays),
-		models.SettingPurgeAuditsDays:      strconv.Itoa(in.PurgeAuditsDays),
-		models.SettingPurgeBillingDays:     strconv.Itoa(in.PurgeBillingDays),
-		models.SettingPurgeAuditLogsDays:   strconv.Itoa(in.PurgeAuditLogsDays),
+		models.SettingDefaultLocale:                in.DefaultLocale,
+		models.SettingDefaultTheme:                 theme,
+		models.SettingSyncInterval:                 strconv.Itoa(in.SyncIntervalMinutes),
+		models.SettingSyncTimeout:                  strconv.Itoa(in.RunTimeoutMinutes),
+		models.SettingBillingSchema:                schema,
+		models.SettingBillingSchemaCustom:          document,
+		models.SettingBillingRateInPerGiB:          strconv.FormatFloat(in.BillingRateInPerGiB, 'f', -1, 64),
+		models.SettingBillingRateOutPerGiB:         strconv.FormatFloat(in.BillingRateOutPerGiB, 'f', -1, 64),
+		models.SettingBillingCurrency:              currency,
+		models.SettingPurgeEnabled:                 strconv.FormatBool(in.PurgeEnabled),
+		models.SettingPurgeJobsDays:                strconv.Itoa(in.PurgeJobsDays),
+		models.SettingPurgeAuditsDays:              strconv.Itoa(in.PurgeAuditsDays),
+		models.SettingPurgeBillingDays:             strconv.Itoa(in.PurgeBillingDays),
+		models.SettingPurgeAuditLogsDays:           strconv.Itoa(in.PurgeAuditLogsDays),
+		models.SettingAuditLogsEnabled:             strconv.FormatBool(in.AuditLogsEnabled),
+		models.SettingAuditLogsIntervalMinutes:     strconv.Itoa(in.AuditLogsIntervalMinutes),
+		models.SettingAuditLogsRequestDelaySeconds: strconv.Itoa(in.AuditLogsRequestDelaySeconds),
 	}
 	if err := s.settings.SetMany(ctx, values); err != nil {
 		return AppSettings{}, fmt.Errorf("services: saving settings: %w", err)

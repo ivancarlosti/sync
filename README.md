@@ -44,8 +44,9 @@
   `GET /api/runs/:id/items` show.
 * **Activity feed of both clouds** — the Audit Logs screen keeps what Microsoft 365
   and Google Workspace report (who created, deleted, moved or shared what, and
-  who signed in), polled every ten minutes and stored past the retention of the
-  vendors (see [docs/audit-logs.md](docs/audit-logs.md)).
+  who signed in), polled on the interval an operator sets in Admin > Settings
+  (ten minutes by default, can be switched off) and stored past the retention of
+  the vendors (see [docs/audit-logs.md](docs/audit-logs.md)).
 * **Directory reports** — a read-only inventory of the organisation behind an
   account, for both providers: the tenant record, users (guests on Microsoft,
   suspended accounts on Google), groups and their members, SharePoint sites or
@@ -144,9 +145,10 @@ CSV.
 ![Audit](docs/screenshots/09-audit.png)
 
 **Audit logs** — the organisation-wide activity feed of both clouds: who created,
-deleted, moved or shared what, and who signed in. It is polled every ten minutes
-and stored locally, so the history outlives the seven days the Office 365
-activity feed keeps (see [docs/audit-logs.md](docs/audit-logs.md)).
+deleted, moved or shared what, and who signed in. It is polled on an interval an
+operator sets in Admin > Settings (ten minutes by default, and it can be switched
+off entirely) and stored locally, so the history outlives the seven days the
+Office 365 activity feed keeps (see [docs/audit-logs.md](docs/audit-logs.md)).
 
 ![Audit logs](docs/screenshots/10-audit-logs.png)
 
