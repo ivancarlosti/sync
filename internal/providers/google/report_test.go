@@ -1042,6 +1042,146 @@ func TestLicensesProbeEachUserWhenTheDomainRefusesTheCatalogue(t *testing.T) {
 	}
 }
 
+// TestLicensesKeepReadingThePartsAfterARefusedOne pins the defect a resold tenant
+// reported: the licences of the first user of the directory and nobody else's.
+//
+// A part that fails is an answer about *one SKU* — a subscription the tenant never
+// had, a product Google does not answer `get` for — and the assignments of the same
+// user arrive in the other parts of the same answer. The script below refuses the
+// first part of the batch, and one part in the middle of the catalogue that falls
+// *after* the first assignment of the user the batch is about: reading the answer to
+// the end, and asking every other user as well, is the difference between one user's
+// licences in the report and the directory's.
+func TestLicensesKeepReadingThePartsAfterARefusedOne(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	transport.statusFor = func(request *http.Request) int {
+		if strings.HasPrefix(request.URL.Path, "/apps/licensing/") {
+			return http.StatusForbidden
+		}
+		return http.StatusOK
+	}
+	// The domain of the report: a resold tenant where one user holds a paid edition
+	// and a free one, and the rest hold the paid edition alone.
+	held := map[string]string{
+		"/sku/1010020028/user/Ada@Contoso.com": `{"productId":"Google-Apps","skuId":"1010020028",` +
+			`"skuName":"Google Workspace Business Standard","userId":"Ada@Contoso.com"}`,
+		"/sku/1010010001/user/Ada@Contoso.com": `{"productId":"101001","skuId":"1010010001",` +
+			`"skuName":"Cloud Identity Free","userId":"Ada@Contoso.com"}`,
+		"/sku/1010020028/user/grace@contoso.com": `{"productId":"Google-Apps","skuId":"1010020028",` +
+			`"skuName":"Google Workspace Business Standard","userId":"grace@contoso.com"}`,
+		"/sku/1010020028/user/linus@contoso.com": `{"productId":"Google-Apps","skuId":"1010020028",` +
+			`"skuName":"Google Workspace Business Standard","userId":"linus@contoso.com"}`,
+	}
+	batches := 0
+	transport.batch = func(subRequests []string) []batchAnswer {
+		batches++
+		answers := make([]batchAnswer, len(subRequests))
+		for index, line := range subRequests {
+			answers[index] = batchAnswer{Status: http.StatusNotFound,
+				Body: []byte(`{"error":{"code":404,"message":"Not Found"}}`)}
+			for key, body := range held {
+				if strings.Contains(line, key) {
+					answers[index] = batchAnswer{Status: http.StatusOK, Body: []byte(body)}
+				}
+			}
+			if strings.Contains(line, "/sku/1010020020/") || strings.Contains(line, "/sku/1010050001/") {
+				// The 403 a subscription the tenant never had is answered with: a
+				// failure of that part, in a batch the endpoint accepted.
+				answers[index] = batchAnswer{Status: http.StatusForbidden, Body: []byte(
+					`{"error":{"code":403,"message":"Subscription not found.",` +
+						`"errors":[{"reason":"subscriptionNotFound","message":"Subscription not found."}]}}`)}
+			}
+		}
+		return answers
+	}
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionUsers, providers.ReportSectionLicenses}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	bySection := reportSections(t, tables)
+	licenses := bySection[providers.ReportSectionLicenses]
+	if licenses.Failed() {
+		t.Fatalf("licenses section = %q, want the assignments the per-user read answered", licenses.Error)
+	}
+	// Every user of the directory, including the two a walk that stopped at the first
+	// failed part would never have asked about.
+	if batches != 3 {
+		t.Errorf("licence batches = %d, want 1 per user of the directory", batches)
+	}
+	got := make([]string, 0, len(licenses.Rows))
+	for _, row := range licenses.Rows {
+		got = append(got, reportCell(licenses, row, "user")+" "+reportCell(licenses, row, "sku_name"))
+	}
+	// The catalogue is walked product by product and the rows are sorted by product,
+	// address and SKU (licensesTable), so the free edition of the first user comes
+	// first — what matters here is that all four assignments are there.
+	want := []string{
+		"Ada@Contoso.com Cloud Identity Free",
+		"Ada@Contoso.com Google Workspace Business Standard",
+		"grace@contoso.com Google Workspace Business Standard",
+		"linus@contoso.com Google Workspace Business Standard",
+	}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("licenses rows = %v, want %v", got, want)
+	}
+	// The column the report is read for: the assignments of every user, not just the
+	// ones that happened to arrive before the first failed part.
+	users := bySection[providers.ReportSectionUsers]
+	for index, want := range map[int]string{
+		0: "Google Workspace Business Standard; Cloud Identity Free",
+		1: "Google Workspace Business Standard",
+		2: "Google Workspace Business Standard",
+	} {
+		if cell := reportCell(users, users.Rows[index], "licenses"); cell != want {
+			t.Errorf("licenses cell of row %d = %q, want %q", index, cell, want)
+		}
+	}
+}
+
+// TestLicensesKeepWalkingThroughAThrottledBatch pins the one failure the per-user walk
+// asks again for: a batch whose parts were all refused because the caller is over a
+// quota is not the domain refusing the read, so the next user is still worth asking —
+// where the same batch's parts refused for any other reason end the walk.
+func TestLicensesKeepWalkingThroughAThrottledBatch(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	transport.statusFor = func(request *http.Request) int {
+		if strings.HasPrefix(request.URL.Path, "/apps/licensing/") {
+			return http.StatusForbidden
+		}
+		return http.StatusOK
+	}
+	batches := 0
+	transport.batch = func(subRequests []string) []batchAnswer {
+		batches++
+		answers := make([]batchAnswer, len(subRequests))
+		for index := range subRequests {
+			answers[index] = batchAnswer{Status: http.StatusForbidden, Body: []byte(
+				`{"error":{"code":403,"message":"Quota exceeded for quota metric 'Queries'",` +
+					`"errors":[{"reason":"rateLimitExceeded","message":"Rate Limit Exceeded"}]}}`)}
+		}
+		return answers
+	}
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionLicenses}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	licenses := tables[0]
+	for _, fragment := range []string{"licence catalogue", "Rate Limit Exceeded"} {
+		if !strings.Contains(licenses.Error, fragment) {
+			t.Errorf("licenses error = %q, want %q", licenses.Error, fragment)
+		}
+	}
+	if batches != 3 {
+		t.Errorf("licence batches = %d, want 1 per user (a quota excess is asked again)", batches)
+	}
+}
+
 // TestLicensesReportTheDomainWhenThePerUserLookupIsRefusedToo pins the other end of
 // the fallback: a domain that refuses the per-user read as well is the answer, so the
 // walk stops at the first batch and the section says why both halves are missing

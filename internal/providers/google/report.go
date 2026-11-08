@@ -870,13 +870,20 @@ func (d *reportData) explainRefusal(refusal error) error {
 // the same one) and by reportLicenseProbeUsers, whose cap marks the section
 // truncated instead of quietly reporting a directory only half read.
 //
-// A failed batch ends the walk when its answer cannot improve for the next user: a
-// 401/403 is the domain answering about the caller, a 400/404 a wrong document or a
-// wrong SKU, and a batch that could not be read at all an endpoint that does not
-// speak the protocol — none of those is about the user, so the rest of the directory
-// would pay the same answer. A 429 or a 5xx is the one failure worth asking again for
-// the next user, and a part that fails alone is one missing row, not a reason to skip
-// the rest of the directory.
+// What ends the walk is an answer about the *caller*, not about one SKU: a batch
+// whose parts were refused every one of them, or a batch the endpoint did not answer
+// at all (a refusal, a wrong document, a protocol it does not speak). None of those
+// can improve for the next user, so the rest of the directory would pay the same
+// answer. A failure the API asks to be retried with — a 429, the 403 a quota excess
+// arrives as, a 5xx — is worth asking again for the next user and does not end the
+// walk.
+//
+// A part that fails on its own is neither of those. The SKUs a tenant cannot own, the
+// product Google does not answer a `get` for, the sub-request a rate limit happens to
+// hit: those are answers about that SKU, and the batch that carries one still carries
+// the assignments of the same user in its other parts (see licenseAnswer). Ending the
+// walk at the first of them is what reported the licences of the first user of a
+// directory and nobody else's.
 func (d *reportData) probeLicenses() (int, error) {
 	d.loadUsers()
 	if d.usersErr != nil {
@@ -900,13 +907,18 @@ func (d *reportData) probeLicenses() (int, error) {
 			continue
 		}
 		probed++
-		count, err := d.probeLicensesOf(address)
-		rows += count
+		answer, err := d.probeLicensesOf(address)
+		rows += answer.Rows
+		if err == nil {
+			// Every batch was answered: only a refusal of every part of them is
+			// left to weigh.
+			err = answer.fault()
+		}
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
-			if apiStatus(err) < http.StatusTooManyRequests {
+			if !transientLicenseFailure(err) {
 				break
 			}
 		}
@@ -920,26 +932,33 @@ func (d *reportData) probeLicenses() (int, error) {
 
 // probeLicensesOf reads the assignments of one user: the catalogue is split into
 // batches of reportLicenseProbeBatch sub-requests, which is one batch for the
-// catalogue as it stands today.
-func (d *reportData) probeLicensesOf(address string) (int, error) {
-	rows := 0
+// catalogue as it stands today. The error is a batch that could not be answered at
+// all; the assignments the batches before it carried are still part of the answer.
+func (d *reportData) probeLicensesOf(address string) (licenseAnswer, error) {
+	answer := licenseAnswer{}
 	for start := 0; start < len(reportLicenseSkus); start += reportLicenseProbeBatch {
 		end := min(start+reportLicenseProbeBatch, len(reportLicenseSkus))
-		count, err := d.licenseProbeBatch(address, reportLicenseSkus[start:end])
-		rows += count
+		batch, err := d.licenseProbeBatch(address, reportLicenseSkus[start:end])
+		answer.Rows += batch.Rows
+		answer.Answered += batch.Answered
+		if answer.Err == nil {
+			answer.Err = batch.Err
+		}
 		if err != nil {
-			return rows, err
+			return answer, err
 		}
 	}
-	return rows, nil
+	return answer, nil
 }
 
 // licenseProbeBatch sends one batch of per-user licence lookups and records the
-// assignments it answers.
-func (d *reportData) licenseProbeBatch(address string, skus []reportLicenseSku) (int, error) {
+// assignments it answers. Its error is the batch that could not be answered at all —
+// a transport failure, a status of the endpoint, a document that is not a batch —
+// which is a different animal from a part that failed (see licenseAnswer).
+func (d *reportData) licenseProbeBatch(address string, skus []reportLicenseSku) (licenseAnswer, error) {
 	body, contentType, err := licenseProbeBody(address, skus)
 	if err != nil {
-		return 0, err
+		return licenseAnswer{}, err
 	}
 	ctx, cancel := context.WithTimeout(d.ctx, requestTimeout)
 	defer cancel()
@@ -953,53 +972,81 @@ func (d *reportData) licenseProbeBatch(address string, skus []reportLicenseSku) 
 		return d.client.Do(request)
 	})
 	if err != nil {
-		return 0, fmt.Errorf("google licensing api: the licence batch of %s failed: %w", address, err)
+		return licenseAnswer{}, fmt.Errorf("google licensing api: the licence batch of %s failed: %w", address, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode > 299 {
-		return 0, decodeError(response)
+		return licenseAnswer{}, decodeError(response)
 	}
 	answers, err := readBatchAnswers(response)
 	if err != nil {
-		return 0, err
+		return licenseAnswer{}, err
 	}
-	return d.acceptLicenseAnswers(address, answers)
+	return d.acceptLicenseAnswers(address, answers), nil
+}
+
+// licenseAnswer is what the parts of one batch of per-user licence lookups say: the
+// assignments it carried and how many of its parts answered a question about a SKU at
+// all.
+//
+// Telling those two numbers apart is what the fallback lives on. A part that failed is
+// a fact about *one SKU* — a product the tenant cannot own, a SKU Google does not
+// answer a `get` for, the sub-request a rate limit happened to hit — and the same
+// user's other assignments arrive in the other parts of the same answer. A batch whose
+// parts were refused every one of them is a fact about the *caller*: the next user of
+// the directory would be told the same, so that is where the walk stops.
+type licenseAnswer struct {
+	// Rows is the number of assignments the batch recorded.
+	Rows int
+	// Answered is the number of parts that answered a question about a SKU: an
+	// assignment, or the 400/404 that says this user does not hold it.
+	Answered int
+	// Err is the first part that failed. It says nothing about the caller while
+	// any part was answered, which is what fault filters out.
+	Err error
+}
+
+// fault answers the failure of a batch that was refused as a whole — not one part of
+// it — and nil when any part answered, whatever the others did.
+func (a licenseAnswer) fault() error {
+	if a.Answered > 0 {
+		return nil
+	}
+	return a.Err
 }
 
 // acceptLicenseAnswers records the assignments one batch answered.
 //
-// A part that carries no assignment — 404, and 400 for a SKU Google retired or one
-// the tenant cannot own — is the normal answer for the SKUs a user does not hold, so
-// it is not an error. Nothing is correlated by position or by Content-ID: a part
-// that carries a licence carries its own product id, SKU id and user id, so a
-// reordered answer cannot mislabel a row.
-func (d *reportData) acceptLicenseAnswers(address string, answers []batchAnswer) (int, error) {
-	rows := 0
-	var firstErr error
-	for _, answer := range answers {
+// Every part is read, whatever the parts before it said: a failure is an answer about
+// the SKU that part asked for, and abandoning the answer at the first of them lost
+// every part after it — the second licence of the very user the batch was about
+// included. A part that carries no assignment — 404, and 400 for a SKU Google retired
+// or the tenant cannot own — is the normal answer for the SKUs a user does not hold,
+// so it is neither a row nor a failure. Nothing is correlated by position or by
+// Content-ID: a part that carries a licence carries its own product id, SKU id and
+// user id, so a reordered answer cannot mislabel a row.
+func (d *reportData) acceptLicenseAnswers(address string, answers []batchAnswer) licenseAnswer {
+	answer := licenseAnswer{}
+	for _, part := range answers {
 		switch {
-		case answer.Status == http.StatusOK:
+		case part.Status == http.StatusOK:
 			var license reportLicense
-			if err := json.Unmarshal(answer.Body, &license); err != nil {
+			if err := json.Unmarshal(part.Body, &license); err != nil {
 				continue
 			}
+			answer.Answered++
 			if d.addLicense(license, address) {
-				rows++
+				answer.Rows++
 			}
-		case answer.Status == http.StatusUnauthorized || answer.Status == http.StatusForbidden:
-			// The domain refused the caller: the other parts carry the same
-			// answer, and so would every other user's batch.
-			return rows, batchRefusal(answer)
-		case answer.Status == http.StatusBadRequest || answer.Status == http.StatusNotFound:
-			// The normal answer for a SKU this user does not hold, and for one
-			// Google retired or the tenant cannot own: no assignment, no error.
-		case answer.Status >= http.StatusBadRequest:
-			if firstErr == nil {
-				firstErr = batchRefusal(answer)
+		case part.Status == http.StatusBadRequest || part.Status == http.StatusNotFound:
+			answer.Answered++
+		default:
+			if answer.Err == nil {
+				answer.Err = batchRefusal(part)
 			}
 		}
 	}
-	return rows, firstErr
+	return answer
 }
 
 // addLicense records one assignment in the per-user index and answers whether it was
@@ -1054,6 +1101,32 @@ func apiStatus(err error) int {
 		return 0
 	}
 	return apiErr.Status
+}
+
+// transientLicenseFailure reports whether a failed per-user licence lookup can
+// improve for the next user of the directory: the API asked for less traffic, or it
+// failed with a 5xx, which is not a decision about the caller. Every other failure —
+// a refusal, a document the endpoint does not speak, a context that ended — would be
+// the same answer for the rest of the directory, so the walk stops there.
+func transientLicenseFailure(err error) bool {
+	if throttled(err) {
+		return true
+	}
+	return apiStatus(err) >= http.StatusInternalServerError
+}
+
+// throttled reports whether err is the API asking for less traffic rather than
+// refusing the call: a 429, or the 403 a quota or rate excess arrives as, which
+// apiError tells apart by the reason the envelope carries. It is the same
+// classification providers.DoWithRetry acts on, asked once more here because a part
+// of a batch never travelled through the retry policy: the batch was accepted and
+// the part was refused inside it.
+func throttled(err error) bool {
+	var apiErr *apiError
+	if !asAPIError(err, &apiErr) {
+		return false
+	}
+	return apiErr.rateLimited()
 }
 
 // licensesOf answers the assignments of one user and the names to display for

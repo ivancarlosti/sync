@@ -176,7 +176,10 @@ func batchBoundary(contentType string) string {
 
 // batchRefusal turns a failed part of a batch into the same error shape a direct
 // call answers, so a section explains it the same way whichever call carried it:
-// the status and the reason of the envelope, which is what an operator reads.
+// the status, the code and the reason of the envelope, which is what an operator
+// reads — and, for a part, the reason is also what tells a genuine refusal apart
+// from the quota excess the per-user walk is allowed to keep asking through (see
+// throttled).
 //
 // The label is the licence one: every batch this provider sends is a call of the
 // Enterprise License Manager API, whose label client.go holds in its table.
@@ -186,12 +189,22 @@ func batchRefusal(answer batchAnswer) error {
 		Error struct {
 			Code    int    `json:"code"`
 			Message string `json:"message"`
+			Errors  []struct {
+				Reason  string `json:"reason"`
+				Message string `json:"message"`
+			} `json:"errors"`
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(answer.Body, &envelope); err == nil && envelope.Error.Message != "" {
 		refusal.Message = envelope.Error.Message
 		if envelope.Error.Code != 0 {
 			refusal.Code = envelope.Error.Code
+		}
+		if len(envelope.Error.Errors) > 0 {
+			refusal.Reason = envelope.Error.Errors[0].Reason
+			if envelope.Error.Errors[0].Message != "" {
+				refusal.Message = envelope.Error.Errors[0].Message
+			}
 		}
 		return refusal
 	}

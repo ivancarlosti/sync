@@ -185,12 +185,19 @@ users is 300 calls, not 23 100. What bounds it:
   directory that was only half read. A report that wants every user of a bigger
   directory needs GAM, not a fallback.
 * The batch answers `200` when the *batch* was accepted, not when its parts were:
-  the status of a part is what decides a row. `200` carries an assignment, `404`
+  the status of a part is what decides a row. `200` carries an assignment; `404`
   (and `400`, for a SKU Google retired or the tenant cannot own) means the user
-  simply does not hold that SKU and is not an error, and `401`/`403` in any part
-  means the domain refused the caller — the walk stops there instead of asking the
-  same question once per user. A `429`/`5xx` part or batch is the only failure
-  worth asking again for the next user.
+  simply does not hold that SKU and is not an error. Every part is read whatever
+  the parts before it answered: a failed part is an answer about *that SKU* — the
+  subscription the resold tenant never had, the sub-request a quota happened to hit
+  — and the rest of the answer still carries the same user's other assignments.
+* What ends the walk is an answer about the *caller*, not about a SKU: a batch whose
+  parts were refused **every one of them** (the domain refuses the per-user read as
+  well), or a batch the endpoint did not answer at all. A refusal that says "slow
+  down" — `429`, or the `403` a quota excess arrives as, told apart by
+  `errors[].reason` — is asked again for the next user instead, and a `5xx` too.
+  Reading the answer up to the first failed part instead is what reported the
+  licences of the first user of a directory and nobody else's.
 * Parts are **not** correlated by position or `Content-ID`: a part that carries a
   licence carries its own product id, SKU id and user id, so an answer Google
   reorders cannot mislabel a row. A part without a `userId` is attributed to the
