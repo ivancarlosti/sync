@@ -4,9 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"github.com/ivancarlosti/sync/internal/models"
 	"github.com/ivancarlosti/sync/internal/providers"
@@ -143,14 +148,14 @@ func TestReportStoreLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalling the rows: %v", err)
 	}
-	if err := store.AddReportSections(ctx, []models.ReportSectionData{{
+	if err := store.AddReportSection(ctx, &models.ReportSectionData{
 		ReportID: run.ID,
 		Section:  "users",
 		Columns:  string(columns),
 		Rows:     string(rows),
 		RowCount: 2,
-	}}); err != nil {
-		t.Fatalf("AddReportSections = %v", err)
+	}); err != nil {
+		t.Fatalf("AddReportSection = %v", err)
 	}
 
 	sections, err := store.ListReportSections(ctx, run.ID)
@@ -297,5 +302,235 @@ func TestReportStatusMapping(t *testing.T) {
 	}
 	if named := reportMessage(string(models.RunSuccess), 2, []string{"licenses"}); named != "completed" {
 		t.Errorf("reportMessage(success) = %q, want the plain success summary", named)
+	}
+}
+
+// TestReportSectionRowsColumnIsLongText pins the column that closed a report with
+// nothing in it: "Error 1406 (22001): Data too long for column 'rows'".
+//
+// A section is a whole table of the directory — team_members and planner_plans are
+// the ones that blow up first, because they hold one row per membership — and its
+// JSON document is measured in megabytes on a large tenant, while a MySQL TEXT
+// column stops at 65 535 bytes. The assertion reads the DDL GORM emits for MySQL,
+// which is the dialect the failure came from: SQLite, the database of these tests,
+// has no length limit and would never notice.
+func TestReportSectionRowsColumnIsLongText(t *testing.T) {
+	db, err := gorm.Open(mysql.New(mysql.Config{
+		// The dialector only has to translate the model into its DDL, so no server
+		// is contacted: the version probe (which would need one) is skipped.
+		DSN:                       "sync:sync@tcp(127.0.0.1:3306)/sync?charset=utf8mb4",
+		SkipInitializeWithVersion: true,
+	}), &gorm.Config{DisableAutomaticPing: true, Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		t.Fatalf("opening the MySQL dialect: %v", err)
+	}
+	stmt := &gorm.Statement{DB: db}
+	if err := stmt.Parse(&models.ReportSectionData{}); err != nil {
+		t.Fatalf("parsing the report section model: %v", err)
+	}
+	rows := stmt.Schema.LookUpField("Rows")
+	if rows == nil {
+		t.Fatal("the report section model has no Rows field")
+	}
+	if dataType := strings.ToLower(db.Migrator().FullDataTypeOf(rows).SQL); dataType != "longtext" {
+		t.Fatalf("rows column type = %q, want longtext (a TEXT column caps at 65535 bytes)", dataType)
+	}
+}
+
+// mustMarshal is the JSON document of value, for the comparisons of a test.
+func mustMarshal(t *testing.T, value any) []byte {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshalling %T: %v", value, err)
+	}
+	return encoded
+}
+
+// TestStoreTablesHoldsADocumentPastTheTextLimit stores a section bigger than a
+// MySQL TEXT column accepts and reads it back whole.
+func TestStoreTablesHoldsADocumentPastTheTextLimit(t *testing.T) {
+	store := newTestStore(t)
+	service := NewReportService(store, nil)
+	ctx := context.Background()
+	run := &models.DirectoryReport{
+		AccountID:    9,
+		AccountEmail: "admin@contoso.com",
+		Provider:     string(models.ProviderMicrosoft),
+		OrgID:        "tenant-9",
+		Status:       string(models.RunRunning),
+		Trigger:      string(models.TriggerManual),
+		StartedAt:    time.Date(2026, 11, 8, 8, 0, 0, 0, time.UTC),
+	}
+	if err := store.CreateReport(ctx, run); err != nil {
+		t.Fatalf("CreateReport = %v", err)
+	}
+
+	// Roughly 4 000 memberships of a big tenant: well past the 65 535 bytes of a
+	// TEXT column, which is what made the INSERT fail.
+	rows := make([]providers.ReportRow, 4000)
+	for i := range rows {
+		rows[i] = providers.ReportRow{
+			fmt.Sprintf("team-%02d", i%40),
+			fmt.Sprintf("member-%04d@contoso.com", i),
+			"Member",
+		}
+	}
+	tables := []providers.ReportTable{{
+		Section: providers.ReportSectionTeamMembers,
+		Columns: []providers.ReportColumn{
+			{Key: "team", Title: "Team"},
+			{Key: "member", Title: "Member"},
+			{Key: "role", Title: "Role"},
+		},
+		Rows: rows,
+	}}
+	stored := service.storeTables(ctx, run.ID, tables)
+	if len(stored.Missing) != 0 || stored.Sections != 1 || stored.Rows != len(rows) {
+		t.Fatalf("storeTables = %+v, want the section stored with its %d rows", stored, len(rows))
+	}
+	if stored.Truncated {
+		t.Error("storeTables reported a truncation, want the section stored whole")
+	}
+
+	section, err := store.GetReportSection(ctx, run.ID, string(providers.ReportSectionTeamMembers))
+	if err != nil {
+		t.Fatalf("GetReportSection = %v", err)
+	}
+	if len(section.Rows) <= 64*1024 {
+		t.Fatalf("stored rows document = %d bytes, want more than the 65535 bytes of a TEXT column", len(section.Rows))
+	}
+	if section.RowCount != len(rows) || section.Truncated {
+		t.Errorf("section row count = %d truncated = %v, want %d and false", section.RowCount, section.Truncated, len(rows))
+	}
+	var decoded []providers.ReportRow
+	if err := json.Unmarshal([]byte(section.Rows), &decoded); err != nil {
+		t.Fatalf("decoding the stored rows: %v", err)
+	}
+	if len(decoded) != len(rows) || decoded[len(rows)-1][1] != rows[len(rows)-1][1] {
+		t.Fatalf("decoded %d rows, want the %d stored rows with the last one intact", len(decoded), len(rows))
+	}
+}
+
+// TestStoreTablesKeepsTheSectionsAroundAFailingOne pins the blast radius of a
+// section the database refuses: the tables beside it are still stored, and the
+// refused one is named so the pass reports it like a section the provider could not
+// collect.
+//
+// The refusal is produced with a duplicate section name, which the unique index
+// idx_report_section rejects deterministically. Before, one INSERT carried every
+// table of the pass, so a single document the database refused (an oversized one
+// hitting the 65 535 bytes of a TEXT column) discarded all of them and closed the
+// report empty.
+func TestStoreTablesKeepsTheSectionsAroundAFailingOne(t *testing.T) {
+	store := newTestStore(t)
+	service := NewReportService(store, nil)
+	ctx := context.Background()
+	run := &models.DirectoryReport{
+		AccountID: 11,
+		Status:    string(models.RunRunning),
+		Provider:  string(models.ProviderGoogle),
+		Trigger:   string(models.TriggerManual),
+		StartedAt: time.Date(2026, 11, 8, 8, 30, 0, 0, time.UTC),
+	}
+	if err := store.CreateReport(ctx, run); err != nil {
+		t.Fatalf("CreateReport = %v", err)
+	}
+	columns := []providers.ReportColumn{{Key: "name", Title: "Name"}}
+	tables := []providers.ReportTable{
+		{Section: providers.ReportSectionDomains, Columns: columns, Rows: []providers.ReportRow{{"contoso.com"}}},
+		{Section: providers.ReportSectionUsers, Columns: columns, Rows: []providers.ReportRow{{"Ada"}}},
+		// The duplicate: refused by the unique index, as an oversized value was.
+		{Section: providers.ReportSectionDomains, Columns: columns, Rows: []providers.ReportRow{{"contoso.com"}}},
+		{Section: providers.ReportSectionGroups, Columns: columns, Rows: []providers.ReportRow{{"Engineering"}}},
+	}
+	stored := service.storeTables(ctx, run.ID, tables)
+	if stored.Sections != 3 || stored.Rows != 3 {
+		t.Errorf("storeTables = %+v, want the three sections it could write", stored)
+	}
+	if len(stored.Missing) != 1 || stored.Missing[0] != string(providers.ReportSectionDomains) {
+		t.Fatalf("missing = %v, want the refused section named", stored.Missing)
+	}
+	for _, name := range []providers.ReportSection{providers.ReportSectionUsers, providers.ReportSectionGroups} {
+		if _, err := store.GetReportSection(ctx, run.ID, string(name)); err != nil {
+			t.Errorf("GetReportSection(%s) = %v, want the table stored", name, err)
+		}
+	}
+}
+
+// TestBuildReportSectionTrimsAtTheDocumentBudget pins the size budget: a section
+// over it keeps the first rows that fit and is flagged truncated, and one that fits
+// keeps everything along with the flags it came with.
+func TestBuildReportSectionTrimsAtTheDocumentBudget(t *testing.T) {
+	rows := make([]providers.ReportRow, 300)
+	for i := range rows {
+		rows[i] = providers.ReportRow{
+			fmt.Sprintf("user-%03d", i),
+			fmt.Sprintf("user-%03d@contoso.com", i),
+			"Member",
+		}
+	}
+	columns := []providers.ReportColumn{
+		{Key: "display_name", Title: "Display name"},
+		{Key: "email", Title: "Email"},
+		{Key: "role", Title: "Role"},
+	}
+	budget := len(mustMarshal(t, rows)) / 3
+
+	record, err := buildReportSection(7, providers.ReportTable{
+		Section: providers.ReportSectionUsers,
+		Columns: columns,
+		Rows:    rows,
+	}, budget)
+	if err != nil {
+		t.Fatalf("buildReportSection = %v", err)
+	}
+	if !record.Truncated {
+		t.Error("truncated = false, want true for a section cut at the budget")
+	}
+	if len(record.Rows) > budget {
+		t.Errorf("stored document = %d bytes, want at most the %d byte budget", len(record.Rows), budget)
+	}
+	if record.RowCount <= 0 || record.RowCount >= len(rows) {
+		t.Fatalf("row count = %d, want a prefix of the %d rows", record.RowCount, len(rows))
+	}
+	var kept []providers.ReportRow
+	if err := json.Unmarshal([]byte(record.Rows), &kept); err != nil {
+		t.Fatalf("decoding the stored rows: %v", err)
+	}
+	if len(kept) != record.RowCount {
+		t.Errorf("decoded %d rows, want the %d counted", len(kept), record.RowCount)
+	}
+	// The cut is the longest prefix that fits: one more row would be over budget,
+	// which is what keeps the stored table as complete as the budget allows.
+	if more := mustMarshal(t, rows[:record.RowCount+1]); len(more) <= budget {
+		t.Errorf("rows up to %d = %d bytes, want more than the %d byte budget", record.RowCount+1, len(more), budget)
+	}
+
+	// A table under the budget is stored whole, and the truncation of the collector
+	// survives: the row cap and the byte budget are reported the same way.
+	fits, err := buildReportSection(7, providers.ReportTable{
+		Section:   providers.ReportSectionUsers,
+		Columns:   columns,
+		Rows:      rows[:2],
+		Truncated: true,
+	}, budget)
+	if err != nil {
+		t.Fatalf("buildReportSection(fits) = %v", err)
+	}
+	if fits.RowCount != 2 || !fits.Truncated || fits.Rows != string(mustMarshal(t, rows[:2])) {
+		t.Errorf("fits = %+v, want the two rows, the collector flag and the exact document", fits)
+	}
+
+	// A failed section keeps carrying its reason instead of rows.
+	failed, err := buildReportSection(7, providers.ReportTable{
+		Section: providers.ReportSectionLicenses,
+		Error:   "403 Forbidden",
+	}, budget)
+	if err != nil {
+		t.Fatalf("buildReportSection(failed) = %v", err)
+	}
+	if failed.Error != "403 Forbidden" || failed.RowCount != 0 {
+		t.Errorf("failed = %+v, want the reason and no rows", failed)
 	}
 }

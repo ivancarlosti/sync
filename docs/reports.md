@@ -179,7 +179,14 @@ POST /api/reports ──► reserve account ──► report row (running)
 * **Per-section failure.** A refused endpoint (a personal Microsoft account has
   no `/sites`, a Google grant without `apps.licensing` cannot list licences) sets
   that section's `error`; the report becomes `partial` and the rest of the tables
-  survive. The pass itself only fails on a cancelled or timed-out context.
+  survive. A section the **database** refuses (a value it cannot store, a
+  constraint it enforces) is reported exactly the same way: each section is stored
+  with its own INSERT, so the refusal costs that one table and not the pass. The
+  failed write is logged with the driver's error and the section (`storing a report
+  section failed`, with the report id, the section, the row count and the size of
+  the document), the closing line names it in `failed_sections` and the run's
+  `message` counts it. The pass itself only fails on a cancelled or timed-out
+  context, or when not one section could be stored at all.
   Every failed section is logged the moment the pass closes
   (`report section failed`, with the report id, the account, the section and the
   reason the API gave), the closing `directory report finished` line carries
@@ -192,6 +199,12 @@ POST /api/reports ──► reserve account ──► report row (running)
 * **Budgets.** 20 000 rows per section and 500 pages per walk; hitting either
   sets `truncated` on that section. The whole pass has a 15 minute budget
   (`ReportTimeout`) and ends as `timeout` instead of holding the slot forever.
+  A section's JSON document is capped at 8 MiB as well
+  (`services.reportSectionBytes`): the row cap is a budget of rows and not of
+  bytes, so 20 000 team memberships are a few megabytes while 20 000 domain rows
+  are a few hundred kilobytes. A document over the cap keeps the first rows that
+  fit — the walk order, so the table still starts where the directory does — and
+  the section is flagged `truncated` like one that hit the row cap, never dropped.
 * **Degradation, not failure.** A Google grant that predates the customer scope
   still produces an `organization` row (derived from the domain list), and a
   grant without `apps.licensing` still produces the `users` table with an empty

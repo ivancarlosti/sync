@@ -135,10 +135,18 @@ comma separated list of the sections requested), `status`/`trigger`/timing like
 sections that could not be collected) and `truncated`.
 
 `report_sections` — one stored table per report: `report_id` + `section`
-(`uniqueIndex idx_report_section`) and the `columns` and `rows` JSON documents
-(`TEXT`) with `row_count`, `truncated` and the `error` of a section that could not
-be collected. The columns are stored beside the rows, so a report written before a
-column was added keeps rendering with the header it was collected with.
+(`uniqueIndex idx_report_section`) and the `columns` (`TEXT`) and `rows`
+(`LONGTEXT`) JSON documents with `row_count`, `truncated` and the `error` of a
+section that could not be collected. The columns are stored beside the rows, so a
+report written before a column was added keeps rendering with the header it was
+collected with. `rows` is `LONGTEXT` because it is the document itself: a section
+is a whole table of the directory, and a `TEXT` column stops at 65 535 bytes, which
+made the INSERT of a large tenant fail with `Error 1406 (22001): Data too long for
+column 'rows'`. The service still bounds one document at 8 MiB
+(`services.reportSectionBytes`, see [reports.md](reports.md) §3) so a value never
+outgrows the packet a single statement may carry, and each section is written with
+its own INSERT, so a section the database refuses never takes the tables beside it
+down.
 
 `report_schedules` — the **opt-in** of the automatic report: one row per
 `account_id` (`uniqueIndex`) with `enabled`, `interval_minutes` (15 … 43200),
@@ -224,6 +232,10 @@ confirming).
 1. Stop the old container (or let the orchestrator replace it).
 2. Start the new image. `AutoMigrate` adds new tables/columns and indexes;
    existing data is preserved, and `Seed` never overwrites an edited setting.
+   A column whose declared type a release **widens** is altered in place (GORM
+   compares the declared type with the stored one, so `TEXT` → `LONGTEXT` on
+   `report_sections.rows` is a `MODIFY COLUMN` on the first boot after the
+   upgrade); the table is copied once, which is the only cost of that release.
 3. If a release changes the meaning of a stored value, the release notes say so:
    the schema is additive and historic rows are never rewritten silently. The one
    deliberate exception is the actor attribution of `audit_log_events`: a release

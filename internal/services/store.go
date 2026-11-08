@@ -701,13 +701,17 @@ func (s *Store) FinishReport(ctx context.Context, report *models.DirectoryReport
 	return nil
 }
 
-// AddReportSections appends the tables of a report in one batch.
-func (s *Store) AddReportSections(ctx context.Context, sections []models.ReportSectionData) error {
-	if len(sections) == 0 {
-		return nil
-	}
-	if err := s.db.WithContext(ctx).CreateInBatches(&sections, 20).Error; err != nil {
-		return fmt.Errorf("services: storing the report sections: %w", err)
+// AddReportSection appends one table to a report.
+//
+// One section per statement is deliberate. The rows document of a large tenant
+// is measured in megabytes, and several of them in one multi-row INSERT make the
+// database reject the statement as a whole: the caller could not tell which
+// table was too big and the ones that would have fit were lost with it. Writing
+// them one by one keeps the blast radius at the section that actually fails (the
+// service reports it like a section the provider could not collect).
+func (s *Store) AddReportSection(ctx context.Context, section *models.ReportSectionData) error {
+	if err := s.db.WithContext(ctx).Create(section).Error; err != nil {
+		return fmt.Errorf("services: storing the report section %s: %w", section.Section, err)
 	}
 	return nil
 }

@@ -40,7 +40,7 @@ func reportPath(id uint, suffix string) string {
 // seedReport stores one finished report with a users table of two rows.
 func seedReport(t *testing.T, store interface {
 	CreateReport(context.Context, *models.DirectoryReport) error
-	AddReportSections(context.Context, []models.ReportSectionData) error
+	AddReportSection(context.Context, *models.ReportSectionData) error
 }) *models.DirectoryReport {
 	t.Helper()
 	started := time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)
@@ -73,13 +73,13 @@ func seedReport(t *testing.T, store interface {
 	if err != nil {
 		t.Fatalf("encoding the rows: %v", err)
 	}
-	if err := store.AddReportSections(context.Background(), []models.ReportSectionData{{
+	if err := store.AddReportSection(context.Background(), &models.ReportSectionData{
 		ReportID: report.ID,
 		Section:  "users",
 		Columns:  string(columns),
 		Rows:     string(rows),
 		RowCount: 2,
-	}}); err != nil {
+	}); err != nil {
 		t.Fatalf("seeding the report section: %v", err)
 	}
 	return report

@@ -32,7 +32,23 @@ const (
 	DefaultReportInterval = 1440
 	// reportProgressEvery throttles the writes of the live counters.
 	reportProgressEvery = 2 * time.Second
+	// reportSectionBytes bounds the JSON document of one stored section.
+	//
+	// The providers cap a section at reportRowLimit rows, which is a row budget
+	// and not a size budget: the same 20 000 rows are a few hundred kilobytes of
+	// domains and several megabytes of team members. One document is one column
+	// of one INSERT, so its size is what has to stay below the packet a single
+	// statement may carry (16 MiB on a stock MariaDB, 64 MiB on MySQL 8) instead
+	// of turning a big tenant into "Packet too large". A section over the budget
+	// keeps its first rows and says it is truncated, exactly like one that hits
+	// the row cap of the collector; it is never dropped.
+	reportSectionBytes = 8 << 20
 )
+
+// errNoSectionStored closes a pass whose tables were collected but not one of them
+// could be written: a report that holds no table at all is a failure, not the
+// `partial` a single unusable section produces.
+var errNoSectionStored = errors.New("services: no section of the report could be stored")
 
 // ReportInput is the request that starts a directory report.
 type ReportInput struct {
@@ -286,7 +302,6 @@ func (s *ReportService) execute(passCtx context.Context, session ProviderSession
 
 	tables, collectErr := source.CollectReport(passCtx, session.Credentials, session.Tokens, sections, progress)
 	failed, truncated := 0, false
-	rows := 0
 	failedSections := make([]string, 0, 4)
 	for _, table := range tables {
 		if table.Failed() {
@@ -302,26 +317,31 @@ func (s *ReportService) execute(passCtx context.Context, session ProviderSession
 		if table.Truncated {
 			truncated = true
 		}
-		rows += len(table.Rows)
 	}
-	if len(tables) > 0 {
-		// A cancelled or timed-out pass still stores the sections it managed to
-		// collect: they are exact, and the status says the pass did not finish.
-		if err := s.storeTables(ctx, run.ID, tables); err != nil {
-			slog.Error("storing the report sections failed", "report", run.ID, "error", err)
-			if collectErr == nil {
-				collectErr = err
-			}
-		}
+	// A cancelled or timed-out pass still stores the sections it managed to
+	// collect: they are exact, and the status says the pass did not finish.
+	stored := s.storeTables(ctx, run.ID, tables)
+	// A table the database refused is a hole in the report, so it is reported
+	// like a section the provider could not fill; the tables around it survive
+	// because each one is written on its own.
+	for _, name := range stored.Missing {
+		failed++
+		failedSections = append(failedSections, name)
+	}
+	if len(tables) > 0 && len(stored.Missing) == len(tables) && collectErr == nil {
+		collectErr = errNoSectionStored
 	}
 
 	finished := s.now()
 	run.FinishedAt = &finished
 	run.DurationMS = finished.Sub(run.StartedAt).Milliseconds()
-	run.SectionCount = len(tables)
-	run.RowCount = rows
+	// The counters describe what the report holds, not what the pass walked: a
+	// section cut at the document budget holds fewer rows than it collected and
+	// the one the database refused holds none.
+	run.SectionCount = stored.Sections
+	run.RowCount = stored.Rows
 	run.Failed = failed
-	run.Truncated = truncated
+	run.Truncated = truncated || stored.Truncated
 	run.Status = string(reportStatus(passCtx, collectErr, failed))
 	if run.Message == "" {
 		run.Message = reportMessage(run.Status, failed, failedSections)
@@ -344,29 +364,112 @@ func (s *ReportService) execute(passCtx context.Context, session ProviderSession
 		"truncated", run.Truncated, "duration_ms", run.DurationMS)
 }
 
-// storeTables persists the collected tables as JSON documents.
-func (s *ReportService) storeTables(ctx context.Context, reportID uint, tables []providers.ReportTable) error {
-	records := make([]models.ReportSectionData, 0, len(tables))
+// storedTables is what persisting the tables of a pass produced.
+type storedTables struct {
+	// Sections is how many tables the report holds.
+	Sections int
+	// Rows is how many rows they add up to, which is fewer than the pass
+	// collected when a section was cut at reportSectionBytes.
+	Rows int
+	// Truncated is true when a section was cut at the document budget. The row
+	// cap of the collector is already carried by the collected table.
+	Truncated bool
+	// Missing names the sections the database refused, as opposed to the ones the
+	// provider could not collect.
+	Missing []string
+}
+
+// storeTables persists the collected tables, one INSERT per section.
+//
+// A section is written on its own because it is the unit the database either
+// accepts or refuses: its JSON document is a whole table of the directory, and a
+// multi-row INSERT of several of them was rejected as a whole — one oversized
+// table (a rows document past the 64 KiB of a TEXT column) discarded every table
+// of the pass and closed the report as failed with nothing in it. A refused
+// section is now reported to the caller and the tables around it survive.
+func (s *ReportService) storeTables(ctx context.Context, reportID uint, tables []providers.ReportTable) storedTables {
+	stored := storedTables{Missing: make([]string, 0, 2)}
 	for _, table := range tables {
-		columns, err := json.Marshal(table.Columns)
+		record, err := buildReportSection(reportID, table, reportSectionBytes)
 		if err != nil {
-			return fmt.Errorf("services: encoding the columns of %s: %w", table.Section, err)
+			slog.Error("encoding a report section failed",
+				"report", reportID, "section", table.Section, "error", err)
+			stored.Missing = append(stored.Missing, string(table.Section))
+			continue
 		}
-		rows, err := json.Marshal(table.Rows)
-		if err != nil {
-			return fmt.Errorf("services: encoding the rows of %s: %w", table.Section, err)
+		if err := s.store.AddReportSection(ctx, record); err != nil {
+			slog.Error("storing a report section failed", "report", reportID,
+				"section", table.Section, "rows", record.RowCount, "bytes", len(record.Rows), "error", err)
+			stored.Missing = append(stored.Missing, string(table.Section))
+			continue
 		}
-		records = append(records, models.ReportSectionData{
-			ReportID:  reportID,
-			Section:   string(table.Section),
-			Columns:   string(columns),
-			Rows:      string(rows),
-			RowCount:  len(table.Rows),
-			Truncated: table.Truncated,
-			Error:     table.Error,
-		})
+		if record.Truncated {
+			stored.Truncated = true
+		}
+		stored.Sections++
+		stored.Rows += record.RowCount
 	}
-	return s.store.AddReportSections(ctx, records)
+	return stored
+}
+
+// buildReportSection marshals one collected table into the row to store, cutting
+// the tail of the rows that would push the document past budget.
+//
+// The budget is measured on the encoded document rather than on an estimate of the
+// cells: what the database refuses is the bytes of the value, and a report row can
+// carry a long licence list or a long site URL. A section that has to be cut keeps
+// its first rows — the walk order, so the table still starts where the directory
+// does — and is flagged truncated, which is the same contract as the row cap of
+// the collector: everything up to the cut is exact and the tail is missing.
+func buildReportSection(reportID uint, table providers.ReportTable, budget int) (*models.ReportSectionData, error) {
+	columns, err := json.Marshal(table.Columns)
+	if err != nil {
+		return nil, fmt.Errorf("services: encoding the columns of %s: %w", table.Section, err)
+	}
+	rows, err := json.Marshal(table.Rows)
+	if err != nil {
+		return nil, fmt.Errorf("services: encoding the rows of %s: %w", table.Section, err)
+	}
+	kept := table.Rows
+	truncated := table.Truncated
+	if len(rows) > budget {
+		kept = fitReportRows(table.Rows, budget)
+		if rows, err = json.Marshal(kept); err != nil {
+			return nil, fmt.Errorf("services: encoding the rows of %s: %w", table.Section, err)
+		}
+		truncated = true
+	}
+	return &models.ReportSectionData{
+		ReportID:  reportID,
+		Section:   string(table.Section),
+		Columns:   string(columns),
+		Rows:      string(rows),
+		RowCount:  len(kept),
+		Truncated: truncated,
+		Error:     table.Error,
+	}, nil
+}
+
+// fitReportRows answers the longest prefix of rows whose JSON document fits the
+// budget.
+//
+// A prefix can only grow when a row is appended to it, so the row count that fits
+// is found by binary search over the slice: a few encodings instead of the tens of
+// thousands a row by row accumulation would cost. The caller only takes this path
+// when the whole document is already over the budget, which is the rare case of a
+// very large tenant.
+func fitReportRows(rows []providers.ReportRow, budget int) []providers.ReportRow {
+	low, high := 0, len(rows)
+	for low < high {
+		middle := (low + high + 1) / 2
+		encoded, err := json.Marshal(rows[:middle])
+		if err == nil && len(encoded) <= budget {
+			low = middle
+			continue
+		}
+		high = middle - 1
+	}
+	return rows[:low]
 }
 
 // reportStatus maps the outcome of a pass onto the lifecycle status of the row.

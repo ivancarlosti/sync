@@ -100,8 +100,19 @@ type ReportSectionData struct {
 	ReportID uint   `gorm:"index;uniqueIndex:idx_report_section" json:"report_id"`
 	Section  string `gorm:"size:64;uniqueIndex:idx_report_section" json:"section"`
 
+	// Columns is the header of the table: a handful of key/title pairs, which a
+	// TEXT column holds many times over.
 	Columns string `gorm:"type:text" json:"-"`
-	Rows    string `gorm:"type:text" json:"-"`
+	// Rows is the document itself and it is LONGTEXT, not TEXT, because one
+	// section holds a whole table of the directory (20 000 rows of the collector
+	// budget): the JSON of a large tenant is measured in megabytes, while a TEXT
+	// column stops at 65 535 bytes and fails the INSERT with "Error 1406: Data
+	// too long for column 'rows'". The document is still bounded
+	// (services.reportSectionBytes, 8 MiB) so one value never outgrows what a
+	// single statement may carry. Widen the column instead of cutting the table:
+	// a report is a document, and a table cut in the middle is worth less than a
+	// big one.
+	Rows string `gorm:"type:longtext" json:"-"`
 
 	RowCount int `json:"row_count"`
 	// Truncated is true when the table stopped at the row cap.
