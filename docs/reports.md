@@ -97,11 +97,16 @@ one place where a section pays for a column it does not own. A grant without
 `Domain.Read.All`, `Organization.Read.All`, `Sites.ReadWrite.All` — see
 [app-registration.md](app-registration.md)), with two product additions this
 release introduced: `Team.ReadBasic.All` + `TeamMember.Read.All` for the `teams`
-and `team_members` sections, and `Tasks.Read.All` for `planner_plans`
+and `team_members` sections, and `Tasks.Read` for `planner_plans`
 (`internal/providers/microsoft/permissions.go`). All three are directory scopes,
 so an administrator grants them tenant-wide, and none of them is offered to a
 personal Microsoft account (a team and a plan live in a directory, and an MSA has
 none — see [app-registration.md §1](app-registration.md#1-what-the-permissions-are-for)).
+`Tasks.Read` is the least privileged *delegated* scope of
+`GET /groups/{id}/planner/plans`; the `Tasks.Read.All` next to it in the Graph
+permission reference is an application permission only, so a delegated request
+cannot carry it (§1), and `Group.ReadWrite.All` — already granted at connection
+time — is the higher privileged delegated scope of the same read.
 
 An account connected **before** those scopes joined the always-on set keeps
 synchronising files exactly as it did; `GET /api/accounts` reports `teams` and

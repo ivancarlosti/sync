@@ -70,9 +70,20 @@ func (p *Provider) Permissions() []providers.Permission {
 		{Capability: providers.CapabilityTeams, Title: "teams", Scope: graphScope("Team.ReadBasic.All"), AdminConsent: true, Kinds: workAccounts},
 		{Capability: providers.CapabilityTeams, Title: "teams", Scope: graphScope("TeamMember.Read.All"), AdminConsent: true, Kinds: workAccounts},
 
-		// Planner plans hang off the group that owns them; Tasks.Read.All is the
-		// read scope of the planner API (the planner plans report section).
-		{Capability: providers.CapabilityPlanner, Title: "planner", Scope: graphScope("Tasks.Read.All"), AdminConsent: true, Kinds: workAccounts},
+		// Planner plans hang off the group that owns them, and the planner plans
+		// report section reads them per group (`GET /groups/{id}/planner/plans`).
+		//
+		// Tasks.Read is the delegated least privileged scope of that read. The
+		// `Tasks.Read.All` permission that looks like its directory-wide twin is
+		// an *application* permission only — it has no delegated counterpart, so
+		// listing it here makes Entra refuse the whole authorization request with
+		// AADSTS650053 ("asked for scope 'Tasks.Read.All' that doesn't exist on
+		// the resource 00000003-0000-0000-c000-000000000000"), even though the
+		// app registration carries it. The higher privileged delegated scopes of
+		// the same API (Group.Read.All, Group.ReadWrite.All, Tasks.ReadWrite)
+		// are already consented through the `groups` row above, so the section
+		// works with either scope in hand once the account reconnects.
+		{Capability: providers.CapabilityPlanner, Title: "planner", Scope: graphScope("Tasks.Read"), AdminConsent: true, Kinds: workAccounts},
 
 		{Capability: providers.CapabilityDomains, Title: "domains", Scope: graphScope("Domain.Read.All"), AdminConsent: true, Kinds: workAccounts},
 

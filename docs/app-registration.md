@@ -31,7 +31,7 @@ need.
 | `groups` — groups and distribution lists | `admin.directory.group` | `Group.ReadWrite.All`, `Directory.ReadWrite.All` |
 | `members` — group membership | `admin.directory.group.member` | `GroupMember.ReadWrite.All` |
 | `teams` — Teams teams and their members ([reports.md](reports.md)) | — | `Team.ReadBasic.All`, `TeamMember.Read.All` |
-| `planner` — Planner plans of the tenant's groups ([reports.md](reports.md)) | — | `Tasks.Read.All` |
+| `planner` — Planner plans of the tenant's groups ([reports.md](reports.md)) | — | `Tasks.Read` |
 | `domains` — verified domains and the tenant record | `admin.directory.domain.readonly`, `admin.directory.customer.readonly` | `Domain.Read.All` |
 | `orgunits` — organisational units | `admin.directory.orgunit` | `AdministrativeUnit.ReadWrite.All` |
 | `roles` — administrative role catalogue (read-only) | `admin.directory.rolemanagement.readonly` | `RoleManagement.Read.All` |
@@ -54,6 +54,18 @@ token* offers the upgrade. The collections that need a scope Sync does not
 request at all (Gmail delegates, YouTube CMS, Chrome management, per-user
 sign-in activity on the Microsoft side, Teams channels) are not offered until
 that row exists.
+
+Every Graph scope in that column is a **delegated** permission, because the table
+*is* the authorization request: Entra refuses a request that names a permission
+the resource exposes as an application permission only, and it refuses the whole
+request, not the one scope (`AADSTS650053`, *"asked for scope 'X' that doesn't
+exist on the resource 00000003-0000-0000-c000-000000000000"*). That is why the
+`planner` row asks for `Tasks.Read` rather than the `Tasks.Read.All` next to it in
+the [permission reference](https://learn.microsoft.com/en-us/graph/permissions-reference),
+which exists in the *Application* column alone. The app-only permissions the
+product does need (`ActivityFeed.Read`, §3.4) are therefore not in this table:
+they are granted in the console and used with a client-credentials token, never
+requested in a consent URL.
 
 `GET /api/accounts` reports, per connected account, which of these capabilities
 the *stored* grant satisfies (`capabilities`) and which the current release asks
@@ -326,14 +338,17 @@ File synchronisation keeps working the whole time: the missing capabilities only
 affect the operations that need them, and the engine never calls one.
 
 This release adds one such upgrade on the Microsoft side: `teams` and `planner`
-(`Team.ReadBasic.All`, `TeamMember.Read.All`, `Tasks.Read.All`, §1). The app
+(`Team.ReadBasic.All`, `TeamMember.Read.All`, `Tasks.Read`, §1). The app
 registration has to carry them before the reconnect is useful — Entra refuses to
 authorise a scope the registration does not declare (`AADSTS65001`) — so the order
-is: add the three delegated permissions in the console, *Grant admin consent*, then
-reconnect. Connections that skip it keep syncing files and simply do not offer the
-Teams and Planner report sections. Google needs no equivalent step for
-`shared_drive_members`: it rides on the `drive` scope every connection already
-grants.
+is: add the three permissions under **Delegated permissions** in the console,
+*Grant admin consent*, then reconnect. They must be the delegated rows: Entra
+lists a `Tasks.Read.All` too, but as an **application** permission, and asking for
+it in the authorization request fails the whole flow with `AADSTS650053` (§6) even
+though the app registration carries it. Connections that skip it keep syncing
+files and simply do not offer the Teams and Planner report sections. Google needs
+no equivalent step for `shared_drive_members`: it rides on the `drive` scope every
+connection already grants.
 
 The caveat of the Microsoft table belongs here too: a permission an account can
 never hold is **not** a missing permission. On a personal Microsoft account the
@@ -358,6 +373,7 @@ capability.
 | Google: directory call fails with a permission error right after connecting | the API is not enabled in the project, or the account is not an administrator | enable Admin SDK / License Manager, connect an administrator |
 | Google: the consent screen demands verification | the app is External and the scopes are sensitive | switch to Internal, or publish/verify the app |
 | Microsoft: `AADSTS65001` / `consent_required` | admin consent was never granted (or was granted to another client id) | use the consent step of the guide; check that the client id still matches |
+| Microsoft: `AADSTS650053` — *"The application asked for scope 'Tasks.Read.All' that doesn't exist on the resource `00000003-0000-0000-c000-000000000000`"*, although the registration lists it | the permission was added under **Application permissions**, and the authorization request asks for it as a delegated scope. An application permission has no delegated counterpart, so Entra refuses the whole request — the grant on the app registration does not help | add the delegated row instead (`Tasks.Read` for `planner`, §1) under **Delegated permissions**, *Grant admin consent*, then reconnect. Remove the application permission unless an app-only call needs it (§3.4) |
 | Microsoft: `AF10001` / `permission set ()` on the activity feed | `ActivityFeed.Read` was granted to the app but never consented in **this** directory (the grant is per tenant), or the app registration lost the permission | redo §3.4 for that directory; the Audit Logs screen names the stream that failed |
 | Microsoft: the activity feed subscribes but stores nothing | unified audit logging is off in the tenant, so the content listings are empty | turn it on in the Purview compliance portal (Audit > Audit log) and wait for the first records |
 | Microsoft: Graph answers `403 Forbidden` after consent | the connected account lacks the directory role | connect an administrator, or assign the role |

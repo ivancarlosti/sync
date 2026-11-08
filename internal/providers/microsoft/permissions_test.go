@@ -28,7 +28,7 @@ var wantScopes = []string{
 	"https://graph.microsoft.com/GroupMember.ReadWrite.All",
 	"https://graph.microsoft.com/Team.ReadBasic.All",
 	"https://graph.microsoft.com/TeamMember.Read.All",
-	"https://graph.microsoft.com/Tasks.Read.All",
+	"https://graph.microsoft.com/Tasks.Read",
 	"https://graph.microsoft.com/Domain.Read.All",
 	"https://graph.microsoft.com/AdministrativeUnit.ReadWrite.All",
 	"https://graph.microsoft.com/RoleManagement.Read.All",
@@ -49,8 +49,36 @@ func TestScopesMatchThePermissionTable(t *testing.T) {
 	}
 }
 
-// TestPermissionsAreCompleteAndUnique protects the invariants the guide and the
-// capability badges rely on.
+// TestScopesAreDelegatedPermissions pins the invariant the authorization request
+// depends on: one request carries every entry of the table, and Entra refuses a
+// request that names a permission the resource exposes as an *application*
+// permission only — a permission with no delegated counterpart. The failure is
+// the whole flow, not the single scope: `AADSTS650053`, "the application asked
+// for scope 'Tasks.Read.All' that doesn't exist on the resource
+// 00000003-0000-0000-c000-000000000000", even with the permission granted on the
+// app registration.
+//
+// applicationOnlyScopes are the Graph permissions this product needs in their
+// app-only shape (or needed before that trap was found). They belong to the
+// client-credentials calls — `ActivityFeed.Read` on manage.office.com, see
+// unified.go and docs/app-registration.md §3.4 — and never to the table above.
+var applicationOnlyScopes = []string{
+	"Tasks.Read.All",
+	"Tasks.ReadWrite.All",
+	"ActivityFeed.Read",
+}
+
+func TestScopesAreDelegatedPermissions(t *testing.T) {
+	for _, permission := range New().Permissions() {
+		name := strings.TrimPrefix(permission.Scope, graphResource)
+		for _, applicationOnly := range applicationOnlyScopes {
+			if strings.EqualFold(name, applicationOnly) {
+				t.Fatalf("scope %q is an application permission: the authorization request cannot carry it (AADSTS650053)", permission.Scope)
+			}
+		}
+	}
+}
+
 func TestPermissionsAreCompleteAndUnique(t *testing.T) {
 	permissions := New().Permissions()
 	seen := map[string]bool{}
