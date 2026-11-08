@@ -5,12 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ivancarlosti/sync/internal/models"
 	"github.com/ivancarlosti/sync/internal/providers"
@@ -46,6 +48,14 @@ const (
 	// catalogue fits in one, which is what makes the per-user lookup one call per
 	// user rather than one per user and SKU.
 	reportLicenseProbeBatch = 100
+	// reportLicenseProbeAttempts is how many times the catalogue of one user is
+	// asked while the parts of the answer keep asking to be asked again — a 429,
+	// the 403 a quota excess arrives as, a 5xx. A part that asked to be asked
+	// again did not answer the question about its SKU, and reading it as "this
+	// user holds nothing" is what reported a licence column of zeroes for users
+	// who hold a paid edition; asking the same batch twice more is cheap next to
+	// that.
+	reportLicenseProbeAttempts = 3
 	// reportRolePageSize is the largest page roles.list accepts. The role
 	// catalogue caps maxResults at 100 — unlike roleassignments.list below,
 	// which accepts 200 — and answers anything above it with a 400
@@ -394,6 +404,13 @@ type reportData struct {
 	licensesErr    error
 	licenseRows    int
 	licenseCut     bool
+	// licensesKnown holds the users whose licence read is complete, filled by the
+	// per-user fallback (see probeLicenses). A nil map means no fallback ran —
+	// the catalogue answered, so the section holds every user's licences. The
+	// distinction is what keeps a user the probe could not finish (throttled,
+	// never reached, past the cap) from being reported as a user with no
+	// licences at all.
+	licensesKnown map[string]bool
 
 	// account is the address of the account the connection was made with: the
 	// identity the analytics and youtube sections report on, read once from the
@@ -845,6 +862,10 @@ func (d *reportData) loadLicenses() {
 // the same way (`Info_User_Licenses` calls `getUserLicenses`, which reads every SKU
 // of its catalogue per user), and this is that walk: one batch per user, so the
 // cost is one call per user of the directory rather than one per user and SKU.
+//
+// A read that covered only part of the directory is not an error here: the section
+// keeps what it answered and is marked truncated by the walk (see probeLicenses), and
+// the users it could not read keep an empty licence cell rather than a zero.
 func (d *reportData) explainRefusal(refusal error) error {
 	rows, err := d.probeLicenses()
 	d.licenseRows += rows
@@ -861,6 +882,12 @@ func (d *reportData) explainRefusal(refusal error) error {
 	}
 	return fmt.Errorf("%s, so the licenses column of the users section stays empty", reason)
 }
+
+// licenseProbeBackoff is the first pause between two attempts of a throttled
+// per-user licence lookup; it doubles on every attempt, and the attempt count is what
+// bounds it. It is a variable so a test can shrink the wait, the same way retryPolicy
+// is.
+var licenseProbeBackoff = 2 * time.Second
 
 // probeLicenses reads the licences of every user, one batch per user, and answers
 // how many assignments it collected along with the first error that stopped it.
@@ -884,13 +911,22 @@ func (d *reportData) explainRefusal(refusal error) error {
 // the assignments of the same user in its other parts (see licenseAnswer). Ending the
 // walk at the first of them is what reported the licences of the first user of a
 // directory and nobody else's.
+//
+// A throttled part is the one failure that is neither: it answered *nothing* about its
+// SKU, and while it is one part of a batch it is also the whole question for that SKU.
+// That is why the batch of a user is asked again while it asks to be (probeLicensesOf),
+// and why a user whose parts never answered is reported as unknown rather than as a user
+// with no licences: the cells stay blank (licensesOf) and the section is marked
+// truncated. Counting that silence as "no licence" is what reported 15 users of a paid
+// tenant with a licence count of zero.
 func (d *reportData) probeLicenses() (int, error) {
 	d.loadUsers()
 	if d.usersErr != nil {
 		return 0, fmt.Errorf("the directory could not be listed (%w)", d.usersErr)
 	}
-	rows, probed := 0, 0
-	var firstErr error
+	d.licensesKnown = make(map[string]bool, len(d.users))
+	rows, probed, unknown, refused := 0, 0, 0, 0
+	var firstErr, unknownErr, refusedErr error
 	for _, user := range d.users {
 		if err := d.ctx.Err(); err != nil {
 			if firstErr == nil {
@@ -914,6 +950,30 @@ func (d *reportData) probeLicenses() (int, error) {
 			// left to weigh.
 			err = answer.fault()
 		}
+		if err == nil && !answer.open() {
+			d.licensesKnown[strings.ToLower(address)] = true
+		} else {
+			// The read of this user's licences is open: a part that kept asking
+			// to be asked again, or a batch that answered nothing at all.
+			unknown++
+			d.licenseCut = true
+			if unknownErr == nil {
+				for _, reason := range []error{answer.RetryErr, answer.Err, err} {
+					if reason != nil {
+						unknownErr = reason
+						break
+					}
+				}
+			}
+		}
+		if answer.Refused > 0 {
+			// Not open, but not the whole catalogue either: the rows are exact and
+			// the log says which part of the API refused.
+			refused++
+			if refusedErr == nil {
+				refusedErr = answer.Err
+			}
+		}
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -927,28 +987,96 @@ func (d *reportData) probeLicenses() (int, error) {
 			Rows:    d.licenseRows + rows,
 		})
 	}
+	if rest := len(d.users) - probed; rest > 0 {
+		// The walk stopped — a batch the endpoint refused, a pass that was cancelled —
+		// or the probe cap bit: every user after that one is unread as well, and the
+		// log line should say so rather than count only the user it stopped on.
+		unknown += rest
+	}
+	if unknown > 0 {
+		// A report is read for what it says about a directory, so what it could not
+		// read is worth a line of its own — and the reason is the difference between
+		// a caller that was over its quota (the batch answers on another run) and a
+		// walk that was stopped.
+		slog.Warn("the per-user licence lookup left users unread",
+			"users", unknown, "probed", probed, "reason", unknownErr)
+	}
+	if refused > 0 {
+		// The parts a domain refuses are answers about SKUs, but a report whose
+		// licence inventory rests on them is worth saying out loud: it is what a
+		// resold tenant's administrator cannot see through this API, and the reason
+		// is the one to hand to Google.
+		slog.Warn("the per-user licence lookup was refused part of the catalogue",
+			"users", refused, "probed", probed, "reason", refusedErr)
+	}
 	return rows, firstErr
 }
 
-// probeLicensesOf reads the assignments of one user: the catalogue is split into
-// batches of reportLicenseProbeBatch sub-requests, which is one batch for the
-// catalogue as it stands today. The error is a batch that could not be answered at
-// all; the assignments the batches before it carried are still part of the answer.
+// probeLicensesOf reads the assignments of one user, asking the catalogue again while
+// the parts of the answer keep asking to be asked again (reportLicenseProbeAttempts).
+// The second asking is what tells a throttled SKU from a licence the user does not
+// hold: only the first of the two answers again, and a part that keeps refusing is the
+// answer. The assignments a retry repeats are dropped by addLicense, so the rows of a
+// user are counted once whatever the number of attempts.
 func (d *reportData) probeLicensesOf(address string) (licenseAnswer, error) {
+	answer := licenseAnswer{}
+	for attempt := 1; ; attempt++ {
+		batch, err := d.probeLicensesOnce(address)
+		answer.merge(batch)
+		if err != nil {
+			return answer, err
+		}
+		if answer.Retried == 0 || attempt >= reportLicenseProbeAttempts {
+			return answer, nil
+		}
+		if err := licenseProbeWait(d.ctx, licenseProbeBackoff<<(attempt-1)); err != nil {
+			return answer, err
+		}
+	}
+}
+
+// probeLicensesOnce asks the whole catalogue of one user: batches of
+// reportLicenseProbeBatch sub-requests, which is one batch for the catalogue as it
+// stands today. The error is a batch that could not be answered at all — a transport
+// failure, a status of the endpoint, a document that is not a batch; the assignments the
+// batches before it carried are still part of the answer.
+func (d *reportData) probeLicensesOnce(address string) (licenseAnswer, error) {
 	answer := licenseAnswer{}
 	for start := 0; start < len(reportLicenseSkus); start += reportLicenseProbeBatch {
 		end := min(start+reportLicenseProbeBatch, len(reportLicenseSkus))
 		batch, err := d.licenseProbeBatch(address, reportLicenseSkus[start:end])
 		answer.Rows += batch.Rows
 		answer.Answered += batch.Answered
+		answer.Retried += batch.Retried
+		answer.Refused += batch.Refused
 		if answer.Err == nil {
 			answer.Err = batch.Err
+		}
+		if answer.RetryErr == nil {
+			answer.RetryErr = batch.RetryErr
 		}
 		if err != nil {
 			return answer, err
 		}
 	}
 	return answer, nil
+}
+
+// licenseProbeWait waits between two attempts of a throttled lookup and answers the
+// error of a pass that was cancelled or timed out while it waited, so a run that is
+// being stopped does not keep a goroutine asleep.
+func licenseProbeWait(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // licenseProbeBatch sends one batch of per-user licence lookups and records the
@@ -986,24 +1114,37 @@ func (d *reportData) licenseProbeBatch(address string, skus []reportLicenseSku) 
 }
 
 // licenseAnswer is what the parts of one batch of per-user licence lookups say: the
-// assignments it carried and how many of its parts answered a question about a SKU at
-// all.
+// assignments it carried, how many of its parts answered a question about a SKU at all,
+// and how many asked to be asked again.
 //
-// Telling those two numbers apart is what the fallback lives on. A part that failed is
-// a fact about *one SKU* — a product the tenant cannot own, a SKU Google does not
-// answer a `get` for, the sub-request a rate limit happened to hit — and the same
-// user's other assignments arrive in the other parts of the same answer. A batch whose
-// parts were refused every one of them is a fact about the *caller*: the next user of
-// the directory would be told the same, so that is where the walk stops.
+// Telling those numbers apart is what the fallback lives on. A part that failed is a fact
+// about *one SKU* — a product the tenant cannot own, a SKU Google does not answer a `get`
+// for, the sub-request a rate limit happens to hit — and the same user's other assignments
+// arrive in the other parts of the same answer. A batch whose parts were refused every one
+// of them is a fact about the *caller*: the next user of the directory would be told the
+// same, so that is where the walk stops.
+//
+// A part that asked to be asked again (429, the 403 a quota excess arrives as, a 5xx) is
+// neither: it said nothing about its SKU, so the user's licence set is still open and the
+// batch is worth asking again (probeLicensesOf).
 type licenseAnswer struct {
 	// Rows is the number of assignments the batch recorded.
 	Rows int
 	// Answered is the number of parts that answered a question about a SKU: an
 	// assignment, or the 400/404 that says this user does not hold it.
 	Answered int
-	// Err is the first part that failed. It says nothing about the caller while
-	// any part was answered, which is what fault filters out.
+	// Retried is the number of parts that asked to be asked again and therefore
+	// answered nothing.
+	Retried int
+	// Refused is the number of parts a decision was made against, which is an
+	// answer about the SKU that part asked for.
+	Refused int
+	// Err is the first refused part. It says nothing about the caller while any
+	// part was answered, which is what fault filters out.
 	Err error
+	// RetryErr is the first part that asked to be asked again, and what a walk over
+	// a caller that is over its quota keeps asking through.
+	RetryErr error
 }
 
 // fault answers the failure of a batch that was refused as a whole — not one part of
@@ -1012,7 +1153,34 @@ func (a licenseAnswer) fault() error {
 	if a.Answered > 0 {
 		return nil
 	}
-	return a.Err
+	if a.Err != nil {
+		return a.Err
+	}
+	return a.RetryErr
+}
+
+// open reports whether the answer left a question about a SKU unanswered: a part that
+// asked to be asked again said nothing about its SKU, so the licence set of that user is
+// still open and the cells of the report stay blank rather than claiming the user holds
+// nothing (see licensesOf).
+//
+// A part that was *refused* is not open. It is an answer about that SKU — the subscription
+// a resold tenant never had, the product Google does not answer a `get` for — which is the
+// reading fault() and transientLicenseFailure already act on, and the assignments the same
+// user holds in the other parts of the answer are exact.
+func (a licenseAnswer) open() bool {
+	return a.Retried > 0
+}
+
+// merge folds a later attempt of the same user into the answer of the first one. The
+// assignments and the answered parts accumulate — addLicense drops an assignment the
+// index already holds, so a repeat is not a second row — while what is *left* unanswered
+// comes from the attempt that was just made, which is the only one still in force.
+func (a *licenseAnswer) merge(other licenseAnswer) {
+	a.Rows += other.Rows
+	a.Answered += other.Answered
+	a.Retried, a.Refused = other.Retried, other.Refused
+	a.Err, a.RetryErr = other.Err, other.RetryErr
 }
 
 // acceptLicenseAnswers records the assignments one batch answered.
@@ -1025,6 +1193,12 @@ func (a licenseAnswer) fault() error {
 // so it is neither a row nor a failure. Nothing is correlated by position or by
 // Content-ID: a part that carries a licence carries its own product id, SKU id and
 // user id, so a reordered answer cannot mislabel a row.
+//
+// A part that failed is then told apart by what it asks of the caller, which is the same
+// classification the walk of the next user is made on (transientLicenseFailure): "slow
+// down" and a 5xx are retried (Retried), every other refusal is an answer about the SKU
+// (Refused). A throttled part is the one failure that answered *nothing*, so it is the one
+// the caller must not read as "this user holds no such licence".
 func (d *reportData) acceptLicenseAnswers(address string, answers []batchAnswer) licenseAnswer {
 	answer := licenseAnswer{}
 	for _, part := range answers {
@@ -1041,8 +1215,17 @@ func (d *reportData) acceptLicenseAnswers(address string, answers []batchAnswer)
 		case part.Status == http.StatusBadRequest || part.Status == http.StatusNotFound:
 			answer.Answered++
 		default:
+			refusal := batchRefusal(part)
+			if transientLicenseFailure(refusal) {
+				answer.Retried++
+				if answer.RetryErr == nil {
+					answer.RetryErr = refusal
+				}
+				continue
+			}
+			answer.Refused++
 			if answer.Err == nil {
-				answer.Err = batchRefusal(part)
+				answer.Err = refusal
 			}
 		}
 	}
@@ -1052,6 +1235,10 @@ func (d *reportData) acceptLicenseAnswers(address string, answers []batchAnswer)
 // addLicense records one assignment in the per-user index and answers whether it was
 // recorded: a row without a user cannot be attributed, and the address the per-user
 // read was asked with stands in for the id it may omit.
+//
+// An assignment the index already holds is not recorded twice. A batch that asked to be
+// asked again answers the SKUs of the attempt before it as well, and a licence is held
+// once: the retry of a user must not double the rows of the section.
 func (d *reportData) addLicense(license reportLicense, address string) bool {
 	if textCell(license.UserID) == "" {
 		license.UserID = address
@@ -1062,6 +1249,11 @@ func (d *reportData) addLicense(license reportLicense, address string) bool {
 	}
 	if textCell(license.SkuName) == "" {
 		license.SkuName = licenseSkuName(license.SkuID)
+	}
+	for _, existing := range d.licenses[key] {
+		if existing.ProductID == license.ProductID && existing.SkuID == license.SkuID {
+			return false
+		}
 	}
 	d.licenses[key] = append(d.licenses[key], license)
 	return true
@@ -1129,11 +1321,19 @@ func throttled(err error) bool {
 	return apiErr.rateLimited()
 }
 
-// licensesOf answers the assignments of one user and the names to display for
-// them, preferring the readable sku name over the opaque id.
-func (d *reportData) licensesOf(user reportUser) (int, []string) {
-	assignments := d.licenses[strings.ToLower(textCell(user.PrimaryEmail))]
-	names := make([]string, 0, len(assignments))
+// licensesOf answers the licence cells of one user: the assignments the report holds and
+// the names to display for them (the readable SKU name over the opaque id), and whether
+// that is the whole answer.
+//
+// A user whose lookup is open — a part that kept asking to be asked again, a batch that
+// answered nothing, a user the walk never reached because it stopped or because the probe
+// cap bit — has no known licence set at all. The caller renders that as an empty cell: a
+// count of zero would say the user holds nothing, which is the claim this fallback cannot
+// make about a read it never got.
+func (d *reportData) licensesOf(user reportUser) (count int, names []string, known bool) {
+	key := strings.ToLower(textCell(user.PrimaryEmail))
+	assignments := d.licenses[key]
+	names = make([]string, 0, len(assignments))
 	for _, assignment := range assignments {
 		name := textCell(assignment.SkuName)
 		if name == "" {
@@ -1147,7 +1347,17 @@ func (d *reportData) licensesOf(user reportUser) (int, []string) {
 		}
 		names = append(names, name)
 	}
-	return len(assignments), names
+	return len(assignments), names, d.licensesKnownFor(key)
+}
+
+// licensesKnownFor reports whether the licence read of a user is complete. A nil index
+// means the catalogue answered and the section holds every user's assignments; otherwise
+// only the users the fallback finished are known.
+func (d *reportData) licensesKnownFor(key string) bool {
+	if d.licensesKnown == nil {
+		return true
+	}
+	return d.licensesKnown[key]
 }
 
 // organizationTable builds the organization section: the domain record itself,
@@ -1279,7 +1489,13 @@ func (d *reportData) usersTable(suspendedOnly bool) providers.ReportTable {
 		if suspendedOnly && !user.Suspended {
 			continue
 		}
-		count, names := d.licensesOf(user)
+		count, names, known := d.licensesOf(user)
+		licensesCell, countCell := strings.Join(names, "; "), strconv.Itoa(count)
+		if !known {
+			// The read of this user's licences did not answer: an empty cell says
+			// "not known", where a zero would say "holds nothing" (see licensesOf).
+			licensesCell, countCell = "", ""
+		}
 		table.Rows = append(table.Rows, providers.ReportRow{
 			textCell(user.PrimaryEmail),
 			textCell(user.Name.FullName),
@@ -1295,8 +1511,8 @@ func (d *reportData) usersTable(suspendedOnly bool) providers.ReportTable {
 			textCell(user.LastLoginTime),
 			textCell(user.CreationTime),
 			textCell(user.OrgUnitPath),
-			strings.Join(names, "; "),
-			strconv.Itoa(count),
+			textCell(licensesCell),
+			textCell(countCell),
 			textCell(user.CustomerID),
 			textCell(user.ID),
 		})

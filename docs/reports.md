@@ -198,6 +198,24 @@ users is 300 calls, not 23 100. What bounds it:
   `errors[].reason` — is asked again for the next user instead, and a `5xx` too.
   Reading the answer up to the first failed part instead is what reported the
   licences of the first user of a directory and nobody else's.
+* A part that says "slow down" is the one failure that answered **nothing**, so it is
+  not read as "this user holds no such licence": the batch of that user is asked again,
+  up to `reportLicenseProbeAttempts` (3) with a doubling pause (`licenseProbeBackoff`,
+  2 s) between attempts, and an assignment a retry repeats is not a second row. A user
+  whose parts never answer keeps **no known licence set**: the `licenses` and
+  `license count` cells of that user stay *empty* instead of reading `0`, both tables
+  are flagged `truncated`, and one `slog.Warn` line (`the per-user licence lookup left
+  users unread`, with the number of users and the reason the API gave) says so in the
+  log. A cell that says `0` is a user the API answered, and a blank one is a user it
+  did not — a report of a throttled tenant that spelled the difference as `0` is what
+  claimed 15 users of a paid domain hold no licence.
+* A part a domain *refuses* (`403 subscriptionNotFound`, the subscription a resold
+  tenant never had) stays what it always was: an answer about that SKU, so the user's
+  other assignments are exact and the cells stay filled. It is only reported, by a
+  second `slog.Warn` line (`the per-user licence lookup was refused part of the
+  catalogue`) carrying the reason — that reason is the one to hand to Google, and it
+  is the difference between a licence this API does not show and a caller that was
+  simply too fast.
 * Parts are **not** correlated by position or `Content-ID`: a part that carries a
   licence carries its own product id, SKU id and user id, so an answer Google
   reorders cannot mislabel a row. A part without a `userId` is attributed to the

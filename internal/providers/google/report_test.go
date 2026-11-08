@@ -1141,12 +1141,197 @@ func TestLicensesKeepReadingThePartsAfterARefusedOne(t *testing.T) {
 	}
 }
 
+// probeAddress answers the user a batch of licence lookups is about: every part of one
+// batch asks for the same address, which is what lets a test count the attempts of a user
+// rather than of the walk.
+func probeAddress(subRequests []string) string {
+	for _, line := range subRequests {
+		index := strings.LastIndex(line, "/user/")
+		if index < 0 {
+			continue
+		}
+		address := strings.TrimSpace(line[index+len("/user/"):])
+		if space := strings.IndexByte(address, ' '); space >= 0 {
+			address = address[:space]
+		}
+		return address
+	}
+	return ""
+}
+
+// TestLicensesAskAThrottledPartAgain pins what a throttled part must cost a report: it
+// answered nothing about its SKU, so the batch of that user is asked again — and the
+// licence she holds lands in the report instead of being read as "holds nothing".
+//
+// Ada's first attempt is throttled on the one SKU she holds; her second answers it. A walk
+// that took the 429 for an answer reported her with a licence count of zero, which is the
+// shape 15 users of a paid tenant came back in (report-22): the report said they hold no
+// licence at all.
+func TestLicensesAskAThrottledPartAgain(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	pause := licenseProbeBackoff
+	licenseProbeBackoff = 0
+	t.Cleanup(func() { licenseProbeBackoff = pause })
+	transport.statusFor = func(request *http.Request) int {
+		if strings.HasPrefix(request.URL.Path, "/apps/licensing/") {
+			return http.StatusForbidden
+		}
+		return http.StatusOK
+	}
+	attempts := map[string]int{}
+	transport.batch = func(subRequests []string) []batchAnswer {
+		address := probeAddress(subRequests)
+		attempts[address]++
+		answers := make([]batchAnswer, len(subRequests))
+		for index, line := range subRequests {
+			answers[index] = batchAnswer{Status: http.StatusNotFound,
+				Body: []byte(`{"error":{"code":404,"message":"Not Found"}}`)}
+			if !strings.Contains(line, "/sku/1010020028") || !strings.Contains(line, "/user/Ada@Contoso.com") {
+				continue
+			}
+			if attempts[address] == 1 {
+				// The throttle a quota excess arrives as: an answer about the
+				// caller, not about the SKU the part asked for.
+				answers[index] = batchAnswer{Status: http.StatusTooManyRequests, Body: []byte(
+					`{"error":{"code":429,"message":"Too many requests",` +
+						`"errors":[{"reason":"rateLimitExceeded","message":"Rate Limit Exceeded"}]}}`)}
+				continue
+			}
+			answers[index] = batchAnswer{Status: http.StatusOK, Body: []byte(
+				`{"productId":"Google-Apps","skuId":"1010020028",` +
+					`"skuName":"Google Workspace Business Standard","userId":"Ada@Contoso.com"}`)}
+		}
+		return answers
+	}
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionUsers, providers.ReportSectionLicenses}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	bySection := reportSections(t, tables)
+	// Only the throttled user is asked twice, and the retry is not a second assignment.
+	if got := attempts["Ada@Contoso.com"]; got != 2 {
+		t.Errorf("attempts of the throttled user = %d, want 2", got)
+	}
+	for _, address := range []string{"grace@contoso.com", "linus@contoso.com"} {
+		if got := attempts[address]; got != 1 {
+			t.Errorf("attempts of %s = %d, want 1 (the read answered)", address, got)
+		}
+	}
+	licenses := bySection[providers.ReportSectionLicenses]
+	if licenses.Failed() {
+		t.Fatalf("licenses section = %q, want the assignment the retry answered", licenses.Error)
+	}
+	if licenses.Truncated {
+		t.Error("licenses section is truncated, want every user read")
+	}
+	if len(licenses.Rows) != 1 {
+		t.Fatalf("licenses rows = %d, want the single assignment of the retry", len(licenses.Rows))
+	}
+	// The column the report is read for: the assignment of the throttled user, and a
+	// zero — not a blank — for the user who was answered and holds nothing.
+	users := bySection[providers.ReportSectionUsers]
+	for index, want := range map[int][2]string{
+		0: {"Google Workspace Business Standard", "1"},
+		1: {"", "0"},
+	} {
+		row := users.Rows[index]
+		if got := reportCell(users, row, "licenses"); got != want[0] {
+			t.Errorf("licenses cell of row %d = %q, want %q", index, got, want[0])
+		}
+		if got := reportCell(users, row, "license_count"); got != want[1] {
+			t.Errorf("license count of row %d = %q, want %q", index, got, want[1])
+		}
+	}
+}
+
+// TestLicensesLeaveTheCellEmptyWhenTheLookupNeverAnswered pins the other half: a user whose
+// parts keep asking to be looked at again has no known licence set, so the report leaves
+// her cells empty and marks the section truncated. A zero there is the claim that a paid
+// user holds nothing — the one report-22 made about 15 users of a tenant whose Admin
+// console says they hold a paid edition.
+func TestLicensesLeaveTheCellEmptyWhenTheLookupNeverAnswered(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	pause := licenseProbeBackoff
+	licenseProbeBackoff = 0
+	t.Cleanup(func() { licenseProbeBackoff = pause })
+	transport.statusFor = func(request *http.Request) int {
+		if strings.HasPrefix(request.URL.Path, "/apps/licensing/") {
+			return http.StatusForbidden
+		}
+		return http.StatusOK
+	}
+	batches := 0
+	transport.batch = func(subRequests []string) []batchAnswer {
+		batches++
+		answers := make([]batchAnswer, len(subRequests))
+		for index, line := range subRequests {
+			answers[index] = batchAnswer{Status: http.StatusNotFound,
+				Body: []byte(`{"error":{"code":404,"message":"Not Found"}}`)}
+			if strings.Contains(line, "/user/grace@contoso.com") {
+				// Every part throttled: the read of this user never happens.
+				answers[index] = batchAnswer{Status: http.StatusTooManyRequests, Body: []byte(
+					`{"error":{"code":429,"message":"Too many requests",` +
+						`"errors":[{"reason":"rateLimitExceeded","message":"Rate Limit Exceeded"}]}}`)}
+				continue
+			}
+			if strings.Contains(line, "/sku/1010020028") && strings.Contains(line, "/user/Ada@Contoso.com") {
+				answers[index] = batchAnswer{Status: http.StatusOK, Body: []byte(
+					`{"productId":"Google-Apps","skuId":"1010020028",` +
+						`"skuName":"Google Workspace Business Standard","userId":"Ada@Contoso.com"}`)}
+			}
+		}
+		return answers
+	}
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionUsers, providers.ReportSectionLicenses}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	// One batch per user, plus the retries of the throttled one: bounded, not unbounded.
+	if want := 2 + reportLicenseProbeAttempts; batches != want {
+		t.Errorf("licence batches = %d, want %d (the throttled user asked again)", batches, want)
+	}
+	bySection := reportSections(t, tables)
+	// The section keeps what it read and says it is not the whole directory.
+	licenses := bySection[providers.ReportSectionLicenses]
+	if licenses.Failed() {
+		t.Fatalf("licenses section = %q, want the assignment of the user that answered", licenses.Error)
+	}
+	if !licenses.Truncated {
+		t.Error("licenses section is not truncated, want the unread user reported")
+	}
+	users := bySection[providers.ReportSectionUsers]
+	for index, want := range map[int][2]string{
+		0: {"Google Workspace Business Standard", "1"},
+		1: {"", ""},
+		2: {"", "0"},
+	} {
+		row := users.Rows[index]
+		if got := reportCell(users, row, "licenses"); got != want[0] {
+			t.Errorf("licenses cell of row %d = %q, want %q", index, got, want[0])
+		}
+		if got := reportCell(users, row, "license_count"); got != want[1] {
+			t.Errorf("license count of row %d = %q, want %q", index, got, want[1])
+		}
+	}
+}
+
 // TestLicensesKeepWalkingThroughAThrottledBatch pins the one failure the per-user walk
 // asks again for: a batch whose parts were all refused because the caller is over a
 // quota is not the domain refusing the read, so the next user is still worth asking —
-// where the same batch's parts refused for any other reason end the walk.
+// where the same batch's parts refused for any other reason end the walk. Every user is
+// asked `reportLicenseProbeAttempts` times, because a part that asked to be asked again
+// answered nothing and the licence set of that user is not known until it does.
 func TestLicensesKeepWalkingThroughAThrottledBatch(t *testing.T) {
 	provider, transport := newReportProvider(reportBodies(), nil)
+	pause := licenseProbeBackoff
+	licenseProbeBackoff = 0
+	t.Cleanup(func() { licenseProbeBackoff = pause })
 	transport.statusFor = func(request *http.Request) int {
 		if strings.HasPrefix(request.URL.Path, "/apps/licensing/") {
 			return http.StatusForbidden
@@ -1177,8 +1362,9 @@ func TestLicensesKeepWalkingThroughAThrottledBatch(t *testing.T) {
 			t.Errorf("licenses error = %q, want %q", licenses.Error, fragment)
 		}
 	}
-	if batches != 3 {
-		t.Errorf("licence batches = %d, want 1 per user (a quota excess is asked again)", batches)
+	if want := 3 * reportLicenseProbeAttempts; batches != want {
+		t.Errorf("licence batches = %d, want %d (every user asked again while throttled)",
+			batches, want)
 	}
 }
 
