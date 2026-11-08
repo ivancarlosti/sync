@@ -31,8 +31,8 @@ the list for the account, which is what the start form offers.
 | `licenses` | `GET /subscribedSkus` | 1 |
 | `domains` | `GET /domains` | 1 |
 | `teams` | `GET /teams` (paged, 999) | `ceil(teams / 999)` |
-| `team_members` | `GET /teams/{id}/members` per team | one walk per team |
-| `planner_plans` | `GET /groups/{id}/planner/plans` per group | one walk per group |
+| `team_members` | `GET /teams/{id}/members` per team (projected, then plain when the tenant refuses the projection) | one walk per team |
+| `planner_plans` | `GET /groups/{id}/planner/plans` per Microsoft 365 group | one walk per Microsoft 365 group |
 
 **Google Workspace** (`internal/providers/google/report.go`):
 
@@ -85,6 +85,27 @@ and `planner_plans` stop at the shared per-collection walk limit
 (`reportGroupWalkLimit`, 5000 collections) and mark themselves truncated, exactly
 like `group_members` does.
 
+The two Microsoft walks also degrade per collection, because a per-collection
+refusal almost never means the report is broken:
+
+* **`team_members` and the `email` projection.** The listing asks for
+  `$select=id,displayName,email,userId,roles`, and some tenants resolve that
+  projection against the base `microsoft.graph.conversationMember` type instead of
+  the team's own one, answering `400 Could not find a property named 'email'`. The
+  section then reads the collection again as the plain listing — which still
+  carries `email`, so no column is lost, unlike the `users` licence fallback — and
+  remembers the refusal, so the remaining teams are read plainly the first time
+  instead of paying a doomed call each. The retry happens only when the projected
+  read returned no row at all, so a mid-listing failure is never masked.
+* **`planner_plans` and the groups that cannot own a plan.** Only a Microsoft 365
+  group (`groupTypes` holds `Unified`) has a Planner workload, so a security group
+  or a distribution list is never asked for plans: a directory that is mostly
+  security groups would otherwise pay a refused call per group. A group Graph
+  answers `403` for (the signed-in user cannot see its plans) or `404` for (it has
+  none) is skipped as well, and the section keeps the plans of the groups that did
+  answer. It fails only when every Microsoft 365 group refused it, which is the
+  shape of a missing `Tasks.Read` grant rather than of an empty tenant.
+
 A report that asks for `users` also walks the licence catalogue (one call per
 product, eleven of them), because `users.list` carries no licence: that is the
 one place where a section pays for a column it does not own. A grant without
@@ -106,7 +127,9 @@ none — see [app-registration.md §1](app-registration.md#1-what-the-permission
 `GET /groups/{id}/planner/plans`; the `Tasks.Read.All` next to it in the Graph
 permission reference is an application permission only, so a delegated request
 cannot carry it (§1), and `Group.ReadWrite.All` — already granted at connection
-time — is the higher privileged delegated scope of the same read.
+time — is the higher privileged delegated scope of the same read. A `Tasks.Read`
+grant the tenant nevertheless refuses per group (a group whose plans the signed-in
+user cannot see) costs that group's plans and not the section, as §1 describes.
 
 An account connected **before** those scopes joined the always-on set keeps
 synchronising files exactly as it did; `GET /api/accounts` reports `teams` and

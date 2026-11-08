@@ -217,9 +217,166 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 	}
 	// Two users pages, then one call per collection: the guests, distribution
 	// lists, team members and licences sections must reuse them instead of
-	// re-reading, and the plans walk reuses the groups page.
-	if len(transport.urls) != 19 {
-		t.Errorf("issued %d requests (%v), want 19", len(transport.urls), transport.urls)
+	// re-reading, and the plans walk reuses the groups page. The plans walk only
+	// opens the one Microsoft 365 group of the fixture (g2 is a distribution list
+	// and g3 a security group, so neither can own a plan).
+	if len(transport.urls) != 17 {
+		t.Errorf("issued %d requests (%v), want 17", len(transport.urls), transport.urls)
+	}
+}
+
+// TestCollectReportRetriesTeamMembersWithoutTheEmailProperty covers the tenant
+// whose Graph resolves the membership `$select` against the base
+// `microsoft.graph.conversationMember` type: the projection is refused with a 400
+// ("Could not find a property named 'email'..."), the collection is read again as
+// the plain listing, and the section keeps its rows and its mail column instead of
+// failing. The refusal is remembered, so the second team is read plainly the first
+// time instead of paying another doomed call.
+func TestCollectReportRetriesTeamMembersWithoutTheEmailProperty(t *testing.T) {
+	projected := strings.TrimPrefix(teamMembersTarget("t1", true), "https://graph.microsoft.com")
+	if !strings.Contains(projected, "select=") {
+		t.Fatalf("teamMembersTarget(true) = %q, want a projection", projected)
+	}
+	if plain := teamMembersTarget("t1", false); plain != "https://graph.microsoft.com/v1.0/teams/t1/members" {
+		t.Fatalf("teamMembersTarget(false) = %q, want the plain listing", plain)
+	}
+	provider, transport := newReportProvider(
+		map[string]string{
+			"/v1.0/teams": `{"value":[{"id":"t1","displayName":"Engineering"},{"id":"t2","displayName":"Field ops"}]}`,
+			// The refused page is scripted under its own URI as well: the mock keys
+			// a scripted answer by the full request URI when it has one, which is
+			// what lets the refusal apply to the projected listing and not to the
+			// plain one that shares its path.
+			projected: `{"value":[]}`,
+			"/v1.0/teams/t1/members": `{"value":[{"id":"tm1","roles":["owner"],"displayName":"Ada Lovelace",` +
+				`"email":"ada@contoso.com","userId":"u1"}]}`,
+			"/v1.0/teams/t2/members": `{"value":[{"id":"tm2","roles":[],"displayName":"Grace Hopper",` +
+				`"email":"grace@contoso.com","userId":"u3"}]}`,
+		},
+		map[string]int{projected: http.StatusBadRequest},
+	)
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionTeamMembers}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	if len(tables) != 1 || tables[0].Failed() {
+		t.Fatalf("tables = %+v, want the section even when the projection is refused", tables)
+	}
+	if len(tables[0].Rows) != 2 {
+		t.Fatalf("team members rows = %d, want the membership of both teams", len(tables[0].Rows))
+	}
+	if got := cell(tables[0], tables[0].Rows[0], "mail"); got != "ada@contoso.com" {
+		t.Errorf("mail cell = %q, want the address the plain listing carries", got)
+	}
+	if got := cell(tables[0], tables[0].Rows[0], "role"); got != "owner" {
+		t.Errorf("role cell = %q, want owner", got)
+	}
+	projections := 0
+	for _, target := range transport.urls {
+		if strings.Contains(target, "select=") && strings.Contains(target, "/members") {
+			projections++
+		}
+	}
+	if projections != 1 {
+		t.Errorf("issued %v, want the projection attempted once and the rest plain", transport.urls)
+	}
+	if len(transport.urls) != 4 {
+		t.Errorf("issued %d requests (%v), want the teams page and one walk per team", len(transport.urls), transport.urls)
+	}
+}
+
+// TestCollectReportSkipsThePlansOfGroupsThatRefuse pins the two filters of the
+// plans walk: a group that is not a Microsoft 365 group is not asked for plans it
+// cannot own, and a group Planner refuses (403: the signed-in user cannot see its
+// plans; 404: it has none) costs that group only. Before the fix a single refusal
+// emptied the whole section with "You do not have the required permissions".
+func TestCollectReportSkipsThePlansOfGroupsThatRefuse(t *testing.T) {
+	provider, transport := newReportProvider(
+		map[string]string{
+			"/v1.0/groups": `{"value":[` +
+				`{"id":"g1","displayName":"Engineering","groupTypes":["Unified"]},` +
+				`{"id":"g2","displayName":"Field ops","groupTypes":["Unified"]},` +
+				`{"id":"g3","displayName":"Operators","mailEnabled":false,"securityEnabled":true,"groupTypes":[]}]}`,
+			"/v1.0/groups/g2/planner/plans": `{"value":[{"id":"plan-2","title":"Field plan","owner":"g2"}]}`,
+		},
+		map[string]int{
+			"/v1.0/groups/g1/planner/plans": http.StatusForbidden,
+			"/v1.0/groups/g3/planner/plans": http.StatusNotFound,
+		},
+	)
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionPlannerPlans}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	if len(tables) != 1 || tables[0].Failed() {
+		t.Fatalf("tables = %+v, want the plans of the group that answered", tables)
+	}
+	if len(tables[0].Rows) != 1 {
+		t.Fatalf("planner plans rows = %d, want the plan of the group that answered", len(tables[0].Rows))
+	}
+	if got := cell(tables[0], tables[0].Rows[0], "plan"); got != "Field plan" {
+		t.Errorf("plan cell = %q, want Field plan", got)
+	}
+	for _, target := range transport.urls {
+		if strings.Contains(target, "/groups/g3/planner/plans") {
+			t.Errorf("asked for the plans of a security group: %v", transport.urls)
+		}
+	}
+}
+
+// TestCollectReportFailsThePlansWhenEveryGroupRefuses pins the other side of the
+// same trade: when no Microsoft 365 group answered at all, the refusal is the
+// section's error instead of an empty table, because that is what a grant the
+// account lacks looks like.
+func TestCollectReportFailsThePlansWhenEveryGroupRefuses(t *testing.T) {
+	provider, _ := newReportProvider(
+		map[string]string{
+			"/v1.0/groups": `{"value":[{"id":"g1","displayName":"Engineering","groupTypes":["Unified"]}]}`,
+		},
+		map[string]int{"/v1.0/groups/g1/planner/plans": http.StatusForbidden},
+	)
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionPlannerPlans}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	if len(tables) != 1 || !tables[0].Failed() {
+		t.Fatalf("tables = %+v, want a failed section when no group answered", tables)
+	}
+	if !strings.Contains(tables[0].Error, "403") {
+		t.Errorf("section error = %q, want the refusal of every group", tables[0].Error)
+	}
+}
+
+// TestCollectReportKeepsThePlansWhenAGroupHasNone pins the empty case of the same
+// walk: a Microsoft 365 group without a plan answers 200 with an empty collection,
+// which is a complete section and not a failure.
+func TestCollectReportKeepsThePlansWhenAGroupHasNone(t *testing.T) {
+	provider, _ := newReportProvider(
+		map[string]string{
+			"/v1.0/groups":                  `{"value":[{"id":"g1","displayName":"Engineering","groupTypes":["Unified"]}]}`,
+			"/v1.0/groups/g1/planner/plans": `{"value":[]}`,
+		}, nil)
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionPlannerPlans}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	if len(tables) != 1 || tables[0].Failed() {
+		t.Fatalf("tables = %+v, want a complete empty section", tables)
+	}
+	if len(tables[0].Rows) != 0 {
+		t.Errorf("planner plans rows = %d, want none", len(tables[0].Rows))
 	}
 }
 

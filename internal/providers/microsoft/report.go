@@ -247,6 +247,10 @@ type reportData struct {
 	teamsLoaded bool
 	teamsCut    bool
 	teamsErr    error
+	// teamMembersPlain says the tenant refused the `email` projection of the team
+	// membership collection, so the following teams are read plainly first (see
+	// walkTeamMembers).
+	teamMembersPlain bool
 
 	skus       []reportSku
 	skusLoaded bool
@@ -396,10 +400,20 @@ func membersTarget(groupID, relation string) string {
 }
 
 // teamMembersTarget builds the first page of the members of a team.
-func teamMembersTarget(teamID string) string {
-	return collectionTarget("/teams/"+url.PathEscape(teamID)+"/members", []string{
-		"id", "displayName", "email", "userId", "roles",
-	}, nil)
+//
+// `email` and `userId` belong to the `aadUserConversationMember` derived type, not
+// to the `conversationMember` base type the collection is typed as, and a tenant
+// whose Graph resolves `$select` against that base type answers 400 ("Could not
+// find a property named 'email' on type 'microsoft.graph.conversationMember'").
+// The projection is therefore optional: walkTeamMembers reads the collection again
+// without it, which is the plain listing of the Graph documentation and carries
+// the address of every member as well.
+func teamMembersTarget(teamID string, projected bool) string {
+	fields := []string{"id", "displayName", "email", "userId", "roles"}
+	if !projected {
+		fields = nil
+	}
+	return collectionTarget("/teams/"+url.PathEscape(teamID)+"/members", fields, nil)
 }
 
 // plansTarget builds the first page of the Planner plans of a group.
@@ -423,11 +437,8 @@ func (d *reportData) loadUsers() {
 	}
 	d.usersLoaded = true
 	users, cut, err := d.scanUsers(providers.ReportSectionUsers, usersTarget(true))
-	if err != nil {
-		var apiErr *graphError
-		if errors.As(err, &apiErr) && apiErr.Status == http.StatusBadRequest {
-			users, cut, err = d.scanUsers(providers.ReportSectionUsers, usersTarget(false))
-		}
+	if isStatus(err, http.StatusBadRequest) {
+		users, cut, err = d.scanUsers(providers.ReportSectionUsers, usersTarget(false))
 	}
 	d.users, d.usersCut, d.usersErr = users, cut, err
 }
@@ -671,6 +682,18 @@ func organizationColumns() []providers.ReportColumn {
 // textCell trims a value so a CSV never carries a stray newline or padding.
 func textCell(value string) string { return strings.TrimSpace(value) }
 
+// isUnified reports whether the group is a Microsoft 365 group. The `Unified`
+// type in `groupTypes` is what the kind column and the Planner walk both read: a
+// security group or a distribution list has no workload behind it.
+func (g reportGroup) isUnified() bool {
+	for _, kind := range g.GroupTypes {
+		if strings.EqualFold(strings.TrimSpace(kind), "Unified") {
+			return true
+		}
+	}
+	return false
+}
+
 // label is how a group is named inside another section: its display name, then its
 // mail, then its id. A group an administrator never named is still reported, and
 // it is reported under something an operator can search for.
@@ -818,17 +841,10 @@ func (d *reportData) usersTable(guests bool) providers.ReportTable {
 // group (Teams backed), a security group that also routes mail, a pure
 // distribution list or a plain security group.
 func groupKind(group reportGroup) string {
-	unified := false
-	for _, kind := range group.GroupTypes {
-		if strings.EqualFold(kind, "Unified") {
-			unified = true
-			break
-		}
-	}
 	mail := group.MailEnabled != nil && *group.MailEnabled
 	security := group.SecurityEnabled != nil && *group.SecurityEnabled
 	switch {
-	case unified:
+	case group.isUnified():
 		return "microsoft365"
 	case mail && security:
 		return "mail_enabled_security"
@@ -1099,11 +1115,7 @@ func (d *reportData) teamMembersTable() providers.ReportTable {
 		if label == "" {
 			label = textCell(team.ID)
 		}
-		_, cut, err := d.walk(providers.ReportSectionTeamMembers, teamMembersTarget(team.ID), func(raw json.RawMessage) bool {
-			var member reportTeamMember
-			if err := json.Unmarshal(raw, &member); err != nil {
-				return false
-			}
+		cut, err := d.walkTeamMembers(team.ID, func(member reportTeamMember) bool {
 			table.Rows = append(table.Rows, providers.ReportRow{
 				label,
 				textCell(member.DisplayName),
@@ -1124,9 +1136,49 @@ func (d *reportData) teamMembersTable() providers.ReportTable {
 	return table
 }
 
-// plannerPlansTable builds the planner plans section: every plan of every group,
-// with the group that owns it. Graph has no directory-wide plans collection (a
-// plan hangs off the group that owns it), which is why this is the groups walk.
+// walkTeamMembers walks the membership of one team, handing every member to visit
+// and answering whether the listing was cut and the first error that stopped it.
+//
+// The `email` projection is optional (see teamMembersTarget): a 400 on the first
+// page means the tenant read the `$select` against the base conversation member
+// type, so the collection is read again as the plain listing — which carries the
+// address too, unlike the licence fallback of loadUsers, so no column is lost. The
+// refusal is remembered on the pass so the teams after it are read plainly first
+// instead of paying a doomed call each; a 400 that already produced rows is a real
+// failure and is left to the section.
+func (d *reportData) walkTeamMembers(teamID string, visit func(reportTeamMember) bool) (bool, error) {
+	read := func(projected bool) (int, bool, error) {
+		return d.walk(providers.ReportSectionTeamMembers, teamMembersTarget(teamID, projected), func(raw json.RawMessage) bool {
+			var member reportTeamMember
+			if err := json.Unmarshal(raw, &member); err != nil {
+				return false
+			}
+			return visit(member)
+		})
+	}
+	projected := !d.teamMembersPlain
+	rows, cut, err := read(projected)
+	if projected && rows == 0 && isStatus(err, http.StatusBadRequest) {
+		d.teamMembersPlain = true
+		_, cut, err = read(false)
+	}
+	return cut, err
+}
+
+// plannerPlansTable builds the planner plans section: every plan of every
+// Microsoft 365 group, with the group that owns it. Graph has no directory-wide
+// plans collection (a plan hangs off the group that owns it), which is why this is
+// the groups walk.
+//
+// Only a Microsoft 365 group can own a plan (a security group or a distribution
+// list has no Planner workload behind it), so the groups page is filtered first: a
+// tenant whose directory is mostly security groups would otherwise pay a refused
+// call per group. A group Planner answers 403 for — the signed-in user cannot see
+// its plans — or 404 for — it never had one — is skipped as well: that is a
+// visibility boundary, not a broken report, and losing the plans of every group
+// that did answer would be a poor trade. The section fails only when every group
+// that could own a plan refused it, which is the shape of a missing grant rather
+// than of an empty tenant.
 func (d *reportData) plannerPlansTable() providers.ReportTable {
 	table := providers.ReportTable{Columns: plannerPlanColumns()}
 	d.loadGroups()
@@ -1135,6 +1187,8 @@ func (d *reportData) plannerPlansTable() providers.ReportTable {
 		return table
 	}
 	walked := 0
+	answered := 0
+	var refusal error
 	for _, group := range d.groups {
 		if err := d.ctx.Err(); err != nil {
 			table.Error = err.Error()
@@ -1144,7 +1198,7 @@ func (d *reportData) plannerPlansTable() providers.ReportTable {
 			table.Truncated = true
 			return table
 		}
-		if strings.TrimSpace(group.ID) == "" {
+		if strings.TrimSpace(group.ID) == "" || !group.isUnified() {
 			continue
 		}
 		walked++
@@ -1167,9 +1221,19 @@ func (d *reportData) plannerPlansTable() providers.ReportTable {
 			table.Truncated = true
 		}
 		if err != nil {
+			if isGroupRefusal(err) {
+				if refusal == nil {
+					refusal = err
+				}
+				continue
+			}
 			table.Error = errorText(err)
 			return table
 		}
+		answered++
+	}
+	if answered == 0 && len(table.Rows) == 0 && refusal != nil {
+		table.Error = errorText(refusal)
 	}
 	return table
 }
@@ -1228,4 +1292,20 @@ func errorText(err error) string {
 		return ""
 	}
 	return err.Error()
+}
+
+// isStatus reports whether err is a Graph refusal with the given status, which is
+// how the collector tells "this tenant does not serve that projection" apart from
+// "the report is broken".
+func isStatus(err error, status int) bool {
+	var apiErr *graphError
+	return errors.As(err, &apiErr) && apiErr.Status == status
+}
+
+// isGroupRefusal reports whether err is Graph refusing one parent of a
+// per-collection walk: 403 when the signed-in user cannot see the plans of the
+// group, 404 when the group has none. Both mean "nothing to report here", so the
+// walk moves on to the next parent instead of failing the section.
+func isGroupRefusal(err error) bool {
+	return isStatus(err, http.StatusForbidden) || isStatus(err, http.StatusNotFound)
 }
