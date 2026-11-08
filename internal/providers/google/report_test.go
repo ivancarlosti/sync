@@ -1,10 +1,13 @@
 package google
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"testing"
 
@@ -27,7 +30,12 @@ type reportTransport struct {
 	// not name. It is what lets a test refuse a whole API (every product of the
 	// licence catalogue) with one line.
 	statusFor func(*http.Request) int
-	calls     map[string]int
+	// batch, when set, answers a POST to the batch endpoint: it receives the
+	// sub-request lines of the document and answers one part per sub-request,
+	// which is what lets a test script the per-user licence lookup without a
+	// multipart body spelled out inline.
+	batch func(subRequests []string) []batchAnswer
+	calls map[string]int
 }
 
 // RoundTrip implements http.RoundTripper.
@@ -37,6 +45,9 @@ func (t *reportTransport) RoundTrip(request *http.Request) (*http.Response, erro
 		t.calls = map[string]int{}
 	}
 	path := request.URL.Path
+	if t.batch != nil && path == pathLicensingBatch && request.Method == http.MethodPost {
+		return t.batchAnswer(request)
+	}
 	status := http.StatusOK
 	if t.statusFor != nil {
 		status = t.statusFor(request)
@@ -66,6 +77,54 @@ func (t *reportTransport) RoundTrip(request *http.Request) (*http.Response, erro
 		ContentLength: int64(len(body)),
 		Request:       request,
 	}, nil
+}
+
+// batchAnswer renders the parts of a batch document: one `application/http` part
+// per scripted answer, carrying the raw HTTP response Google would put there.
+func (t *reportTransport) batchAnswer(request *http.Request) (*http.Response, error) {
+	payload, err := io.ReadAll(request.Body)
+	if err != nil {
+		return nil, err
+	}
+	var buffer bytes.Buffer
+	writer := multipart.NewWriter(&buffer)
+	for index, answer := range t.batch(subRequestLines(string(payload))) {
+		part, err := writer.CreatePart(textproto.MIMEHeader{
+			"Content-Type": {"application/http"},
+			"Content-ID":   {fmt.Sprintf("<response-item%d>", index+1)},
+		})
+		if err != nil {
+			return nil, err
+		}
+		fmt.Fprintf(part, "HTTP/1.1 %d %s\r\nContent-Type: application/json\r\n\r\n%s",
+			answer.Status, http.StatusText(answer.Status), answer.Body)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	body := buffer.String()
+	header := http.Header{}
+	header.Set("Content-Type", "multipart/mixed; boundary="+writer.Boundary())
+	return &http.Response{
+		StatusCode:    http.StatusOK,
+		Status:        fmt.Sprintf("%d %s", http.StatusOK, http.StatusText(http.StatusOK)),
+		Header:        header,
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+		Request:       request,
+	}, nil
+}
+
+// subRequestLines answers the sub-requests of a batch document: the request line of
+// every `application/http` part, which is what a scripted answer is keyed by.
+func subRequestLines(payload string) []string {
+	lines := make([]string, 0, len(reportLicenseSkus))
+	for _, line := range strings.Split(payload, "\r\n") {
+		if strings.HasPrefix(line, "GET ") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 // forbiddenBody is the error document the Directory API answers a grant that does
@@ -98,6 +157,12 @@ const (
 	pathAnalyticsProperties = "/v1beta/properties"
 	// pathChannels is the YouTube Data listing of the channels of the grant.
 	pathChannels = "/youtube/v3/channels"
+	// pathUserInfo is the OpenID userinfo endpoint, which is what names the
+	// account behind the token for the analytics and youtube sections.
+	pathUserInfo = "/oauth2/v3/userinfo"
+	// pathLicensingBatch is the batch endpoint every per-user licence lookup is
+	// sent to.
+	pathLicensingBatch = "/batch"
 )
 
 // licensePath is the assignment listing of one product of the catalogue.
@@ -115,7 +180,8 @@ func membersPath(key string) string {
 // suspended), two groups with three memberships between them, two domains, one
 // organisational unit next to the root, two administrative roles, one assignment,
 // two licence assignments, one shared drive, the two permissions of it, one
-// Analytics account with one property and one YouTube channel.
+// Analytics account with one property, one YouTube channel and the identity behind
+// the token (which the analytics and youtube sections name).
 func reportBodies() map[string][]string {
 	return map[string][]string{
 		pathCustomer: {`{"id":"C01abc","customerId":"C01abc","customerDomain":"contoso.com",` +
@@ -200,6 +266,7 @@ func reportBodies() map[string][]string {
 			`"statistics":{"viewCount":"1200345","subscriberCount":"2400",` +
 			`"hiddenSubscriberCount":false,"videoCount":"17"}}` +
 			`]}`},
+		pathUserInfo: {`{"sub":"1","email":"admin@contoso.com","hd":"contoso.com"}`},
 	}
 }
 
@@ -505,6 +572,7 @@ func TestAnalyticsSectionReadsThePropertiesOfEveryAccount(t *testing.T) {
 	}
 	row := table.Rows[0]
 	for key, want := range map[string]string{
+		"account_email": "admin@contoso.com",
 		"account":       "Contoso Analytics",
 		"property":      "properties/456",
 		"property_name": "contoso.com",
@@ -517,6 +585,15 @@ func TestAnalyticsSectionReadsThePropertiesOfEveryAccount(t *testing.T) {
 		if got := reportCell(table, row, key); got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
 		}
+	}
+	// The connection, not the property, is the subject of the section: the email
+	// of the account the report reads as must be the first column, so the reader
+	// knows whose Analytics the rows describe.
+	if table.Columns[0].Key != "account_email" {
+		t.Errorf("first analytics column = %q, want the account email", table.Columns[0].Key)
+	}
+	if table.Columns[0].Title != "Account" {
+		t.Errorf("first analytics title = %q, want Account", table.Columns[0].Title)
 	}
 	if count := requestsTo(transport.urls, pathAnalyticsAccounts); count != 1 {
 		t.Errorf("account calls = %d, want 1", count)
@@ -606,18 +683,24 @@ func TestYouTubeSectionListsTheChannelsOfTheConnection(t *testing.T) {
 	}
 	row := table.Rows[0]
 	for key, want := range map[string]string{
-		"channel":     "Contoso",
-		"channel_id":  "UC01contoso",
-		"handle":      "@contoso",
-		"country":     "PT",
-		"created":     "2018-01-05T12:00:00Z",
-		"subscribers": "2400",
-		"videos":      "17",
-		"views":       "1200345",
+		"account_email": "admin@contoso.com",
+		"channel":       "Contoso",
+		"channel_id":    "UC01contoso",
+		"handle":        "@contoso",
+		"country":       "PT",
+		"created":       "2018-01-05T12:00:00Z",
+		"subscribers":   "2400",
+		"videos":        "17",
+		"views":         "1200345",
 	} {
 		if got := reportCell(table, row, key); got != want {
 			t.Errorf("%s = %q, want %q", key, got, want)
 		}
+	}
+	// `mine=true` lists the channels of the grant, so the account behind the grant
+	// is what the rows belong to and leads the header.
+	if table.Columns[0].Key != "account_email" {
+		t.Errorf("first youtube column = %q, want the account email", table.Columns[0].Key)
 	}
 	if count := requestsTo(transport.urls, pathChannels); count != 1 {
 		t.Errorf("channel calls = %d, want 1", count)
@@ -651,6 +734,11 @@ func TestYouTubeSectionSaysWhenTheSubscriberCountIsHidden(t *testing.T) {
 	}
 	if got := reportCell(table, table.Rows[0], "subscribers"); got != "hidden" {
 		t.Errorf("subscribers = %q, want the hidden marker", got)
+	}
+	// The pass carries no identity: the account column is empty and the section is
+	// still usable, because a refused userinfo read says nothing about the channels.
+	if got := reportCell(table, table.Rows[0], "account_email"); got != "" {
+		t.Errorf("account_email = %q, want an empty cell when the identity is unreadable", got)
 	}
 }
 
@@ -838,7 +926,6 @@ func TestCollectReportKeepsTheUsersWhenLicencesAreRefused(t *testing.T) {
 		}
 		return http.StatusOK
 	}
-
 	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
 		&providers.Tokens{AccessToken: "report-token"},
 		[]providers.ReportSection{providers.ReportSectionUsers, providers.ReportSectionLicenses}, nil)
@@ -867,6 +954,132 @@ func TestCollectReportKeepsTheUsersWhenLicencesAreRefused(t *testing.T) {
 	}
 	if count := requestsTo(transport.urls, "/apps/licensing/"); count != 1 {
 		t.Errorf("licence calls = %d, want 1 (the walk stops at the refusal)", count)
+	}
+	// The refusal is only half the answer: the per-user read takes no customer id,
+	// so it is tried (once — the batch answers nothing this transport can read, so
+	// the walk stops there) and its failure is part of the report.
+	if count := requestsTo(transport.urls, pathLicensingBatch); count != 1 {
+		t.Errorf("per-user lookups = %d, want 1 (the walk stops at the first failed batch)", count)
+	}
+	if !strings.Contains(licenses.Error, "per-user") {
+		t.Errorf("licenses error = %q, want the per-user fallback reported too", licenses.Error)
+	}
+}
+
+// TestLicensesProbeEachUserWhenTheDomainRefusesTheCatalogue pins the fallback of a
+// domain-wide catalogue the API refuses: the per-user read takes no customer id, so
+// the section asks every user of the directory for every SKU of the catalogue in one
+// batch and reports what it finds. It is the walk GAM calls `Info_User_Licenses`, and
+// the only way a resold tenant — whose reviewer is not an administrator of the domain
+// — gets a licence inventory at all.
+func TestLicensesProbeEachUserWhenTheDomainRefusesTheCatalogue(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	transport.statusFor = func(request *http.Request) int {
+		if strings.HasPrefix(request.URL.Path, "/apps/licensing/") {
+			return http.StatusForbidden
+		}
+		return http.StatusOK
+	}
+	batches, parts := 0, 0
+	transport.batch = func(subRequests []string) []batchAnswer {
+		batches++
+		parts = len(subRequests)
+		answers := make([]batchAnswer, len(subRequests))
+		for index, line := range subRequests {
+			answers[index] = batchAnswer{Status: http.StatusNotFound,
+				Body: []byte(`{"error":{"code":404,"message":"Not Found"}}`)}
+			if strings.Contains(line, "/sku/1010020028") && strings.Contains(line, "/user/Ada@Contoso.com") {
+				answers[index] = batchAnswer{Status: http.StatusOK, Body: []byte(
+					`{"productId":"Google-Apps","skuId":"1010020028",` +
+						`"skuName":"Google Workspace Business Standard","userId":"Ada@Contoso.com"}`)}
+			}
+		}
+		return answers
+	}
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionUsers, providers.ReportSectionLicenses}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	bySection := reportSections(t, tables)
+	// The users section keeps the licence column of the fallback: the refusal of the
+	// catalogue is not a refusal of the assignments behind it.
+	users := bySection[providers.ReportSectionUsers]
+	if got := reportCell(users, users.Rows[0], "licenses"); got != "Google Workspace Business Standard" {
+		t.Errorf("licenses cell = %q, want the SKU the per-user read answered", got)
+	}
+	licenses := bySection[providers.ReportSectionLicenses]
+	if licenses.Failed() {
+		t.Fatalf("licenses section = %q, want the assignments of the per-user read", licenses.Error)
+	}
+	if licenses.Truncated {
+		t.Error("licenses section is truncated, want the single assignment of the directory")
+	}
+	if len(licenses.Rows) != 1 {
+		t.Fatalf("licenses rows = %d, want 1", len(licenses.Rows))
+	}
+	row := licenses.Rows[0]
+	for key, want := range map[string]string{
+		"user":     "Ada@Contoso.com",
+		"product":  "Google-Apps",
+		"sku_id":   "1010020028",
+		"sku_name": "Google Workspace Business Standard",
+	} {
+		if got := reportCell(licenses, row, key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	// One batch per user, each carrying the whole catalogue: the section replaces a
+	// refused listing, so it must not cost one call per user and SKU.
+	if batches != 3 {
+		t.Errorf("licence batches = %d, want 1 per user of the directory", batches)
+	}
+	if parts != len(reportLicenseSkus) {
+		t.Errorf("sub-requests of a batch = %d, want the %d SKUs of the catalogue",
+			parts, len(reportLicenseSkus))
+	}
+}
+
+// TestLicensesReportTheDomainWhenThePerUserLookupIsRefusedToo pins the other end of
+// the fallback: a domain that refuses the per-user read as well is the answer, so the
+// walk stops at the first batch and the section says why both halves are missing
+// instead of asking the same 403 once per user.
+func TestLicensesReportTheDomainWhenThePerUserLookupIsRefusedToo(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	transport.statusFor = func(request *http.Request) int {
+		if strings.HasPrefix(request.URL.Path, "/apps/licensing/") {
+			return http.StatusForbidden
+		}
+		return http.StatusOK
+	}
+	transport.batch = func(subRequests []string) []batchAnswer {
+		answers := make([]batchAnswer, len(subRequests))
+		for index := range subRequests {
+			answers[index] = batchAnswer{Status: http.StatusForbidden, Body: []byte(
+				`{"error":{"code":403,"message":"Unauthorized operation for the given domain"}}`)}
+		}
+		return answers
+	}
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionLicenses}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	licenses := tables[0]
+	if !licenses.Failed() {
+		t.Fatalf("licenses section = %+v, want the refusal reported", licenses)
+	}
+	for _, fragment := range []string{"licence catalogue", "Unauthorized operation for the given domain"} {
+		if !strings.Contains(licenses.Error, fragment) {
+			t.Errorf("licenses error = %q, want %q", licenses.Error, fragment)
+		}
+	}
+	if count := requestsTo(transport.urls, pathLicensingBatch); count != 1 {
+		t.Errorf("licence batches = %d, want 1 (the walk stops at the refused batch)", count)
 	}
 }
 

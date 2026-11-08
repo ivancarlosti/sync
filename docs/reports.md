@@ -47,7 +47,7 @@ the list for the account, which is what the start form offers.
 | `org_units` | `GET /customer/my_customer/orgunits?type=all` | 1 |
 | `roles` | `GET /customer/my_customer/roles` (paged, 100 — the endpoint refuses more) | `ceil(roles / 100)` |
 | `role_assignments` | `GET /customer/my_customer/roleassignments` (paged, 200) | `ceil(assignments / 200)` |
-| `licenses` | `GET licensing/v1/product/{id}/users` per product of the catalogue, scoped to the id of the customer record | 11 (+1) |
+| `licenses` | `GET licensing/v1/product/{id}/users` per product of the catalogue, scoped to the id of the customer record; a `403` of the whole domain falls back to `POST licensing/v1/batch` of `product/{product}/sku/{sku}/user/{email}` per user of the directory (one batch of the whole SKU catalogue per user) | 11 (+1), or `+1` per user when the catalogue is refused |
 | `shared_drives` | `GET drive/v3/drives` (the listing the folder picker uses) | `ceil(drives / 100)` |
 | `shared_drive_members` | `GET /files/{id}/permissions` per shared drive (`useDomainAdminAccess`, paged, 100) | one walk per shared drive |
 | `analytics` | `GET analyticsadmin/v1beta/accounts` (paged, 200), then `GET analyticsadmin/v1beta/properties?filter=parent:{account}` per account (paged, 200) | `1 + accounts` walks |
@@ -106,6 +106,12 @@ and the report says so instead of pretending otherwise:
 * Both sections therefore start from the account, and an empty table is a normal
   answer rather than a failure: an Analytics account is created by a person on
   analytics.google.com, and a Workspace identity may own no channel at all.
+* Both tables lead with the **email of the connected account** (`account_email`,
+  titled `Account`), read once per pass from the OpenID `userinfo` endpoint the
+  accounts screen already calls. A table of properties or of channels that does not
+  say whose they are is not an inventory, and the domain of a report is the tenant
+  while the rows are the connection's. The read is cached for the pass and its
+  failure is **not** a section failure: the cell stays empty and the rows stand.
 * `analytics` also degrades **per account**, like `shared_drive_members` per drive:
   an Analytics account the grant cannot read (deleted between the two calls, or a
   `403` on its properties) costs its own rows and nothing else, and the first error
@@ -160,8 +166,40 @@ is part of the same report.
 A `403` from the catalogue is a decision about the *domain*, not about the
 product — the subscription is not a paid edition an administrator manages
 directly (a reseller-managed or free domain), or the grant predates the scope — so
-the walk stops at the first one and the `licenses` section carries the reason,
-while the `users` table keeps its rows with an empty `licenses` column.
+the walk stops at the first one and, before the section gives up, it falls back to
+the **per-user** read of the same API (below). When that read finds nothing either,
+the `licenses` section carries the reason while the `users` table keeps its rows
+with an empty `licenses` column.
+
+**The per-user fallback (`probeLicenses`).** The `get` of the Enterprise License
+Manager API takes no customer id at all, so it answers for a licence the caller can
+see even when the domain-wide listing of that domain is refused. It is the walk GAM
+calls `Info_User_Licenses`: the SKU catalogue is probed per user, and the section is
+whatever those reads answer. Every lookup is a sub-request of a **batch**
+(`POST licensing.googleapis.com/batch`, the `batchPath` of the API), so the whole
+catalogue of a user costs one call instead of one call per SKU — a directory of 300
+users is 300 calls, not 23 100. What bounds it:
+
+* `reportLicenseProbeUsers` (500 users) and the row cap of the section bound the
+  walk; hitting either marks the section `truncated` rather than reporting a
+  directory that was only half read. A report that wants every user of a bigger
+  directory needs GAM, not a fallback.
+* The batch answers `200` when the *batch* was accepted, not when its parts were:
+  the status of a part is what decides a row. `200` carries an assignment, `404`
+  (and `400`, for a SKU Google retired or the tenant cannot own) means the user
+  simply does not hold that SKU and is not an error, and `401`/`403` in any part
+  means the domain refused the caller — the walk stops there instead of asking the
+  same question once per user. A `429`/`5xx` part or batch is the only failure
+  worth asking again for the next user.
+* Parts are **not** correlated by position or `Content-ID`: a part that carries a
+  licence carries its own product id, SKU id and user id, so an answer Google
+  reorders cannot mislabel a row. A part without a `userId` is attributed to the
+  address the lookup was made with.
+* The catalogue is the SKU list of `licenseskus.go` (the paid editions, the storage
+  add-ons and their add-ons). A SKU Google adds later is not probed until that list
+  grows, and a SKU the tenant cannot own costs a part of a batch that was paid for
+  anyway. Names come from the answer when it carries one (`skuName`) and from the
+  list otherwise.
 
 ## 2. Permissions
 
@@ -295,9 +333,10 @@ POST /api/reports ──► reserve account ──► report row (running)
   `licenses` column. Losing one column is not worth losing the table. The same
   holds for a domain the Enterprise License Manager API refuses outright
   (`403 Unauthorized operation for the given domain`, which is the answer of a
-  subscription no paid edition backs): the `licenses` section reports the refusal
-  once, the walk stops there instead of paying ten more calls, and every other
-  table is unaffected.
+  subscription no paid edition backs): the section falls back to the per-user batch
+  read (§1), reports the refusal only when that read answers nothing either, stops
+  the catalogue walk there instead of paying ten more calls, and every other table
+  is unaffected.
 * **Cancellation** is cooperative (`ReportService.Cancel`), and the scheduler's
   `Bootstrap` closes the reports a restart interrupted.
 * **Retention.** The newest 20 reports per account are kept (`PruneReports`);

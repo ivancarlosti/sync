@@ -1,6 +1,7 @@
 package google
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -34,6 +35,17 @@ const (
 	// reportLicensePageSize is the largest page the Enterprise License Manager
 	// API accepts.
 	reportLicensePageSize = 1000
+	// reportLicenseProbeUsers caps the directory the per-user licence lookup
+	// walks when the domain-wide catalogue is refused. It is one batch call per
+	// user (see reportLicenseProbeBatch), so the cap is what keeps a huge tenant
+	// from turning a refusal into a walk that never ends; the section reports
+	// itself truncated when it bites.
+	reportLicenseProbeUsers = 500
+	// reportLicenseProbeBatch is the largest number of sub-requests one batch may
+	// carry, which is the documented maximum of a Google batch request. The SKU
+	// catalogue fits in one, which is what makes the per-user lookup one call per
+	// user rather than one per user and SKU.
+	reportLicenseProbeBatch = 100
 	// reportRolePageSize is the largest page roles.list accepts. The role
 	// catalogue caps maxResults at 100 — unlike roleassignments.list below,
 	// which accepts 200 — and answers anything above it with a 400
@@ -57,9 +69,21 @@ const (
 	// adminBase is the Admin SDK Directory API root. It is served by the
 	// admin.googleapis.com API the Workspace connection already enables.
 	adminBase = "https://admin.googleapis.com/admin/directory/v1"
+	// licensingHost is the host the Enterprise License Manager API and its batch
+	// endpoint are served from.
+	licensingHost = "https://licensing.googleapis.com"
+	// licensingPath is the root of the API from that host. It is kept apart from
+	// licensingBase because a sub-request of a batch carries a path, not an URL.
+	licensingPath = "/apps/licensing/v1"
 	// licensingBase is the Enterprise License Manager API root, which is what
 	// answers the licence assignments of a user.
-	licensingBase = "https://licensing.googleapis.com/apps/licensing/v1"
+	licensingBase = licensingHost + licensingPath
+	// licensingBatchURL is the batch endpoint of the API, which is the
+	// `batchPath` its discovery document names (`batch`). A batch is how a Google
+	// API takes many calls in one request: one part per sub-request, one part per
+	// answer, which is what turns the per-user licence lookup into one call per
+	// user instead of one per user and SKU.
+	licensingBatchURL = licensingHost + "/batch"
 	// analyticsBase is the Analytics Admin API root (v1beta), which is what
 	// answers the accounts and properties of Google Analytics. v1beta is the
 	// version that carries `accounts.list` and `properties.list`; the v1alpha
@@ -108,13 +132,18 @@ var (
 	// another host. The length bound is generous next to the ~200 characters a
 	// real token carries.
 	pageTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_./+:=-]{1,1000}$`)
-	// groupKeyPattern is the shape of the group key the membership section
-	// interpolates into a request path: a group's primary address (which is what
-	// a Workspace group is keyed by) or its id. It excludes every character that
+	// directoryKeyPattern is the shape of a directory key — a primary address or
+	// an id — that a request path interpolates: it excludes every character that
 	// could leave the segment — a separator, a query or a fragment delimiter,
 	// whitespace and the percent-encoded form of any of them — while keeping the
-	// `@`, `+`, `'` and `%` an address itself may carry.
-	groupKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._%+@'-]{1,255}$`)
+	// `@`, `+`, `'` and `%` an address itself may carry. Two walks interpolate a
+	// directory key: the group key of the membership section and the user of the
+	// per-user licence lookup.
+	directoryKeyPattern = regexp.MustCompile(`^[A-Za-z0-9._%+@'-]{1,255}$`)
+	// groupKeyPattern is the shape of the group key the membership section
+	// interpolates into a request path: a group's primary address (which is what
+	// a Workspace group is keyed by) or its id, so the directory key shape.
+	groupKeyPattern = directoryKeyPattern
 	// licenseProductPattern is the shape of a product id of the catalogue
 	// above; it is narrowed for the same reason as the group key.
 	licenseProductPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
@@ -300,7 +329,8 @@ type reportLicense struct {
 // and the `licenses` column of the users section comes from the catalogue the
 // licenses section reads. The per-user loop of the GAM flow — one `users.get`
 // per account to ask for its licences — therefore collapses into one walk per
-// product.
+// product; it only comes back as the fallback of a domain that refuses the
+// catalogue (see loadLicenses).
 //
 // A section that cannot be collected is returned with its Error set instead of
 // failing the pass: a grant made before a feature existed refuses that endpoint
@@ -364,6 +394,12 @@ type reportData struct {
 	licensesErr    error
 	licenseRows    int
 	licenseCut     bool
+
+	// account is the address of the account the connection was made with: the
+	// identity the analytics and youtube sections report on, read once from the
+	// userinfo endpoint and cached like every other shared read.
+	account       string
+	accountLoaded bool
 
 	// drives is the Drive listing (My Drive plus the shared drives), read once:
 	// the shared drives section lists it and the membership section opens it.
@@ -635,6 +671,29 @@ func (d *reportData) licenseCustomer() string {
 	return customerKey
 }
 
+// accountEmail answers the address of the account the connection was made with.
+//
+// It is the identity the `analytics` and `youtube` sections report on, because both
+// APIs answer for the grant behind the token rather than for the domain (see
+// ReportSections). A table of properties or of channels that does not say whose they
+// are is not an inventory, so the address is the first column of both.
+//
+// The read is the OpenID userinfo call the accounts screen already makes, paid once
+// per pass. Its failure is not a section failure: the rows are still the answer to
+// the section, and the cell stays empty rather than the table.
+func (d *reportData) accountEmail() string {
+	if d.accountLoaded {
+		return d.account
+	}
+	d.accountLoaded = true
+	account, err := d.provider.Account(d.ctx, providers.Credentials{}, d.tokens)
+	if err != nil {
+		return ""
+	}
+	d.account = textCell(account.Email)
+	return d.account
+}
+
 // loadUsers reads the users collection once; the suspended users section filters
 // it instead of listing the directory a second time with `query=isSuspended=true`.
 func (d *reportData) loadUsers() {
@@ -718,8 +777,9 @@ func (d *reportData) loadDomains() {
 // domain ("Unauthorized operation for the given domain") when the subscription is
 // not a paid edition an administrator manages directly, or when the grant was made
 // before the apps.licensing scope was requested. That decision does not depend on
-// the product, so the walk stops at the first refusal and the section explains it
-// once, instead of repeating the same 403 for every product of the catalogue.
+// the product, so the walk stops at the first refusal instead of repeating the same
+// 403 for every product of the catalogue, and the section falls back to the
+// per-user read (see probeLicenses) before it gives up.
 func (d *reportData) loadLicenses() {
 	if d.licensesLoaded {
 		return
@@ -769,12 +829,195 @@ func (d *reportData) loadLicenses() {
 		// One product answered: the section is the assignments of the products
 		// this domain has, and the ones that did not answer are simply absent.
 	case refusal != nil:
-		d.licensesErr = fmt.Errorf("google licensing api: the domain does not answer the licence catalogue (%w): "+
-			"the Enterprise License Manager API only answers the paid edition of a domain an administrator "+
-			"manages directly, so the licenses column of the users section stays empty", refusal)
+		d.licensesErr = d.explainRefusal(refusal)
 	default:
 		d.licensesErr = firstErr
 	}
+}
+
+// explainRefusal is the fallback of a refused catalogue, and it answers what the
+// section should report: nil when the per-user read found the assignments the
+// domain-wide one refused.
+//
+// The Enterprise License Manager API refuses the domain-wide listing of a
+// subscription no paid edition backs, but its per-user read takes no customer id
+// at all, so it answers for a licence the caller can see. GAM answers the same 403
+// the same way (`Info_User_Licenses` calls `getUserLicenses`, which reads every SKU
+// of its catalogue per user), and this is that walk: one batch per user, so the
+// cost is one call per user of the directory rather than one per user and SKU.
+func (d *reportData) explainRefusal(refusal error) error {
+	rows, err := d.probeLicenses()
+	d.licenseRows += rows
+	if rows > 0 {
+		// The per-user read answered what the domain refused: the section is its
+		// assignments, and the catalogue refusal is not worth reporting.
+		return nil
+	}
+	reason := fmt.Sprintf("google licensing api: the domain does not answer the licence catalogue (%v): "+
+		"the Enterprise License Manager API only answers the paid edition of a domain an administrator "+
+		"manages directly", refusal)
+	if err != nil {
+		return fmt.Errorf("%s, and the per-user lookup did not answer either: %w", reason, err)
+	}
+	return fmt.Errorf("%s, so the licenses column of the users section stays empty", reason)
+}
+
+// probeLicenses reads the licences of every user, one batch per user, and answers
+// how many assignments it collected along with the first error that stopped it.
+//
+// The walk is the fallback of a refusal (see explainRefusal), so it is bounded
+// twice: by the row cap of the section (the catalogue it stands in for is bound by
+// the same one) and by reportLicenseProbeUsers, whose cap marks the section
+// truncated instead of quietly reporting a directory only half read.
+//
+// A failed batch ends the walk when its answer cannot improve for the next user: a
+// 401/403 is the domain answering about the caller, a 400/404 a wrong document or a
+// wrong SKU, and a batch that could not be read at all an endpoint that does not
+// speak the protocol — none of those is about the user, so the rest of the directory
+// would pay the same answer. A 429 or a 5xx is the one failure worth asking again for
+// the next user, and a part that fails alone is one missing row, not a reason to skip
+// the rest of the directory.
+func (d *reportData) probeLicenses() (int, error) {
+	d.loadUsers()
+	if d.usersErr != nil {
+		return 0, fmt.Errorf("the directory could not be listed (%w)", d.usersErr)
+	}
+	rows, probed := 0, 0
+	var firstErr error
+	for _, user := range d.users {
+		if err := d.ctx.Err(); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			break
+		}
+		if probed >= reportLicenseProbeUsers || d.licenseRows+rows >= reportRowLimit {
+			d.licenseCut = true
+			break
+		}
+		address := textCell(user.PrimaryEmail)
+		if address == "" {
+			continue
+		}
+		probed++
+		count, err := d.probeLicensesOf(address)
+		rows += count
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			if apiStatus(err) < http.StatusTooManyRequests {
+				break
+			}
+		}
+		d.progress(providers.ReportProgress{
+			Section: providers.ReportSectionLicenses,
+			Rows:    d.licenseRows + rows,
+		})
+	}
+	return rows, firstErr
+}
+
+// probeLicensesOf reads the assignments of one user: the catalogue is split into
+// batches of reportLicenseProbeBatch sub-requests, which is one batch for the
+// catalogue as it stands today.
+func (d *reportData) probeLicensesOf(address string) (int, error) {
+	rows := 0
+	for start := 0; start < len(reportLicenseSkus); start += reportLicenseProbeBatch {
+		end := min(start+reportLicenseProbeBatch, len(reportLicenseSkus))
+		count, err := d.licenseProbeBatch(address, reportLicenseSkus[start:end])
+		rows += count
+		if err != nil {
+			return rows, err
+		}
+	}
+	return rows, nil
+}
+
+// licenseProbeBatch sends one batch of per-user licence lookups and records the
+// assignments it answers.
+func (d *reportData) licenseProbeBatch(address string, skus []reportLicenseSku) (int, error) {
+	body, contentType, err := licenseProbeBody(address, skus)
+	if err != nil {
+		return 0, err
+	}
+	ctx, cancel := context.WithTimeout(d.ctx, requestTimeout)
+	defer cancel()
+	response, err := providers.DoWithRetry(ctx, retryPolicy, func(ctx context.Context) (*http.Response, error) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost, licensingBatchURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("google licensing api: cannot build the licence batch: %w", err)
+		}
+		request.Header.Set("Content-Type", contentType)
+		request.Header.Set("Accept", "multipart/mixed")
+		return d.client.Do(request)
+	})
+	if err != nil {
+		return 0, fmt.Errorf("google licensing api: the licence batch of %s failed: %w", address, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode > 299 {
+		return 0, decodeError(response)
+	}
+	answers, err := readBatchAnswers(response)
+	if err != nil {
+		return 0, err
+	}
+	return d.acceptLicenseAnswers(address, answers)
+}
+
+// acceptLicenseAnswers records the assignments one batch answered.
+//
+// A part that carries no assignment — 404, and 400 for a SKU Google retired or one
+// the tenant cannot own — is the normal answer for the SKUs a user does not hold, so
+// it is not an error. Nothing is correlated by position or by Content-ID: a part
+// that carries a licence carries its own product id, SKU id and user id, so a
+// reordered answer cannot mislabel a row.
+func (d *reportData) acceptLicenseAnswers(address string, answers []batchAnswer) (int, error) {
+	rows := 0
+	var firstErr error
+	for _, answer := range answers {
+		switch {
+		case answer.Status == http.StatusOK:
+			var license reportLicense
+			if err := json.Unmarshal(answer.Body, &license); err != nil {
+				continue
+			}
+			if d.addLicense(license, address) {
+				rows++
+			}
+		case answer.Status == http.StatusUnauthorized || answer.Status == http.StatusForbidden:
+			// The domain refused the caller: the other parts carry the same
+			// answer, and so would every other user's batch.
+			return rows, batchRefusal(answer)
+		case answer.Status == http.StatusBadRequest || answer.Status == http.StatusNotFound:
+			// The normal answer for a SKU this user does not hold, and for one
+			// Google retired or the tenant cannot own: no assignment, no error.
+		case answer.Status >= http.StatusBadRequest:
+			if firstErr == nil {
+				firstErr = batchRefusal(answer)
+			}
+		}
+	}
+	return rows, firstErr
+}
+
+// addLicense records one assignment in the per-user index and answers whether it was
+// recorded: a row without a user cannot be attributed, and the address the per-user
+// read was asked with stands in for the id it may omit.
+func (d *reportData) addLicense(license reportLicense, address string) bool {
+	if textCell(license.UserID) == "" {
+		license.UserID = address
+	}
+	key := strings.ToLower(textCell(license.UserID))
+	if key == "" {
+		return false
+	}
+	if textCell(license.SkuName) == "" {
+		license.SkuName = licenseSkuName(license.SkuID)
+	}
+	d.licenses[key] = append(d.licenses[key], license)
+	return true
 }
 
 // scanLicenses reads one product of the catalogue, adding every assignment to the
@@ -798,12 +1041,7 @@ func (d *reportData) scanLicenses(product, customer string) (int, error) {
 		if err := json.Unmarshal(raw, &license); err != nil {
 			return false
 		}
-		address := strings.ToLower(textCell(license.UserID))
-		if address == "" {
-			return false
-		}
-		d.licenses[address] = append(d.licenses[address], license)
-		return true
+		return d.addLicense(license, "")
 	})
 	return count, err
 }
@@ -1435,6 +1673,9 @@ type reportChannel struct {
 // Analytics use at all legitimately answers zero rows.
 func (d *reportData) analyticsTable() providers.ReportTable {
 	table := providers.ReportTable{Columns: analyticsColumns()}
+	// The properties of a row are the ones the connected account reaches, so the
+	// table names it first (see accountEmail).
+	connected := d.accountEmail()
 	accounts := []reportAnalyticsAccount{}
 	_, cut, err := d.walk(walkRequest{
 		section:    providers.ReportSectionAnalytics,
@@ -1494,6 +1735,7 @@ func (d *reportData) analyticsTable() providers.ReportTable {
 				return false
 			}
 			table.Rows = append(table.Rows, providers.ReportRow{
+				connected,
 				label,
 				textCell(property.Name),
 				textCell(property.DisplayName),
@@ -1535,6 +1777,9 @@ func (d *reportData) analyticsTable() providers.ReportTable {
 // is a valid section, not a failure.
 func (d *reportData) youtubeTable() providers.ReportTable {
 	table := providers.ReportTable{Columns: youtubeColumns()}
+	// The channel of a row belongs to the account the connection was made with, so
+	// the table names it first (see accountEmail).
+	account := d.accountEmail()
 	_, cut, err := d.walk(walkRequest{
 		section:    providers.ReportSectionYouTube,
 		target:     channelsTarget(),
@@ -1550,6 +1795,7 @@ func (d *reportData) youtubeTable() providers.ReportTable {
 			subscribers = "hidden"
 		}
 		table.Rows = append(table.Rows, providers.ReportRow{
+			account,
 			textCell(channel.Snippet.Title),
 			textCell(channel.ID),
 			textCell(channel.Snippet.CustomURL),
@@ -1722,6 +1968,7 @@ func sharedDriveMemberColumns() []providers.ReportColumn {
 // report.
 func analyticsColumns() []providers.ReportColumn {
 	return []providers.ReportColumn{
+		column("account_email", "Account"),
 		column("account", "Analytics account"),
 		column("property", "Property"),
 		column("property_name", "Property name"),
@@ -1737,6 +1984,7 @@ func analyticsColumns() []providers.ReportColumn {
 // youtubeColumns is the header of the youtube section.
 func youtubeColumns() []providers.ReportColumn {
 	return []providers.ReportColumn{
+		column("account_email", "Account"),
 		column("channel", "Channel"),
 		column("channel_id", "Channel id"),
 		column("handle", "Handle"),
