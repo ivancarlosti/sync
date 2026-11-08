@@ -26,6 +26,9 @@ var wantScopes = []string{
 	"https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly",
 	"https://www.googleapis.com/auth/apps.licensing",
 	"https://www.googleapis.com/auth/admin.reports.audit.readonly",
+	"https://www.googleapis.com/auth/gmail.modify",
+	"https://www.googleapis.com/auth/calendar",
+	"https://www.googleapis.com/auth/gmail.settings.sharing",
 }
 
 // TestScopesMatchThePermissionTable pins Scopes() to the table the guide renders.

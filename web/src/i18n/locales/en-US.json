@@ -65,7 +65,8 @@
     "skipToContent": "Skip to the content",
     "primaryNavigation": "Primary navigation",
     "auditLogs": "Audit Logs",
-    "reports": "Reports"
+    "reports": "Reports",
+    "management": "Admin operations"
   },
   "auth": {
     "title": "Sign in to Sync",
@@ -495,7 +496,11 @@
       "orgunits": "Organisational units",
       "roles": "Administrative roles",
       "licenses": "Licences",
-      "logs": "Audit logs"
+      "logs": "Audit logs",
+      "mail": "Mail",
+      "calendars": "Calendars",
+      "delegation": "Mailbox delegation",
+      "sitesadmin": "Site administration"
     },
     "guide": {
       "title": "Setup guide",
@@ -903,5 +908,74 @@
     "error_rate_limited": "The provider is throttling the account. Try again later.",
     "error_internal": "The server could not complete the request.",
     "error_unknown": "The request failed."
+  },
+  "management": {
+    "title": "Admin operations",
+    "subtitle": "Provider-backed administrative tasks, each with an auditable journal.",
+    "operations": "Operations",
+    "activity": "Activity",
+    "account": "Account",
+    "selectAccount": "Select an account",
+    "noAccounts": "Connect an account before running an operation.",
+    "loadError": "The operations could not be loaded.",
+    "startError": "The operation could not be started.",
+    "unsupported": "This account's provider offers no administrative operation.",
+    "missingCapability": "Reconnect the account to grant {capability}.",
+    "danger": "Destructive",
+    "dangerHint": "This operation changes or removes provider data. Confirm to run it.",
+    "confirmRun": "I understand, run the operation",
+    "run": "Run",
+    "cancelled": "The operation was cancelled.",
+    "cancelError": "The operation could not be cancelled.",
+    "history": "History",
+    "historyEmpty": "No operation has run yet.",
+    "kind": "Operation",
+    "duration": "Duration",
+    "items": "Items",
+    "steps": "Journal",
+    "stepsEmpty": "No step was recorded.",
+    "detail": "Detail",
+    "view": "View",
+    "actions": {
+      "add": "Add",
+      "remove": "Remove",
+      "list": "List"
+    },
+    "kinds": {
+      "google_drive_to_new_shared_drive": "Move a Drive into a new Shared Drive",
+      "google_drive_to_shared_drive": "Move a Drive into an existing Shared Drive",
+      "google_archive_user_group": "Archive a user into a group",
+      "google_copy_mailbox": "Copy a mailbox",
+      "google_transfer_calendars": "Transfer calendars",
+      "google_manage_delegate": "Manage mailbox delegates",
+      "microsoft_copy_mailbox": "Copy a mailbox",
+      "microsoft_onedrive_to_site": "Copy OneDrive to a SharePoint site",
+      "microsoft_transfer_calendars": "Transfer calendars",
+      "microsoft_folder_sizes": "Report folder sizes"
+    },
+    "params": {
+      "name": "Name",
+      "source_drive_id": "Source drive",
+      "target_drive_id": "Target shared drive",
+      "user_email": "User email",
+      "group_email": "Group email",
+      "group_name": "Group name",
+      "member_email": "Member email",
+      "archive_email": "Archive email",
+      "source": "Source mailbox",
+      "target": "Target mailbox",
+      "max": "Maximum messages",
+      "mailbox": "Mailbox",
+      "delegate": "Delegate email",
+      "action": "Action",
+      "site_name": "Site name",
+      "site_display_name": "Site display name",
+      "target_folder_id": "Target folder",
+      "drive_id": "Drive"
+    },
+    "started": "Started",
+    "bytes": "Bytes",
+    "status": "Status",
+    "export": "Export CSV"
   }
 }

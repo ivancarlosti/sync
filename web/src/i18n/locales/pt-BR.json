@@ -65,7 +65,8 @@
     "skipToContent": "Ir para o conteúdo",
     "primaryNavigation": "Navegação principal",
     "auditLogs": "Registros de auditoria",
-    "reports": "Relatórios"
+    "reports": "Relatórios",
+    "management": "Operações administrativas"
   },
   "auth": {
     "title": "Entrar no Sync",
@@ -495,7 +496,11 @@
       "orgunits": "Unidades organizacionais",
       "roles": "Funções administrativas",
       "licenses": "Licenças",
-      "logs": "Registros de auditoria"
+      "logs": "Registros de auditoria",
+      "mail": "E-mail",
+      "calendars": "Calendários",
+      "delegation": "Delegação de caixa",
+      "sitesadmin": "Administração de sites"
     },
     "guide": {
       "title": "Guia de configuração",
@@ -903,5 +908,74 @@
     "error_rate_limited": "O provedor está limitando a conta. Tente novamente mais tarde.",
     "error_internal": "O servidor não conseguiu concluir a solicitação.",
     "error_unknown": "A solicitação falhou."
+  },
+  "management": {
+    "title": "Operações administrativas",
+    "subtitle": "Tarefas administrativas fornecidas pelo provedor, cada uma com um registro auditável.",
+    "operations": "Operações",
+    "activity": "Atividade",
+    "account": "Conta",
+    "selectAccount": "Selecione uma conta",
+    "noAccounts": "Conecte uma conta antes de executar uma operação.",
+    "loadError": "Não foi possível carregar as operações.",
+    "startError": "Não foi possível iniciar a operação.",
+    "unsupported": "O provedor desta conta não oferece nenhuma operação administrativa.",
+    "missingCapability": "Reconecte a conta para conceder {capability}.",
+    "danger": "Destrutiva",
+    "dangerHint": "Esta operação altera ou remove dados do provedor. Confirme para executá-la.",
+    "confirmRun": "Entendo, executar a operação",
+    "run": "Executar",
+    "cancelled": "A operação foi cancelada.",
+    "cancelError": "Não foi possível cancelar a operação.",
+    "history": "Histórico",
+    "historyEmpty": "Nenhuma operação foi executada ainda.",
+    "kind": "Operação",
+    "duration": "Duração",
+    "items": "Itens",
+    "steps": "Registro",
+    "stepsEmpty": "Nenhuma etapa foi registrada.",
+    "detail": "Detalhe",
+    "view": "Ver",
+    "actions": {
+      "add": "Adicionar",
+      "remove": "Remover",
+      "list": "Listar"
+    },
+    "kinds": {
+      "google_drive_to_new_shared_drive": "Mover um Drive para um Drive compartilhado novo",
+      "google_drive_to_shared_drive": "Mover um Drive para um Drive compartilhado existente",
+      "google_archive_user_group": "Arquivar um usuário em um grupo",
+      "google_copy_mailbox": "Copiar uma caixa de correio",
+      "google_transfer_calendars": "Transferir calendários",
+      "google_manage_delegate": "Gerenciar delegados da caixa",
+      "microsoft_copy_mailbox": "Copiar uma caixa de correio",
+      "microsoft_onedrive_to_site": "Copiar o OneDrive para um site do SharePoint",
+      "microsoft_transfer_calendars": "Transferir calendários",
+      "microsoft_folder_sizes": "Relatório de tamanho de pastas"
+    },
+    "params": {
+      "name": "Nome",
+      "source_drive_id": "Drive de origem",
+      "target_drive_id": "Drive compartilhado de destino",
+      "user_email": "E-mail do usuário",
+      "group_email": "E-mail do grupo",
+      "group_name": "Nome do grupo",
+      "member_email": "E-mail do membro",
+      "archive_email": "E-mail de arquivo",
+      "source": "Caixa de origem",
+      "target": "Caixa de destino",
+      "max": "Máximo de mensagens",
+      "mailbox": "Caixa de correio",
+      "delegate": "E-mail do delegado",
+      "action": "Ação",
+      "site_name": "Nome do site",
+      "site_display_name": "Nome de exibição do site",
+      "target_folder_id": "Pasta de destino",
+      "drive_id": "Drive"
+    },
+    "started": "Início",
+    "bytes": "Bytes",
+    "status": "Status",
+    "export": "Exportar CSV"
   }
 }

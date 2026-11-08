@@ -44,6 +44,9 @@ var directoryCapabilities = []providers.Capability{
 	providers.CapabilityRoles,
 	providers.CapabilityLicenses,
 	providers.CapabilityLogs,
+	providers.CapabilityMail,
+	providers.CapabilityCalendars,
+	providers.CapabilitySitesAdmin,
 }
 
 // accountJWT shapes claims into a JWT-shaped access token: the classifier reads
@@ -162,7 +165,7 @@ func TestPersonalAccountsNeverAskToReconnectForDirectoryPermissions(t *testing.T
 
 			if testCase.wantAllMissing {
 				if !view.NeedsReconnect ||
-					fmt.Sprint(view.MissingCapabilities) != fmt.Sprint(providers.ProviderCapabilities) {
+					fmt.Sprint(view.MissingCapabilities) != fmt.Sprint(providers.CapabilitiesFor(models.ProviderMicrosoft)) {
 					t.Fatalf("missing = %v (needs_reconnect=%v), want every capability",
 						view.MissingCapabilities, view.NeedsReconnect)
 				}

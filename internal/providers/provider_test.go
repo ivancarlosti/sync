@@ -223,7 +223,7 @@ func TestApplicablePermissionsSplitsByAccountKind(t *testing.T) {
 	undeclared := []Capability{
 		CapabilityGroups, CapabilityMembers, CapabilityTeams, CapabilityPlanner,
 		CapabilityDomains, CapabilityOrgUnits, CapabilityRoles, CapabilityLicenses,
-		CapabilityLogs,
+		CapabilityLogs, CapabilityMail, CapabilityCalendars, CapabilitySitesAdmin,
 	}
 	if fmt.Sprint(report.Missing) != fmt.Sprint(undeclared) {
 		t.Fatalf("missing = %v, want %v", report.Missing, undeclared)
@@ -256,20 +256,43 @@ func TestCapabilitiesForSplitsTheVocabulary(t *testing.T) {
 	microsoft := CapabilitiesFor(models.ProviderMicrosoft)
 	google := CapabilitiesFor(models.ProviderGoogle)
 
-	if fmt.Sprint(microsoft) != fmt.Sprint(ProviderCapabilities) {
-		t.Fatalf("CapabilitiesFor(microsoft) = %v, want the whole vocabulary", microsoft)
+	if fmt.Sprint(microsoft) != fmt.Sprint(wantVocabulary(models.ProviderMicrosoft)) {
+		t.Fatalf("CapabilitiesFor(microsoft) = %v, want %v", microsoft, wantVocabulary(models.ProviderMicrosoft))
 	}
 	// The display order is the vocabulary order: filtering never reshuffles.
-	filtered := []Capability{}
+	if fmt.Sprint(google) != fmt.Sprint(wantVocabulary(models.ProviderGoogle)) {
+		t.Fatalf("CapabilitiesFor(google) = %v, want %v", google, wantVocabulary(models.ProviderGoogle))
+	}
+}
+
+// inVocabulary keeps the capabilities a provider's vocabulary holds, which is
+// what ReportCapabilities reports (the plain functions walk the whole shared
+// vocabulary).
+func inVocabulary(list []Capability, name models.ProviderName) []Capability {
+	allowed := map[Capability]bool{}
+	for _, capability := range CapabilitiesFor(name) {
+		allowed[capability] = true
+	}
+	kept := []Capability{}
+	for _, capability := range list {
+		if allowed[capability] {
+			kept = append(kept, capability)
+		}
+	}
+	return kept
+}
+
+// wantVocabulary builds the expected capability list of a provider from the
+// exclusivity table, which is the same rule CapabilitiesFor applies.
+func wantVocabulary(name models.ProviderName) []Capability {
+	wanted := []Capability{}
 	for _, capability := range ProviderCapabilities {
-		if capability == CapabilityTeams || capability == CapabilityPlanner {
+		if owner, exclusive := capabilityExclusive[capability]; exclusive && owner != name {
 			continue
 		}
-		filtered = append(filtered, capability)
+		wanted = append(wanted, capability)
 	}
-	if fmt.Sprint(google) != fmt.Sprint(filtered) {
-		t.Fatalf("CapabilitiesFor(google) = %v, want %v", google, filtered)
-	}
+	return wanted
 }
 
 // TestApplicablePermissionsKeepsUnknownKindsWhole guards the fallback of a
@@ -292,8 +315,8 @@ func TestApplicablePermissionsKeepsUnknownKindsWhole(t *testing.T) {
 		if len(report.NotApplicable) != 0 {
 			t.Fatalf("granted %v: notApplicable = %v, want none", granted, report.NotApplicable)
 		}
-		if fmt.Sprint(report.Granted) != fmt.Sprint(CapabilitiesOf(table, granted)) ||
-			fmt.Sprint(report.Missing) != fmt.Sprint(MissingCapabilities(table, granted)) {
+		if fmt.Sprint(report.Granted) != fmt.Sprint(inVocabulary(CapabilitiesOf(table, granted), models.ProviderMicrosoft)) ||
+			fmt.Sprint(report.Missing) != fmt.Sprint(inVocabulary(MissingCapabilities(table, granted), models.ProviderMicrosoft)) {
 			t.Fatalf("granted %v: report = %+v, want the plain capability lists", granted, report)
 		}
 	}

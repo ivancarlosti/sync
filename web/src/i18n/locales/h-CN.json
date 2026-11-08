@@ -65,7 +65,8 @@
     "skipToContent": "跳到内容",
     "primaryNavigation": "主导航",
     "auditLogs": "审核日志",
-    "reports": "报告"
+    "reports": "报告",
+    "management": "管理操作"
   },
   "auth": {
     "title": "登录 Sync",
@@ -495,7 +496,11 @@
       "orgunits": "组织单位",
       "roles": "管理角色",
       "licenses": "许可证",
-      "logs": "审核日志"
+      "logs": "审核日志",
+      "mail": "邮件",
+      "calendars": "日历",
+      "delegation": "邮箱委派",
+      "sitesadmin": "网站管理"
     },
     "guide": {
       "title": "设置指南",
@@ -903,5 +908,74 @@
     "error_rate_limited": "提供商正在限制该账户。请稍后再试。",
     "error_internal": "服务器无法完成请求。",
     "error_unknown": "请求失败。"
+  },
+  "management": {
+    "title": "管理操作",
+    "subtitle": "由提供商支持的行政任务，每项都有可审计的日志。",
+    "operations": "操作",
+    "activity": "活动",
+    "account": "账户",
+    "selectAccount": "选择账户",
+    "noAccounts": "请先连接账户再执行操作。",
+    "loadError": "无法加载操作。",
+    "startError": "无法启动操作。",
+    "unsupported": "该账户的提供商不提供任何管理操作。",
+    "missingCapability": "重新连接账户以授予 {capability}。",
+    "danger": "破坏性",
+    "dangerHint": "此操作会更改或删除提供商数据。确认后执行。",
+    "confirmRun": "我了解，执行操作",
+    "run": "执行",
+    "cancelled": "操作已取消。",
+    "cancelError": "无法取消操作。",
+    "history": "历史",
+    "historyEmpty": "尚未执行任何操作。",
+    "kind": "操作",
+    "duration": "持续时间",
+    "items": "项目",
+    "steps": "日志",
+    "stepsEmpty": "未记录任何步骤。",
+    "detail": "详情",
+    "view": "查看",
+    "actions": {
+      "add": "添加",
+      "remove": "移除",
+      "list": "列出"
+    },
+    "kinds": {
+      "google_drive_to_new_shared_drive": "将 Drive 移动到新的共享云端硬盘",
+      "google_drive_to_shared_drive": "将 Drive 移动到现有共享云端硬盘",
+      "google_archive_user_group": "将用户归档到群组",
+      "google_copy_mailbox": "复制邮箱",
+      "google_transfer_calendars": "转移日历",
+      "google_manage_delegate": "管理邮箱代理人",
+      "microsoft_copy_mailbox": "复制邮箱",
+      "microsoft_onedrive_to_site": "将 OneDrive 复制到 SharePoint 网站",
+      "microsoft_transfer_calendars": "转移日历",
+      "microsoft_folder_sizes": "文件夹大小报告"
+    },
+    "params": {
+      "name": "名称",
+      "source_drive_id": "源云端硬盘",
+      "target_drive_id": "目标共享云端硬盘",
+      "user_email": "用户邮箱",
+      "group_email": "群组邮箱",
+      "group_name": "群组名称",
+      "member_email": "成员邮箱",
+      "archive_email": "归档邮箱",
+      "source": "源邮箱",
+      "target": "目标邮箱",
+      "max": "最大邮件数",
+      "mailbox": "邮箱",
+      "delegate": "代理人邮箱",
+      "action": "操作",
+      "site_name": "网站名称",
+      "site_display_name": "网站显示名称",
+      "target_folder_id": "目标文件夹",
+      "drive_id": "云端硬盘"
+    },
+    "started": "开始于",
+    "bytes": "字节",
+    "status": "状态",
+    "export": "导出 CSV"
   }
 }

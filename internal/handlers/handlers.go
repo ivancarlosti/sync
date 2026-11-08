@@ -54,6 +54,8 @@ type Deps struct {
 	Audit *services.AuditService
 	// Reports starts directory reports and drives their schedules.
 	Reports *services.ReportService
+	// Management starts and journals administrative operations.
+	Management *services.ManagementService
 	// Scheduler is used to force a scheduling pass or a token refresh.
 	Scheduler *services.Scheduler
 	// Purge applies the retention policy on demand (Admin > Settings > Purge).
@@ -132,6 +134,8 @@ func (d Deps) validate() error {
 		return errors.New("handlers: Audit is required")
 	case d.Reports == nil:
 		return errors.New("handlers: Reports is required")
+	case d.Management == nil:
+		return errors.New("handlers: Management is required")
 	case d.Scheduler == nil:
 		return errors.New("handlers: Scheduler is required")
 	case d.Purge == nil:

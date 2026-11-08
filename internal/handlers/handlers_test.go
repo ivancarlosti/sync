@@ -151,6 +151,7 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 	engine := services.NewSyncService(store, tokens, appSettings, notifier)
 	audit := services.NewAuditService(store, tokens)
 	reports := services.NewReportService(store, tokens)
+	management := services.NewManagementService(store, tokens, registry)
 
 	deps := Deps{
 		Config:      cfg,
@@ -167,6 +168,7 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 		Sync:        engine,
 		Audit:       audit,
 		Reports:     reports,
+		Management:  management,
 		Scheduler:   services.NewScheduler(store, engine, tokens, notifier, reports),
 		Purge:       services.NewPurgeService(store),
 		Assets:      testAssets(),

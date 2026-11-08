@@ -35,6 +35,9 @@ var wantScopes = []string{
 	"https://graph.microsoft.com/Organization.Read.All",
 	"https://graph.microsoft.com/LicenseAssignment.ReadWrite.All",
 	"https://graph.microsoft.com/AuditLog.Read.All",
+	"https://graph.microsoft.com/Mail.ReadWrite",
+	"https://graph.microsoft.com/Calendars.ReadWrite",
+	"https://graph.microsoft.com/Sites.Manage.All",
 }
 
 // TestScopesMatchThePermissionTable pins Scopes() to the table the guide renders.
@@ -99,7 +102,7 @@ func TestPermissionsAreCompleteAndUnique(t *testing.T) {
 			t.Fatalf("scope %q is neither an OIDC scope nor a Graph scope", permission.Scope)
 		}
 	}
-	for _, capability := range providers.ProviderCapabilities {
+	for _, capability := range providers.CapabilitiesFor(models.ProviderMicrosoft) {
 		if !providers.HasCapability(permissions, wantScopes, capability) {
 			t.Fatalf("capability %q is not satisfied by the requested set", capability)
 		}
@@ -147,10 +150,14 @@ func TestGrantAsEntraReportsItSatisfiesEveryCapability(t *testing.T) {
 	if len(granted) != len(encoded) {
 		t.Fatalf("granted = %v, want %d scopes", granted, len(encoded))
 	}
-	if missing := providers.MissingCapabilities(provider.Permissions(), granted); len(missing) != 0 {
-		t.Fatalf("a grant as Entra reports it is missing %v", missing)
+	// delegation is Google-only, so it is outside this provider's vocabulary;
+	// every capability it does speak must be satisfied by the grant.
+	for _, capability := range providers.CapabilitiesFor(models.ProviderMicrosoft) {
+		if !providers.HasCapability(provider.Permissions(), granted, capability) {
+			t.Fatalf("a grant as Entra reports it does not satisfy %q", capability)
+		}
 	}
-	if got := providers.CapabilitiesOf(provider.Permissions(), granted); len(got) != len(providers.ProviderCapabilities) {
+	if got := providers.CapabilitiesOf(provider.Permissions(), granted); len(got) != len(providers.CapabilitiesFor(models.ProviderMicrosoft)) {
 		t.Fatalf("capabilities = %v, want all of them", got)
 	}
 }
@@ -211,6 +218,9 @@ func TestPersonalAccountsKeepOnlyTheScopesTheyCanHold(t *testing.T) {
 		providers.CapabilityRoles,
 		providers.CapabilityLicenses,
 		providers.CapabilityLogs,
+		providers.CapabilityMail,
+		providers.CapabilityCalendars,
+		providers.CapabilitySitesAdmin,
 	}
 	if len(report.NotApplicable) != len(want) {
 		t.Fatalf("notApplicable = %v, want %v", report.NotApplicable, want)

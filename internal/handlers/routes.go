@@ -82,6 +82,18 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		reports.GET("/:id/export", s.handleExportReport)
 		reports.GET("/:id/sections/:section", s.handleGetReportSection)
 
+		// The Admin operations screen: the catalogue of provider-backed
+		// administrative tasks (move a Drive into a Shared Drive, archive a
+		// user, copy a mailbox, transfer calendars, report folder sizes), the
+		// start request, the auditable journal and its CSV export.
+		management := secured.Group("/management")
+		management.GET("/operations", s.handleListManagementOperations)
+		management.GET("/tasks", s.handleListManagementTasks)
+		management.POST("/tasks", s.handleStartManagementTask)
+		management.GET("/tasks/:id", s.handleGetManagementTask)
+		management.POST("/tasks/:id/cancel", s.handleCancelManagementTask)
+		management.GET("/tasks/:id/export", s.handleExportManagementTask)
+
 		// The activity feed of the Audit Logs screen: the stored history, its
 		// export and the status of every feed.
 		auditLogs := secured.Group("/audit-logs")

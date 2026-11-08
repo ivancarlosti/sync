@@ -20,6 +20,8 @@ export type RouteName =
   | 'audit'
   | 'audit-logs'
   | 'reports'
+  | 'management-operations'
+  | 'management-activity'
   | 'billing'
   | 'notifications'
   | 'admin-providers'
@@ -89,6 +91,26 @@ const routes: RouteRecordRaw[] = [
         path: 'reports',
         name: 'reports',
         component: () => import('@/views/ReportsView.vue'),
+      },
+      {
+        // The Admin operations screen: provider-backed administrative tasks
+        // (see views/management/OperationsView.vue) and their auditable
+        // journal (see views/management/ActivityView.vue).
+        path: 'management',
+        component: () => import('@/layouts/ManagementLayout.vue'),
+        children: [
+          { path: '', redirect: { name: 'management-operations' } },
+          {
+            path: 'operations',
+            name: 'management-operations',
+            component: () => import('@/views/management/OperationsView.vue'),
+          },
+          {
+            path: 'activity',
+            name: 'management-activity',
+            component: () => import('@/views/management/ActivityView.vue'),
+          },
+        ],
       },
       {
         // The traffic report: what the instance moved, by day, month, account

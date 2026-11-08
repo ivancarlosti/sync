@@ -65,7 +65,8 @@
     "skipToContent": "सामग्री पर जाएँ",
     "primaryNavigation": "मुख्य नेविगेशन",
     "auditLogs": "ऑडिट लॉग",
-    "reports": "रिपोर्ट"
+    "reports": "रिपोर्ट",
+    "management": "प्रशासनिक संचालन"
   },
   "auth": {
     "title": "Sync में साइन इन करें",
@@ -495,7 +496,11 @@
       "orgunits": "संगठनात्मक इकाइयाँ",
       "roles": "प्रशासनिक भूमिकाएँ",
       "licenses": "लाइसेंस",
-      "logs": "ऑडिट लॉग"
+      "logs": "ऑडिट लॉग",
+      "mail": "मेल",
+      "calendars": "कैलेंडर",
+      "delegation": "मेलबॉक्स प्रतिनिधित्व",
+      "sitesadmin": "साइट प्रशासन"
     },
     "guide": {
       "title": "सेटअप गाइड",
@@ -903,5 +908,74 @@
     "error_rate_limited": "प्रदाता खाते को सीमित कर रहा है। बाद में प्रयास करें।",
     "error_internal": "सर्वर अनुरोध पूरा नहीं कर सका।",
     "error_unknown": "अनुरोध विफल रहा।"
+  },
+  "management": {
+    "title": "प्रशासनिक संचालन",
+    "subtitle": "प्रदाता-समर्थित प्रशासनिक कार्य, प्रत्येक में ऑडिट योग्य जर्नल।",
+    "operations": "संचालन",
+    "activity": "गतिविधि",
+    "account": "खाता",
+    "selectAccount": "खाता चुनें",
+    "noAccounts": "संचालन चलाने से पहले खाता कनेक्ट करें।",
+    "loadError": "संचालन लोड नहीं हो सके।",
+    "startError": "संचालन शुरू नहीं हो सका।",
+    "unsupported": "इस खाते का प्रदाता कोई प्रशासनिक संचालन नहीं देता।",
+    "missingCapability": "{capability} देने के लिए खाता फिर से कनेक्ट करें।",
+    "danger": "विनाशकारी",
+    "dangerHint": "यह संचालन प्रदाता डेटा बदलता या हटाता है। चलाने के लिए पुष्टि करें।",
+    "confirmRun": "मैं समझता हूँ, संचालन चलाएँ",
+    "run": "चलाएँ",
+    "cancelled": "संचालन रद्द कर दिया गया।",
+    "cancelError": "संचालन रद्द नहीं हो सका।",
+    "history": "इतिहास",
+    "historyEmpty": "अभी तक कोई संचालन नहीं चला।",
+    "kind": "संचालन",
+    "duration": "अवधि",
+    "items": "आइटम",
+    "steps": "जर्नल",
+    "stepsEmpty": "कोई चरण दर्ज नहीं हुआ।",
+    "detail": "विवरण",
+    "view": "देखें",
+    "actions": {
+      "add": "जोड़ें",
+      "remove": "हटाएँ",
+      "list": "सूची"
+    },
+    "kinds": {
+      "google_drive_to_new_shared_drive": "Drive को नए साझा ड्राइव में ले जाएँ",
+      "google_drive_to_shared_drive": "Drive को मौजूदा साझा ड्राइव में ले जाएँ",
+      "google_archive_user_group": "उपयोगकर्ता को समूह में संग्रहित करें",
+      "google_copy_mailbox": "मेलबॉक्स की प्रतिलिपि बनाएँ",
+      "google_transfer_calendars": "कैलेंडर स्थानांतरित करें",
+      "google_manage_delegate": "मेलबॉक्स प्रतिनिधि प्रबंधित करें",
+      "microsoft_copy_mailbox": "मेलबॉक्स की प्रतिलिपि बनाएँ",
+      "microsoft_onedrive_to_site": "OneDrive को SharePoint साइट में कॉपी करें",
+      "microsoft_transfer_calendars": "कैलेंडर स्थानांतरित करें",
+      "microsoft_folder_sizes": "फ़ोल्डर आकार रिपोर्ट"
+    },
+    "params": {
+      "name": "नाम",
+      "source_drive_id": "स्रोत ड्राइव",
+      "target_drive_id": "लक्ष्य साझा ड्राइव",
+      "user_email": "उपयोगकर्ता ईमेल",
+      "group_email": "समूह ईमेल",
+      "group_name": "समूह नाम",
+      "member_email": "सदस्य ईमेल",
+      "archive_email": "संग्रह ईमेल",
+      "source": "स्रोत मेलबॉक्स",
+      "target": "लक्ष्य मेलबॉक्स",
+      "max": "अधिकतम संदेश",
+      "mailbox": "मेलबॉक्स",
+      "delegate": "प्रतिनिधि ईमेल",
+      "action": "क्रिया",
+      "site_name": "साइट नाम",
+      "site_display_name": "साइट प्रदर्शित नाम",
+      "target_folder_id": "लक्ष्य फ़ोल्डर",
+      "drive_id": "ड्राइव"
+    },
+    "started": "प्रारंभ",
+    "bytes": "बाइट",
+    "status": "स्थिति",
+    "export": "CSV निर्यात करें"
   }
 }

@@ -421,6 +421,17 @@ const (
 	// CapabilityLogs covers reading the organisation-wide activity feed behind
 	// the Audit Logs screen (see ActivityLogSource).
 	CapabilityLogs Capability = "logs"
+	// CapabilityMail covers reading and copying mailbox content (the mailbox
+	// copy of the Admin operations screen).
+	CapabilityMail Capability = "mail"
+	// CapabilityCalendars covers reading and transferring calendars (the
+	// calendar transfer of the Admin operations screen).
+	CapabilityCalendars Capability = "calendars"
+	// CapabilityDelegation covers managing mailbox delegates.
+	CapabilityDelegation Capability = "delegation"
+	// CapabilitySitesAdmin covers creating sites and copying content into them
+	// (the OneDrive → SharePoint operation).
+	CapabilitySitesAdmin Capability = "sitesadmin"
 )
 
 // ProviderCapabilities lists every capability in the order the UI displays them.
@@ -436,6 +447,10 @@ var ProviderCapabilities = []Capability{
 	CapabilityRoles,
 	CapabilityLicenses,
 	CapabilityLogs,
+	CapabilityMail,
+	CapabilityCalendars,
+	CapabilityDelegation,
+	CapabilitySitesAdmin,
 }
 
 // capabilityExclusive names the capabilities only one provider declares, exactly
@@ -445,8 +460,10 @@ var ProviderCapabilities = []Capability{
 // above all not as a missing permission a reconnection could add. A capability
 // absent from this map is part of every provider's vocabulary.
 var capabilityExclusive = map[Capability]models.ProviderName{
-	CapabilityTeams:   models.ProviderMicrosoft,
-	CapabilityPlanner: models.ProviderMicrosoft,
+	CapabilityTeams:      models.ProviderMicrosoft,
+	CapabilityPlanner:    models.ProviderMicrosoft,
+	CapabilityDelegation: models.ProviderGoogle,
+	CapabilitySitesAdmin: models.ProviderMicrosoft,
 }
 
 // CapabilitiesFor answers the capabilities in the vocabulary of one provider, in

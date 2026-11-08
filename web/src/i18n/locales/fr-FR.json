@@ -65,7 +65,8 @@
     "skipToContent": "Aller au contenu",
     "primaryNavigation": "Navigation principale",
     "auditLogs": "Journaux d'audit",
-    "reports": "Rapports"
+    "reports": "Rapports",
+    "management": "Opérations d'administration"
   },
   "auth": {
     "title": "Connexion à Sync",
@@ -495,7 +496,11 @@
       "orgunits": "Unités organisationnelles",
       "roles": "Rôles administratifs",
       "licenses": "Licences",
-      "logs": "Journaux d'audit"
+      "logs": "Journaux d'audit",
+      "mail": "Messagerie",
+      "calendars": "Agendas",
+      "delegation": "Délégation de boîte",
+      "sitesadmin": "Administration de sites"
     },
     "guide": {
       "title": "Guide de configuration",
@@ -903,5 +908,74 @@
     "error_rate_limited": "Le fournisseur limite ce compte. Réessayez plus tard.",
     "error_internal": "Le serveur n'a pas pu terminer la requête.",
     "error_unknown": "La requête a échoué."
+  },
+  "management": {
+    "title": "Opérations d'administration",
+    "subtitle": "Tâches d'administration fournies par le fournisseur, chacune avec un journal auditable.",
+    "operations": "Opérations",
+    "activity": "Activité",
+    "account": "Compte",
+    "selectAccount": "Sélectionnez un compte",
+    "noAccounts": "Connectez un compte avant d'exécuter une opération.",
+    "loadError": "Les opérations n'ont pas pu être chargées.",
+    "startError": "L'opération n'a pas pu être démarrée.",
+    "unsupported": "Le fournisseur de ce compte n'offre aucune opération d'administration.",
+    "missingCapability": "Reconnectez le compte pour accorder {capability}.",
+    "danger": "Destructive",
+    "dangerHint": "Cette opération modifie ou supprime des données du fournisseur. Confirmez pour l'exécuter.",
+    "confirmRun": "Je comprends, exécuter l'opération",
+    "run": "Exécuter",
+    "cancelled": "L'opération a été annulée.",
+    "cancelError": "L'opération n'a pas pu être annulée.",
+    "history": "Historique",
+    "historyEmpty": "Aucune opération n'a encore été exécutée.",
+    "kind": "Opération",
+    "duration": "Durée",
+    "items": "Éléments",
+    "steps": "Journal",
+    "stepsEmpty": "Aucune étape n'a été enregistrée.",
+    "detail": "Détail",
+    "view": "Voir",
+    "actions": {
+      "add": "Ajouter",
+      "remove": "Retirer",
+      "list": "Lister"
+    },
+    "kinds": {
+      "google_drive_to_new_shared_drive": "Déplacer un Drive vers un Drive partagé nouveau",
+      "google_drive_to_shared_drive": "Déplacer un Drive vers un Drive partagé existant",
+      "google_archive_user_group": "Archiver un utilisateur dans un groupe",
+      "google_copy_mailbox": "Copier une boîte aux lettres",
+      "google_transfer_calendars": "Transférer les agendas",
+      "google_manage_delegate": "Gérer les délégations de boîte",
+      "microsoft_copy_mailbox": "Copier une boîte aux lettres",
+      "microsoft_onedrive_to_site": "Copier OneDrive vers un site SharePoint",
+      "microsoft_transfer_calendars": "Transférer les agendas",
+      "microsoft_folder_sizes": "Rapport de taille des dossiers"
+    },
+    "params": {
+      "name": "Nom",
+      "source_drive_id": "Drive source",
+      "target_drive_id": "Drive partagé cible",
+      "user_email": "E-mail de l'utilisateur",
+      "group_email": "E-mail du groupe",
+      "group_name": "Nom du groupe",
+      "member_email": "E-mail du membre",
+      "archive_email": "E-mail d'archive",
+      "source": "Boîte source",
+      "target": "Boîte cible",
+      "max": "Nombre maximal de messages",
+      "mailbox": "Boîte aux lettres",
+      "delegate": "E-mail du délégué",
+      "action": "Action",
+      "site_name": "Nom du site",
+      "site_display_name": "Nom affiché du site",
+      "target_folder_id": "Dossier cible",
+      "drive_id": "Drive"
+    },
+    "started": "Début",
+    "bytes": "Octets",
+    "status": "Statut",
+    "export": "Exporter CSV"
   }
 }

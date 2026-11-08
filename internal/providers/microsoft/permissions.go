@@ -105,6 +105,16 @@ func (p *Provider) Permissions() []providers.Permission {
 		// an authorization request — see unified.go and
 		// docs/app-registration.md.
 		{Capability: providers.CapabilityLogs, Title: "logs", Scope: auditLogScope, AdminConsent: true, Kinds: workAccounts},
+
+		// The Admin operations screen. Mail.ReadWrite reads a mailbox and
+		// creates the copy in another one; Calendars.ReadWrite reads the events
+		// of a user and creates them on the target; Sites.Manage.All provisions
+		// the SharePoint site the OneDrive → SharePoint copy targets. All three
+		// act on other users' mailboxes, so they need the tenant-wide consent
+		// and are only applicable to a work or school account.
+		{Capability: providers.CapabilityMail, Title: "mail", Scope: graphScope("Mail.ReadWrite"), AdminConsent: true, Kinds: workAccounts},
+		{Capability: providers.CapabilityCalendars, Title: "calendars", Scope: graphScope("Calendars.ReadWrite"), AdminConsent: true, Kinds: workAccounts},
+		{Capability: providers.CapabilitySitesAdmin, Title: "sitesadmin", Scope: graphScope("Sites.Manage.All"), AdminConsent: true, Kinds: workAccounts},
 	}
 }
 

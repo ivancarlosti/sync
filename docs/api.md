@@ -400,6 +400,27 @@ last_error?, created_at, updated_at`) plus `section_list`. `interval_minutes` is
 clamped to `15 … 43200` (a value outside is a **400**) and defaults to `1440`; a
 disabled schedule has no `next_run_at`.
 
+### 8.3 Admin operations
+
+Provider-backed administrative tasks (see [management.md](management.md) for the
+full operation catalogue and the per-provider scope prerequisites).
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| `GET` | `/api/management/operations?account_id=` | The operations the account can run; `account_id` is required (**400** without it). Each entry carries `supported` and `missing_capability`. |
+| `GET` | `/api/management/tasks?account_id=&limit=` | History, newest first; `account_id` optional, `limit` clamped to `200`. |
+| `POST` | `/api/management/tasks` | `{account_id, kind, params}` → **202** `{task}`; **400** for an unknown kind, a missing required parameter or an unconfirmed destructive operation; **409** while another task of the account runs; **412** when the grant does not cover the capability. |
+| `GET` | `/api/management/tasks/:id` | `{task}` with `steps` (the journal). |
+| `POST` | `/api/management/tasks/:id/cancel` | `{id, cancelled}`. |
+| `GET` | `/api/management/tasks/:id/export` | The journal as `text/csv` (UTF-8 BOM). |
+
+`managementTaskView` = the `management_tasks` row (`id, account_id,
+account_email, provider, kind, title, status, trigger, params, result?, step_count,
+failed, items_processed, bytes_moved, started_at, finished_at?, duration_ms,
+message?, created_at`) plus `running` and `param_map` (the stored `params` as an
+object). Destructive operations require `params.confirm = "true"`; the server
+enforces it.
+
 ## 9. Notifications
 
 | Method | Path | Payload / answer |

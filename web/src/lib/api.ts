@@ -591,6 +591,89 @@ export interface ReportPayload {
   sections: string[];
 }
 
+// -----------------------------------------------------------------------------
+// Admin operations (GET/POST /api/management)
+// -----------------------------------------------------------------------------
+
+/** ManagementParam is one input an operation accepts. */
+export interface ManagementParam {
+  key: string;
+  required: boolean;
+}
+
+/** ManagementOperation is one entry of the catalogue, decorated per account. */
+export interface ManagementOperation {
+  kind: string;
+  provider: ProviderName;
+  capability: Capability;
+  danger: boolean;
+  /** supported is true when the account can run it now. */
+  supported: boolean;
+  /** missing_capability marks an operation a reconnect would unlock. */
+  missing_capability: boolean;
+  params: ManagementParam[];
+}
+
+/** ManagementStatus is the lifecycle of a task (see models.RunStatus). */
+export type ManagementStatus =
+  | 'running'
+  | 'success'
+  | 'partial'
+  | 'failed'
+  | 'cancelled'
+  | 'timeout';
+
+/** ManagementTask is one execution of an administrative operation. */
+export interface ManagementTask {
+  id: number;
+  account_id: number;
+  account_email: string;
+  provider: ProviderName;
+  kind: string;
+  title: string;
+  status: ManagementStatus;
+  trigger: 'manual' | 'scheduled';
+  params: string;
+  /** param_map is the stored request as an object. */
+  param_map: Record<string, string>;
+  result?: string;
+  step_count: number;
+  failed: number;
+  items_processed: number;
+  bytes_moved: number;
+  started_at: string;
+  finished_at?: string;
+  duration_ms: number;
+  message?: string;
+  running: boolean;
+  created_at: string;
+}
+
+/** ManagementStep is one entry of the journal of a task. */
+export interface ManagementStep {
+  id: number;
+  task_id: number;
+  seq: number;
+  name: string;
+  status: 'success' | 'failed' | 'skipped';
+  detail?: string;
+  items: number;
+  bytes: number;
+  created_at: string;
+}
+
+/** ManagementTaskDetail is a task with its journal. */
+export interface ManagementTaskDetail extends ManagementTask {
+  steps: ManagementStep[];
+}
+
+/** ManagementStartPayload is what POST /api/management/tasks accepts. */
+export interface ManagementStartPayload {
+  account_id: number;
+  kind: string;
+  params: Record<string, string>;
+}
+
 /** AuditLogEvent is one stored activity event (GET /api/audit-logs). */
 export interface AuditLogEvent {
   id: number;
@@ -735,7 +818,11 @@ export type Capability =
   | 'orgunits'
   | 'roles'
   | 'licenses'
-  | 'logs';
+  | 'logs'
+  | 'mail'
+  | 'calendars'
+  | 'delegation'
+  | 'sitesadmin';
 
 /** AdminConsentStatus is the tenant-wide consent recorded for a provider. */
 export interface AdminConsentStatus {
@@ -1015,6 +1102,34 @@ export const reports = {
       url: `/reports/schedules/${accountId}`,
       method: 'DELETE',
     }),
+};
+
+/**
+ * management is the Admin operations screen: the per-account operation catalogue,
+ * the start request and the auditable journal of every task.
+ */
+export const management = {
+  /** operations lists what an account can run right now. */
+  operations: (accountId: number) =>
+    request<{ operations: ManagementOperation[] }>({
+      url: '/management/operations',
+      params: { account_id: accountId },
+    }),
+  list: (accountId?: number, limit = 50) =>
+    request<{ tasks: ManagementTask[] }>({
+      url: '/management/tasks',
+      params: { account_id: accountId, limit },
+    }),
+  start: (payload: ManagementStartPayload) =>
+    request<{ task: ManagementTask }>({ url: '/management/tasks', method: 'POST', data: payload }),
+  get: (id: number) => request<{ task: ManagementTaskDetail }>({ url: `/management/tasks/${id}` }),
+  cancel: (id: number) =>
+    request<{ id: number; cancelled: boolean }>({
+      url: `/management/tasks/${id}/cancel`,
+      method: 'POST',
+    }),
+  /** exportHref is the browser URL of the journal CSV download. */
+  exportHref: (id: number) => `/api/management/tasks/${id}/export`,
 };
 
 /**

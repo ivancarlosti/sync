@@ -150,6 +150,7 @@ func run() error {
 	deps.Sync.Wait()
 	deps.Audit.Wait()
 	deps.Reports.Wait()
+	deps.Management.Wait()
 	slog.Info("bye")
 	return nil
 }
@@ -172,6 +173,7 @@ func build(cfg *config.Config, settings *database.Settings) handlers.Deps {
 	syncService := services.NewSyncService(store, tokens, appSettings, notifier)
 	auditService := services.NewAuditService(store, tokens)
 	reportService := services.NewReportService(store, tokens)
+	managementService := services.NewManagementService(store, tokens, registry)
 
 	return handlers.Deps{
 		Config:      cfg,
@@ -188,6 +190,7 @@ func build(cfg *config.Config, settings *database.Settings) handlers.Deps {
 		Sync:        syncService,
 		Audit:       auditService,
 		Reports:     reportService,
+		Management:  managementService,
 		Scheduler:   services.NewScheduler(store, syncService, tokens, notifier, reportService),
 		Purge:       services.NewPurgeService(store),
 		Assets:      web.Dist(),

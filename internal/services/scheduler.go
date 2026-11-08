@@ -112,6 +112,11 @@ func (s *Scheduler) Bootstrap(ctx context.Context) error {
 	} else if closed > 0 {
 		slog.Warn("closed the reports interrupted by a restart", "reports", closed)
 	}
+	if closed, err := s.store.FailInterruptedManagementTasks(ctx, s.now()); err != nil {
+		return err
+	} else if closed > 0 {
+		slog.Warn("closed the management tasks interrupted by a restart", "tasks", closed)
+	}
 
 	jobs, err := s.store.ListJobs(ctx)
 	if err != nil {

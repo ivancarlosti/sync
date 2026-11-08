@@ -65,7 +65,8 @@
     "skipToContent": "الانتقال إلى المحتوى",
     "primaryNavigation": "التنقل الرئيسي",
     "auditLogs": "سجلات التدقيق",
-    "reports": "التقارير"
+    "reports": "التقارير",
+    "management": "عمليات الإدارة"
   },
   "auth": {
     "title": "تسجيل الدخول إلى Sync",
@@ -495,7 +496,11 @@
       "orgunits": "الوحدات التنظيمية",
       "roles": "الأدوار الإدارية",
       "licenses": "التراخيص",
-      "logs": "سجلات التدقيق"
+      "logs": "سجلات التدقيق",
+      "mail": "البريد",
+      "calendars": "التقويمات",
+      "delegation": "تفويض صندوق البريد",
+      "sitesadmin": "إدارة المواقع"
     },
     "guide": {
       "title": "دليل الإعداد",
@@ -903,5 +908,74 @@
     "error_rate_limited": "المزوّد يحدّ من الحساب. أعد المحاولة لاحقًا.",
     "error_internal": "لم يتمكن الخادم من إكمال الطلب.",
     "error_unknown": "فشل الطلب."
+  },
+  "management": {
+    "title": "عمليات الإدارة",
+    "subtitle": "مهام إدارية مدعومة من المزوّد، ولكل منها سجل قابل للتدقيق.",
+    "operations": "العمليات",
+    "activity": "النشاط",
+    "account": "الحساب",
+    "selectAccount": "اختر حسابًا",
+    "noAccounts": "اربط حسابًا قبل تنفيذ أي عملية.",
+    "loadError": "تعذّر تحميل العمليات.",
+    "startError": "تعذّر بدء العملية.",
+    "unsupported": "مزوّد هذا الحساب لا يوفّر أي عملية إدارية.",
+    "missingCapability": "أعد ربط الحساب لمنح {capability}.",
+    "danger": "مدمّرة",
+    "dangerHint": "هذه العملية تغيّر بيانات المزوّد أو تحذفها. أكّد لتشغيلها.",
+    "confirmRun": "أفهم ذلك، شغّل العملية",
+    "run": "تشغيل",
+    "cancelled": "أُلغيت العملية.",
+    "cancelError": "تعذّر إلغاء العملية.",
+    "history": "السجل",
+    "historyEmpty": "لم تُنفَّذ أي عملية بعد.",
+    "kind": "العملية",
+    "duration": "المدة",
+    "items": "العناصر",
+    "steps": "اليوميات",
+    "stepsEmpty": "لم تُسجَّل أي خطوة.",
+    "detail": "التفصيل",
+    "view": "عرض",
+    "actions": {
+      "add": "إضافة",
+      "remove": "إزالة",
+      "list": "سرد"
+    },
+    "kinds": {
+      "google_drive_to_new_shared_drive": "نقل Drive إلى محرك مشترك جديد",
+      "google_drive_to_shared_drive": "نقل Drive إلى محرك مشترك موجود",
+      "google_archive_user_group": "أرشفة مستخدم في مجموعة",
+      "google_copy_mailbox": "نسخ صندوق بريد",
+      "google_transfer_calendars": "نقل التقويمات",
+      "google_manage_delegate": "إدارة مفوّضي صندوق البريد",
+      "microsoft_copy_mailbox": "نسخ صندوق بريد",
+      "microsoft_onedrive_to_site": "نسخ OneDrive إلى موقع SharePoint",
+      "microsoft_transfer_calendars": "نقل التقويمات",
+      "microsoft_folder_sizes": "تقرير أحجام المجلدات"
+    },
+    "params": {
+      "name": "الاسم",
+      "source_drive_id": "المحرك المصدر",
+      "target_drive_id": "المحرك المشترك الهدف",
+      "user_email": "بريد المستخدم",
+      "group_email": "بريد المجموعة",
+      "group_name": "اسم المجموعة",
+      "member_email": "بريد العضو",
+      "archive_email": "بريد الأرشيف",
+      "source": "صندوق المصدر",
+      "target": "صندوق الهدف",
+      "max": "أقصى عدد رسائل",
+      "mailbox": "صندوق البريد",
+      "delegate": "بريد المفوّض",
+      "action": "الإجراء",
+      "site_name": "اسم الموقع",
+      "site_display_name": "اسم الموقع المعروض",
+      "target_folder_id": "المجلد الهدف",
+      "drive_id": "المحرك"
+    },
+    "started": "البدء",
+    "bytes": "بايت",
+    "status": "الحالة",
+    "export": "تصدير CSV"
   }
 }
