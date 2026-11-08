@@ -509,7 +509,9 @@
       "mail": "E-mail",
       "calendars": "Calendários",
       "delegation": "Delegação de caixa",
-      "sitesadmin": "Administração de sites"
+      "sitesadmin": "Administração de sites",
+      "analytics": "Google Analytics",
+      "youtube": "YouTube"
     },
     "guide": {
       "title": "Guia de configuração",
@@ -560,8 +562,8 @@
             "body": "Abra a lista de projetos e crie um (por exemplo sync-files), ou selecione o projeto que esta instância deve usar."
           },
           "apis": {
-            "title": "Habilite as três APIs",
-            "body": "Habilite a Google Drive API, a Admin SDK API e a Enterprise License Manager API nesse projeto. Uma permissão de diretório falha enquanto a API correspondente não estiver habilitada."
+            "title": "Habilite as cinco APIs",
+            "body": "Habilite a Google Drive API, a Admin SDK API, a Enterprise License Manager API, a Google Analytics Admin API e a YouTube Data API nesse projeto. Uma permissão falha enquanto a API correspondente não estiver habilitada."
           },
           "consent": {
             "title": "Configure a tela de consentimento OAuth",
@@ -745,6 +747,8 @@
     "section_team_members": "Membros das equipes",
     "section_planner_plans": "Planos do Planner",
     "section_shared_drive_members": "Membros dos drives compartilhados",
+    "section_analytics": "Propriedades do Analytics",
+    "section_youtube": "Canais do YouTube",
     "loadError": "Não foi possível carregar os relatórios.",
     "error_busy": "Já existe um relatório desta conta em execução.",
     "error_validation": "Verifique a conta e as seções.",

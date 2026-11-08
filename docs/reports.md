@@ -50,6 +50,8 @@ the list for the account, which is what the start form offers.
 | `licenses` | `GET licensing/v1/product/{id}/users` per product of the catalogue, scoped to the id of the customer record | 11 (+1) |
 | `shared_drives` | `GET drive/v3/drives` (the listing the folder picker uses) | `ceil(drives / 100)` |
 | `shared_drive_members` | `GET /files/{id}/permissions` per shared drive (`useDomainAdminAccess`, paged, 100) | one walk per shared drive |
+| `analytics` | `GET analyticsadmin/v1beta/accounts` (paged, 200), then `GET analyticsadmin/v1beta/properties?filter=parent:{account}` per account (paged, 200) | `1 + accounts` walks |
+| `youtube` | `GET youtube/v3/channels?mine=true` (paged, 50) | 1 |
 
 The derived sections are the point of the design: the n8n flows asked Graph for
 `/users/{id}/licenseDetails` once per user and re-listed the Google directory with
@@ -84,6 +86,34 @@ and reports the error only when it could not read a single drive; `team_members`
 and `planner_plans` stop at the shared per-collection walk limit
 (`reportGroupWalkLimit`, 5000 collections) and mark themselves truncated, exactly
 like `group_members` does.
+
+**`analytics` and `youtube` describe the connection, not the domain.** This is the
+one place where a Google section is narrower than the section vocabulary suggests,
+and the report says so instead of pretending otherwise:
+
+* `analytics` lists the GA4 **properties** the granted identity can reach — the
+  accounts of `analyticsadmin.googleapis.com/v1beta/accounts`, then the properties
+  of each of them — with the account that holds the property, its type, industry
+  category, time zone, currency and the dates Analytics recorded. Reaching the
+  properties of the *domain* instead would need domain-wide delegation (Sync
+  impersonates nobody: the provider holds one grant, of the account that connected)
+  or a Google Cloud service account, which is a second credential an installation
+  does not have.
+* `youtube` lists the channels the granted identity **owns** (`channels.list` with
+  `mine=true`). The Data API has no domain-wide channel listing at all: the
+  content-owner reports of the YouTube CMS need a partner identity, so a Workspace
+  domain's channels are only reachable one connected account at a time.
+* Both sections therefore start from the account, and an empty table is a normal
+  answer rather than a failure: an Analytics account is created by a person on
+  analytics.google.com, and a Workspace identity may own no channel at all.
+* `analytics` also degrades **per account**, like `shared_drive_members` per drive:
+  an Analytics account the grant cannot read (deleted between the two calls, or a
+  `403` on its properties) costs its own rows and nothing else, and the first error
+  is only surfaced when not one property could be read.
+* The account name is validated against `^accounts/[0-9]{1,20}$` before it is
+  interpolated into the `filter=parent:{account}` of the property listing, because
+  the filter is a small query language of its own: a value the API echoes back must
+  never decide where the walk goes.
 
 The two Microsoft walks also degrade per collection, because a per-collection
 refusal almost never means the report is broken:
@@ -176,7 +206,16 @@ the `drives` resource has no `permissions` method of its own), asked with
 `useDomainAdminAccess=true` so an administrator can read the members of a drive
 it does not belong to.
 
-That one scope is additive and forgiving:
+**Analytics and YouTube add a scope each.** The `analytics` section reads the
+Analytics Admin API and the `youtube` section the YouTube Data API, so the grant
+grows by two read-only user scopes: `analytics.readonly` and `youtube.readonly`
+(`CapabilityAnalytics`, `CapabilityYouTube`). Both are granted with administrator
+consent like the rest, which is exactly why the two sections describe the
+connection rather than the domain (§1). Neither API is enabled by default in a
+Cloud project, so the guide links their enablement pages too
+(`analyticsadmin.googleapis.com`, `youtube.googleapis.com`).
+
+That one customer scope is additive and forgiving:
 
 * a connection made **before** it was requested answers `403` on the customer
   record, and the `organization` section is then **derived from the domain list**
@@ -194,7 +233,7 @@ because the scope behind it is absent:
 | Deferred collection | Why |
 |---|---|
 | Gmail delegates, per-mailbox settings | needs per-mailbox impersonation (`gmail.settings.sharing` + domain-wide delegation), not a user consent |
-| YouTube CMS (content owner reports) | needs a content owner identity, not a Workspace account |
+| YouTube CMS (content owner reports) | needs a content owner identity, not a Workspace account; the `youtube` section reports the channels the connection owns instead (§1) |
 | Chrome management (browsers, profiles, telemetry) | needs the Chrome Management API and a separate admin role |
 | Per-file permissions of a shared drive | `/files/{id}/permissions` answers the drive level (what `shared_drive_members` reports); the ACLs *inside* a drive need one call per file, deferred until a report can stream them |
 
@@ -289,7 +328,7 @@ step, and it keeps the export dependency free (standard library only).
 |---|---|
 | Vocabulary (`ReportSection`, `ReportSectionsFor`, `ReportTable`, `ReportSource`) | `internal/providers/report.go` |
 | Microsoft collector (paged Graph reads, Teams and Planner walks, derived sections) | `internal/providers/microsoft/report.go` |
-| Google collector (Admin SDK Directory, License Manager, shared drives and their permissions) | `internal/providers/google/report.go` |
+| Google collector (Admin SDK Directory, License Manager, shared drives and their permissions, Analytics Admin API, YouTube Data API) | `internal/providers/google/report.go` |
 | Google scopes the collector relies on | `internal/providers/google/permissions.go` |
 | Models (`directory_reports`, `report_sections`, `report_schedules`) | `internal/models/report.go` |
 | Service (lifecycle, schedules, pruning) | `internal/services/report.go` |

@@ -432,6 +432,13 @@ const (
 	// CapabilitySitesAdmin covers creating sites and copying content into them
 	// (the OneDrive → SharePoint operation).
 	CapabilitySitesAdmin Capability = "sitesadmin"
+	// CapabilityAnalytics covers the read-only Google Analytics inventory
+	// behind the analytics report section (properties, accounts and their
+	// settings).
+	CapabilityAnalytics Capability = "analytics"
+	// CapabilityYouTube covers the read-only YouTube channel inventory behind
+	// the youtube report section.
+	CapabilityYouTube Capability = "youtube"
 )
 
 // ProviderCapabilities lists every capability in the order the UI displays them.
@@ -451,6 +458,8 @@ var ProviderCapabilities = []Capability{
 	CapabilityCalendars,
 	CapabilityDelegation,
 	CapabilitySitesAdmin,
+	CapabilityAnalytics,
+	CapabilityYouTube,
 }
 
 // capabilityExclusive names the capabilities only one provider declares, exactly
@@ -464,6 +473,8 @@ var capabilityExclusive = map[Capability]models.ProviderName{
 	CapabilityPlanner:    models.ProviderMicrosoft,
 	CapabilityDelegation: models.ProviderGoogle,
 	CapabilitySitesAdmin: models.ProviderMicrosoft,
+	CapabilityAnalytics:  models.ProviderGoogle,
+	CapabilityYouTube:    models.ProviderGoogle,
 }
 
 // CapabilitiesFor answers the capabilities in the vocabulary of one provider, in

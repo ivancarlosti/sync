@@ -73,6 +73,18 @@ const (
 	// ReportSectionSharedDriveMembers is who can reach a Google Shared Drive,
 	// with the role the drive gives them (manager, content manager, writer…).
 	ReportSectionSharedDriveMembers ReportSection = "shared_drive_members"
+	// ReportSectionAnalytics is the Google Analytics inventory of the
+	// connection: every property the granted identity can reach, with the
+	// account that holds it, its type, its time zone, its currency and the date
+	// it was created on analytics.google.com. The Analytics Admin API exposes no
+	// creator, so the section describes properties, not the person behind them
+	// (see docs/reports.md).
+	ReportSectionAnalytics ReportSection = "analytics"
+	// ReportSectionYouTube is the YouTube channels the granted identity owns:
+	// the channel, its handle, its country, the date it was created and its
+	// counters. The Data API lists channels of a *content owner* domain-wide and
+	// nothing else, so this is the channel inventory of the connection.
+	ReportSectionYouTube ReportSection = "youtube"
 )
 
 // ReportSections lists every section of the report vocabulary in the order the
@@ -102,6 +114,8 @@ var ReportSections = []ReportSection{
 	ReportSectionTeamMembers,
 	ReportSectionPlannerPlans,
 	ReportSectionSharedDriveMembers,
+	ReportSectionAnalytics,
+	ReportSectionYouTube,
 }
 
 // reportSectionExclusive names the sections exactly one provider can collect:
@@ -125,6 +139,8 @@ var reportSectionExclusive = map[ReportSection]models.ProviderName{
 	ReportSectionRoleAssignments:    models.ProviderGoogle,
 	ReportSectionSharedDrives:       models.ProviderGoogle,
 	ReportSectionSharedDriveMembers: models.ProviderGoogle,
+	ReportSectionAnalytics:          models.ProviderGoogle,
+	ReportSectionYouTube:            models.ProviderGoogle,
 }
 
 // ReportSectionsFor answers the sections a provider can collect: the shared ones

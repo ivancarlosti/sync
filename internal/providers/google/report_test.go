@@ -90,6 +90,14 @@ const (
 	// the `drives` resource has no `permissions` method (hence not
 	// /drive/v3/drives/{id}/permissions, which answers 404).
 	pathDrivePermissions = "/drive/v3/files/0AJxyz/permissions"
+	// pathAnalyticsAccounts is the Analytics Admin listing of the accounts the
+	// connection can reach; pathAnalyticsProperties is the listing of the
+	// properties under one of them, which the API scopes with a `parent:` filter
+	// instead of a path segment.
+	pathAnalyticsAccounts   = "/v1beta/accounts"
+	pathAnalyticsProperties = "/v1beta/properties"
+	// pathChannels is the YouTube Data listing of the channels of the grant.
+	pathChannels = "/youtube/v3/channels"
 )
 
 // licensePath is the assignment listing of one product of the catalogue.
@@ -106,7 +114,8 @@ func membersPath(key string) string {
 // users spread over two pages (one an administrator with a licence, one
 // suspended), two groups with three memberships between them, two domains, one
 // organisational unit next to the root, two administrative roles, one assignment,
-// two licence assignments, one shared drive and the two permissions of it.
+// two licence assignments, one shared drive, the two permissions of it, one
+// Analytics account with one property and one YouTube channel.
 func reportBodies() map[string][]string {
 	return map[string][]string{
 		pathCustomer: {`{"id":"C01abc","customerId":"C01abc","customerDomain":"contoso.com",` +
@@ -174,6 +183,22 @@ func reportBodies() map[string][]string {
 			`"displayName":"Ada Lovelace","domain":"contoso.com"},` +
 			`{"id":"p2","type":"group","role":"fileOrganizer","emailAddress":"eng@contoso.com",` +
 			`"displayName":"Engineering","domain":"contoso.com"}` +
+			`]}`},
+		pathAnalyticsAccounts: {`{"accounts":[` +
+			`{"name":"accounts/123","displayName":"Contoso Analytics",` +
+			`"createTime":"2019-03-01T10:00:00Z"}` +
+			`]}`},
+		pathAnalyticsProperties: {`{"properties":[` +
+			`{"name":"properties/456","parent":"accounts/123","displayName":"contoso.com",` +
+			`"propertyType":"PROPERTY_TYPE_ORDINARY","industryCategory":"TECHNOLOGY",` +
+			`"timeZone":"Europe/Lisbon","currencyCode":"EUR",` +
+			`"createTime":"2020-06-01T09:30:00Z","serviceLevel":"STANDARD"}` +
+			`]}`},
+		pathChannels: {`{"items":[` +
+			`{"id":"UC01contoso","snippet":{"title":"Contoso",` +
+			`"customUrl":"@contoso","country":"PT","publishedAt":"2018-01-05T12:00:00Z"},` +
+			`"statistics":{"viewCount":"1200345","subscriberCount":"2400",` +
+			`"hiddenSubscriberCount":false,"videoCount":"17"}}` +
 			`]}`},
 	}
 }
@@ -368,6 +393,31 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 		t.Errorf("member role = %q, want organizer", got)
 	}
 
+	analytics := bySection[providers.ReportSectionAnalytics]
+	if analytics.Failed() {
+		t.Fatalf("analytics section failed: %s", analytics.Error)
+	}
+	if len(analytics.Rows) != 1 {
+		t.Fatalf("analytics rows = %d, want the property of the one account", len(analytics.Rows))
+	}
+	if got := reportCell(analytics, analytics.Rows[0], "account"); got != "Contoso Analytics" {
+		t.Errorf("analytics account = %q, want the account that holds the property", got)
+	}
+	if got := reportCell(analytics, analytics.Rows[0], "created"); got != "2020-06-01T09:30:00Z" {
+		t.Errorf("analytics created = %q, want the creation date of the property", got)
+	}
+
+	channels := bySection[providers.ReportSectionYouTube]
+	if channels.Failed() {
+		t.Fatalf("youtube section failed: %s", channels.Error)
+	}
+	if len(channels.Rows) != 1 {
+		t.Fatalf("youtube rows = %d, want the channel of the connection", len(channels.Rows))
+	}
+	if got := reportCell(channels, channels.Rows[0], "handle"); got != "@contoso" {
+		t.Errorf("channel handle = %q, want the custom url", got)
+	}
+
 	// The users collection is read once (two pages) with the projection the
 	// columns need, and the licence catalogue is walked once per product: the
 	// per-user loop of the GAM flow must not come back.
@@ -426,6 +476,181 @@ func TestCollectReportReadsThePermissionsOfASharedDrive(t *testing.T) {
 	}
 	if got := reportCell(table, table.Rows[1], "type"); got != "group" {
 		t.Errorf("type = %q, want group", got)
+	}
+}
+
+// TestAnalyticsSectionReadsThePropertiesOfEveryAccount pins the shape of the
+// analytics section: one page of accounts, then one property listing per account
+// scoped with `filter=parent:accounts/{id}`, both read with the largest page the
+// v1beta Admin API accepts. The account name travels in the query, so it is the
+// value the filter escapes, and the row keeps both halves of the answer: the
+// account it belongs to and the settings Analytics records for the property.
+func TestAnalyticsSectionReadsThePropertiesOfEveryAccount(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionAnalytics}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	table := tables[0]
+	if table.Failed() {
+		t.Fatalf("analytics section = %q, want the properties of the account", table.Error)
+	}
+	if table.Truncated {
+		t.Error("analytics section is truncated, want the single property of the domain")
+	}
+	if len(table.Rows) != 1 {
+		t.Fatalf("analytics rows = %d, want 1", len(table.Rows))
+	}
+	row := table.Rows[0]
+	for key, want := range map[string]string{
+		"account":       "Contoso Analytics",
+		"property":      "properties/456",
+		"property_name": "contoso.com",
+		"property_type": "PROPERTY_TYPE_ORDINARY",
+		"industry":      "TECHNOLOGY",
+		"time_zone":     "Europe/Lisbon",
+		"currency":      "EUR",
+		"created":       "2020-06-01T09:30:00Z",
+	} {
+		if got := reportCell(table, row, key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	if count := requestsTo(transport.urls, pathAnalyticsAccounts); count != 1 {
+		t.Errorf("account calls = %d, want 1", count)
+	}
+	if count := requestsTo(transport.urls, pathAnalyticsProperties); count != 1 {
+		t.Errorf("property calls = %d, want 1 per account", count)
+	}
+	for _, fragment := range []string{
+		"pageSize=200",
+		"filter=parent%3Aaccounts%2F123",
+	} {
+		if !containsURL(transport.urls, fragment) {
+			t.Errorf("the analytics pass did not carry %q: %v", fragment, transport.urls)
+		}
+	}
+}
+
+// TestAnalyticsSectionIsEmptyWhenTheConnectionReachesNoAccount pins the empty
+// case: a Workspace domain with analytics.readonly granted and no Analytics
+// account answers an empty page, which is a usable section of zero rows and not
+// the failure a refused API produces.
+func TestAnalyticsSectionIsEmptyWhenTheConnectionReachesNoAccount(t *testing.T) {
+	provider, _ := newReportProvider(map[string][]string{pathAnalyticsAccounts: {`{}`}}, nil)
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionAnalytics}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	table := tables[0]
+	if table.Failed() {
+		t.Fatalf("analytics section = %q, want an empty section", table.Error)
+	}
+	if len(table.Rows) != 0 {
+		t.Fatalf("analytics rows = %d, want none", len(table.Rows))
+	}
+	if len(table.Columns) == 0 {
+		t.Error("the empty analytics section carries no header")
+	}
+}
+
+// TestAnalyticsSectionFailsAloneWhenTheAdminAPIIsRefused pins the isolation of the
+// two additions: the Analytics Admin API and the YouTube Data API are enabled per
+// project, so a domain that runs one of them must keep the other. The refusal is
+// labelled with the API that answered it, because "reconnect the account" is only
+// the right advice for one of the two.
+func TestAnalyticsSectionFailsAloneWhenTheAdminAPIIsRefused(t *testing.T) {
+	provider, _ := newReportProvider(reportBodies(),
+		map[string]int{pathAnalyticsAccounts: http.StatusForbidden})
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionAnalytics, providers.ReportSectionYouTube}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	analytics := tables[0]
+	if !analytics.Failed() {
+		t.Fatal("analytics section succeeded, want the refused API reported")
+	}
+	if !strings.Contains(analytics.Error, "analytics admin api") {
+		t.Errorf("analytics error = %q, want the API that refused it named", analytics.Error)
+	}
+	if youtube := tables[1]; youtube.Failed() || len(youtube.Rows) != 1 {
+		t.Errorf("youtube section = %+v, want the channel despite the analytics refusal", youtube)
+	}
+}
+
+// TestYouTubeSectionListsTheChannelsOfTheConnection pins the youtube section: a
+// single `channels.list` with `mine=true` (the Data API has no domain-wide listing
+// without a content owner), read with the largest page it accepts and its counters
+// rendered as the API quotes them.
+func TestYouTubeSectionListsTheChannelsOfTheConnection(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionYouTube}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	table := tables[0]
+	if table.Failed() {
+		t.Fatalf("youtube section = %q, want the channel of the connection", table.Error)
+	}
+	if len(table.Rows) != 1 {
+		t.Fatalf("youtube rows = %d, want 1", len(table.Rows))
+	}
+	row := table.Rows[0]
+	for key, want := range map[string]string{
+		"channel":     "Contoso",
+		"channel_id":  "UC01contoso",
+		"handle":      "@contoso",
+		"country":     "PT",
+		"created":     "2018-01-05T12:00:00Z",
+		"subscribers": "2400",
+		"videos":      "17",
+		"views":       "1200345",
+	} {
+		if got := reportCell(table, row, key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	if count := requestsTo(transport.urls, pathChannels); count != 1 {
+		t.Errorf("channel calls = %d, want 1", count)
+	}
+	for _, fragment := range []string{"mine=true", "maxResults=50", "part=snippet%2Cstatistics"} {
+		if !containsURL(transport.urls, fragment) {
+			t.Errorf("the youtube pass did not carry %q: %v", fragment, transport.urls)
+		}
+	}
+}
+
+// TestYouTubeSectionSaysWhenTheSubscriberCountIsHidden pins the one field a
+// channel may withhold: the API answers `hiddenSubscriberCount` and leaves the
+// counter out, so the cell says so instead of showing an empty count next to a
+// visible one.
+func TestYouTubeSectionSaysWhenTheSubscriberCountIsHidden(t *testing.T) {
+	bodies := map[string][]string{pathChannels: {
+		`{"items":[{"id":"UC02contoso","snippet":{"title":"Contoso Labs"},` +
+			`"statistics":{"viewCount":"10","hiddenSubscriberCount":true,"videoCount":"2"}}]}`,
+	}}
+	provider, _ := newReportProvider(bodies, nil)
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionYouTube}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	table := tables[0]
+	if table.Failed() || len(table.Rows) != 1 {
+		t.Fatalf("youtube section = %+v, want the one channel", table)
+	}
+	if got := reportCell(table, table.Rows[0], "subscribers"); got != "hidden" {
+		t.Errorf("subscribers = %q, want the hidden marker", got)
 	}
 }
 

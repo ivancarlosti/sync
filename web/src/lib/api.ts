@@ -502,7 +502,9 @@ export interface AuditPayload {
  * One scope is not part of the grant every connection already holds
  * (`admin.directory.customer.readonly`, for the Google `organization` record); an
  * account connected before it existed still reports, with the row derived from the
- * domain list.
+ * domain list. Two more (`analytics.readonly`, `youtube.readonly`) carry the two
+ * Google-only sections, and those report the scope of the connection rather than
+ * the domain: an older grant fails them alone until the account is reconnected.
  */
 export type ReportSection =
   | 'organization'
@@ -522,7 +524,9 @@ export type ReportSection =
   | 'teams'
   | 'team_members'
   | 'planner_plans'
-  | 'shared_drive_members';
+  | 'shared_drive_members'
+  | 'analytics'
+  | 'youtube';
 
 /** ReportColumn is one column of a section (the CSV header and the UI label). */
 export interface ReportColumn {
@@ -856,7 +860,9 @@ export type Capability =
   | 'mail'
   | 'calendars'
   | 'delegation'
-  | 'sitesadmin';
+  | 'sitesadmin'
+  | 'analytics'
+  | 'youtube';
 
 /** AdminConsentStatus is the tenant-wide consent recorded for a provider. */
 export interface AdminConsentStatus {

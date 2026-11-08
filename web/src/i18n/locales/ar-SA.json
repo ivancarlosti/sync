@@ -509,7 +509,9 @@
       "mail": "البريد",
       "calendars": "التقويمات",
       "delegation": "تفويض صندوق البريد",
-      "sitesadmin": "إدارة المواقع"
+      "sitesadmin": "إدارة المواقع",
+      "analytics": "Google Analytics",
+      "youtube": "YouTube"
     },
     "guide": {
       "title": "دليل الإعداد",
@@ -560,8 +562,8 @@
             "body": "افتح قائمة المشاريع وأنشئ مشروعًا (مثل sync-files)، أو اختر المشروع الذي يجب أن يستخدمه هذا المثيل."
           },
           "apis": {
-            "title": "مكّن الواجهات الثلاث",
-            "body": "مكّن Google Drive API وAdmin SDK API وEnterprise License Manager API في ذلك المشروع. يفشل إذن الدليل ما دامت الواجهة الخاصة به غير ممكّنة."
+            "title": "مكّن الواجهات الخمس",
+            "body": "مكّن Google Drive API وAdmin SDK API وEnterprise License Manager API وGoogle Analytics Admin API وYouTube Data API في ذلك المشروع. يفشل الإذن ما دامت الواجهة الخاصة به غير ممكّنة."
           },
           "consent": {
             "title": "هيّئ شاشة الموافقة OAuth",
@@ -745,6 +747,8 @@
     "section_team_members": "أعضاء الفرق",
     "section_planner_plans": "خطط Planner",
     "section_shared_drive_members": "أعضاء محركات الأقراص المشتركة",
+    "section_analytics": "خصائص Analytics",
+    "section_youtube": "قنوات YouTube",
     "loadError": "تعذّر تحميل التقارير.",
     "error_busy": "هناك تقرير لهذا الحساب قيد التشغيل بالفعل.",
     "error_validation": "تحقق من الحساب والأقسام.",

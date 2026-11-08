@@ -78,27 +78,50 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("google %s: http %d: %s", api, e.Status, e.Message)
 }
 
-// apiLabels name the hosts of the APIs Sync talks to. All of them answer the same
-// error envelope, so the host of the answer is the only thing that tells them
-// apart.
-var apiLabels = map[string]string{
-	"www.googleapis.com":       "drive api",
-	"upload.googleapis.com":    "drive api",
-	"admin.googleapis.com":     "directory api",
-	"licensing.googleapis.com": "licensing api",
-	"oauth2.googleapis.com":    "oauth api",
+// apiLabels name the APIs Sync talks to. All of them answer the same error
+// envelope and several share a host — Drive, the Android/other Google APIs and
+// YouTube all live on `www.googleapis.com` — so a label is resolved by host and
+// path prefix, most specific first.
+//
+// The order matters: an entry with a prefix is checked before the host-only entry
+// of the same host, and the first match wins, so `/youtube/` is never reported as
+// a Drive failure.
+var apiLabels = []struct {
+	host   string
+	prefix string
+	label  string
+}{
+	{"www.googleapis.com", "/upload/drive/", "drive api"},
+	{"www.googleapis.com", "/drive/", "drive api"},
+	{"www.googleapis.com", "/youtube/", "youtube api"},
+	{"www.googleapis.com", "/calendar/", "calendar api"},
+	{"www.googleapis.com", "/oauth2/", "oauth api"},
+	// The host-only entry of www.googleapis.com keeps the label Drive had before
+	// the table carried paths: every other endpoint on that host is Drive.
+	{"www.googleapis.com", "", "drive api"},
+	{"upload.googleapis.com", "", "drive api"},
+	{"admin.googleapis.com", "", "directory api"},
+	{"licensing.googleapis.com", "", "licensing api"},
+	{"analyticsadmin.googleapis.com", "", "analytics admin api"},
+	{"oauth2.googleapis.com", "", "oauth api"},
 }
 
 // apiLabel answers the name of the API a refused response came from, derived from
-// the host of the request it belongs to. An answer without a request (a response
-// built by a test) leaves the label empty, and Error falls back to a neutral one.
+// the host and the path of the request it belongs to. An answer without a request
+// (a response built by a test) leaves the label empty, and Error falls back to a
+// neutral one.
 func apiLabel(resp *http.Response) string {
 	if resp == nil || resp.Request == nil || resp.Request.URL == nil {
 		return ""
 	}
-	host := resp.Request.URL.Host
-	if label, ok := apiLabels[host]; ok {
-		return label
+	host, path := resp.Request.URL.Host, resp.Request.URL.Path
+	for _, entry := range apiLabels {
+		if entry.host != host {
+			continue
+		}
+		if entry.prefix == "" || strings.HasPrefix(path, entry.prefix) {
+			return entry.label
+		}
 	}
 	if name, ok := strings.CutSuffix(host, ".googleapis.com"); ok && name != "" {
 		return name + " api"

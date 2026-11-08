@@ -509,7 +509,9 @@
       "mail": "Correo",
       "calendars": "Calendarios",
       "delegation": "Delegación de buzón",
-      "sitesadmin": "Administración de sitios"
+      "sitesadmin": "Administración de sitios",
+      "analytics": "Google Analytics",
+      "youtube": "YouTube"
     },
     "guide": {
       "title": "Guía de configuración",
@@ -560,8 +562,8 @@
             "body": "Abre la lista de proyectos y crea uno (por ejemplo sync-files), o selecciona el proyecto que debe usar esta instancia."
           },
           "apis": {
-            "title": "Habilita las tres API",
-            "body": "Habilita la Google Drive API, la Admin SDK API y la Enterprise License Manager API en ese proyecto. Un permiso de directorio falla mientras no esté habilitada la API a la que pertenece."
+            "title": "Habilita las cinco API",
+            "body": "Habilita la Google Drive API, la Admin SDK API, la Enterprise License Manager API, la Google Analytics Admin API y la YouTube Data API en ese proyecto. Un permiso falla mientras no esté habilitada la API a la que pertenece."
           },
           "consent": {
             "title": "Configura la pantalla de consentimiento OAuth",
@@ -745,6 +747,8 @@
     "section_team_members": "Miembros de equipos",
     "section_planner_plans": "Planes de Planner",
     "section_shared_drive_members": "Miembros de unidades compartidas",
+    "section_analytics": "Propiedades de Analytics",
+    "section_youtube": "Canales de YouTube",
     "loadError": "No se pudieron cargar los informes.",
     "error_busy": "Ya hay un informe de esta cuenta en ejecución.",
     "error_validation": "Revisa la cuenta y las secciones.",

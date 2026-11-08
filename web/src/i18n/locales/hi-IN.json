@@ -509,7 +509,9 @@
       "mail": "मेल",
       "calendars": "कैलेंडर",
       "delegation": "मेलबॉक्स प्रतिनिधित्व",
-      "sitesadmin": "साइट प्रशासन"
+      "sitesadmin": "साइट प्रशासन",
+      "analytics": "Google Analytics",
+      "youtube": "YouTube"
     },
     "guide": {
       "title": "सेटअप गाइड",
@@ -560,8 +562,8 @@
             "body": "प्रोजेक्ट सूची खोलें और एक बनाएँ (उदाहरण sync-files), या वह प्रोजेक्ट चुनें जिसे यह इंस्टेंस उपयोग करे।"
           },
           "apis": {
-            "title": "तीनों API सक्षम करें",
-            "body": "उस प्रोजेक्ट में Google Drive API, Admin SDK API और Enterprise License Manager API सक्षम करें। जब तक संबंधित API सक्षम नहीं होती, डायरेक्टरी अनुमति विफल होती है।"
+            "title": "पाँचों API सक्षम करें",
+            "body": "उस प्रोजेक्ट में Google Drive API, Admin SDK API, Enterprise License Manager API, Google Analytics Admin API और YouTube Data API सक्षम करें। जब तक संबंधित API सक्षम नहीं होती, अनुमति विफल होती है।"
           },
           "consent": {
             "title": "OAuth सहमति स्क्रीन कॉन्फ़िगर करें",
@@ -745,6 +747,8 @@
     "section_team_members": "टीम सदस्य",
     "section_planner_plans": "Planner योजनाएँ",
     "section_shared_drive_members": "साझा ड्राइव सदस्य",
+    "section_analytics": "Analytics प्रॉपर्टी",
+    "section_youtube": "YouTube चैनल",
     "loadError": "रिपोर्ट लोड नहीं हो सकीं।",
     "error_busy": "इस खाते की एक रिपोर्ट पहले से चल रही है।",
     "error_validation": "खाता और अनुभाग जाँचें।",

@@ -29,6 +29,8 @@ var wantScopes = []string{
 	"https://www.googleapis.com/auth/gmail.modify",
 	"https://www.googleapis.com/auth/calendar",
 	"https://www.googleapis.com/auth/gmail.settings.sharing",
+	"https://www.googleapis.com/auth/analytics.readonly",
+	"https://www.googleapis.com/auth/youtube.readonly",
 }
 
 // TestScopesMatchThePermissionTable pins Scopes() to the table the guide renders.
@@ -88,7 +90,9 @@ func TestDirectoryScopesAreMarkedAsAdministratorGrants(t *testing.T) {
 // to, so a removed key is caught before the UI renders an empty href.
 func TestConsoleURLsCoverTheGuideSteps(t *testing.T) {
 	links := New().ConsoleURLs()
-	for _, key := range []string{"drive_api", "admin_api", "licensing_api"} {
+	for _, key := range []string{
+		"drive_api", "admin_api", "licensing_api", "analytics_api", "youtube_api",
+	} {
 		if !strings.HasPrefix(links[key], "https://console.cloud.google.com/") {
 			t.Fatalf("console link %q is missing or not a Cloud console URL: %q", key, links[key])
 		}

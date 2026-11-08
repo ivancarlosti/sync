@@ -509,7 +509,9 @@
       "mail": "邮件",
       "calendars": "日历",
       "delegation": "邮箱委派",
-      "sitesadmin": "网站管理"
+      "sitesadmin": "网站管理",
+      "analytics": "Google Analytics",
+      "youtube": "YouTube"
     },
     "guide": {
       "title": "设置指南",
@@ -560,8 +562,8 @@
             "body": "打开项目列表并创建一个（例如 sync-files），或选择本实例要使用的项目。"
           },
           "apis": {
-            "title": "启用这三个 API",
-            "body": "在该项目中启用 Google Drive API、Admin SDK API 与 Enterprise License Manager API。只要对应的 API 未启用，目录权限调用就会失败。"
+            "title": "启用这五个 API",
+            "body": "在该项目中启用 Google Drive API、Admin SDK API、Enterprise License Manager API、Google Analytics Admin API 与 YouTube Data API。只要对应的 API 未启用，权限调用就会失败。"
           },
           "consent": {
             "title": "配置 OAuth 同意屏幕",
@@ -745,6 +747,8 @@
     "section_team_members": "团队成员",
     "section_planner_plans": "Planner 计划",
     "section_shared_drive_members": "共享云端硬盘成员",
+    "section_analytics": "Analytics 媒体资源",
+    "section_youtube": "YouTube 频道",
     "loadError": "无法加载报表。",
     "error_busy": "该账号已有报表在运行。",
     "error_validation": "请检查账号和数据分区。",

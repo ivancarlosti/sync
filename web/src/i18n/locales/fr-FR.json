@@ -509,7 +509,9 @@
       "mail": "Messagerie",
       "calendars": "Agendas",
       "delegation": "Délégation de boîte",
-      "sitesadmin": "Administration de sites"
+      "sitesadmin": "Administration de sites",
+      "analytics": "Google Analytics",
+      "youtube": "YouTube"
     },
     "guide": {
       "title": "Guide de configuration",
@@ -560,8 +562,8 @@
             "body": "Ouvrez la liste des projets et créez-en un (par exemple sync-files), ou sélectionnez le projet que cette instance doit utiliser."
           },
           "apis": {
-            "title": "Activez les trois API",
-            "body": "Activez l’API Google Drive, l’API Admin SDK et l’API Enterprise License Manager dans ce projet. Une autorisation d’annuaire échoue tant que l’API correspondante n’est pas activée."
+            "title": "Activez les cinq API",
+            "body": "Activez l’API Google Drive, l’API Admin SDK, l’API Enterprise License Manager, l’API Google Analytics Admin et l’API YouTube Data dans ce projet. Une autorisation échoue tant que l’API correspondante n’est pas activée."
           },
           "consent": {
             "title": "Configurez l’écran de consentement OAuth",
@@ -745,6 +747,8 @@
     "section_team_members": "Membres des équipes",
     "section_planner_plans": "Plans Planner",
     "section_shared_drive_members": "Membres des drives partagés",
+    "section_analytics": "Propriétés Analytics",
+    "section_youtube": "Chaînes YouTube",
     "loadError": "Les rapports n'ont pas pu être chargés.",
     "error_busy": "Un rapport de ce compte est déjà en cours.",
     "error_validation": "Vérifiez le compte et les sections.",

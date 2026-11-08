@@ -167,13 +167,15 @@ POST /api/reports ──► reserve account ──► report row (running)
   (`providers.ReportSectionsFor`): `guests`, `distribution_lists`, `sites`,
   `teams`, `team_members` and `planner_plans` belong to Microsoft,
   `suspended_users`, `group_members`, `org_units`, `roles`, `role_assignments`,
-  `shared_drives` and `shared_drive_members` to Google. `ReportSections` stays the
+  `shared_drives`, `shared_drive_members`, `analytics` and `youtube` to Google.
+  `ReportSections` stays the
   validation union the API accepts, so a stored request never names a table no
   collector can produce.
 * The capability vocabulary is split the same way (`providers.CapabilitiesFor`
   over `capabilityExclusive`): `teams` and `planner` are Microsoft only, so a
-  Workspace account is never offered them — not in the setup guide, not as a
-  badge, and above all not as a permission a reconnection could grant. A
+  Workspace account is never offered them; `analytics` and `youtube` are Google
+  only, so a Microsoft account never is — not in the setup guide, not as a badge,
+  and above all not as a permission a reconnection could grant. A
   capability absent from the map belongs to every provider.
 * Every section is independent: a refused endpoint fails **that** section
   (`partial`), never the pass. Each section is bounded (20 000 rows, 500 pages)

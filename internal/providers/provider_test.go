@@ -236,16 +236,20 @@ func TestApplicablePermissionsSplitsByAccountKind(t *testing.T) {
 		t.Fatalf("missing = %v, want %v", report.Missing, wantMissing)
 	}
 
-	// A Google account is never told that Teams or Planner are missing: they are
-	// outside the vocabulary of its provider, so no reconnection could add them.
+	// A Google account is never told that Teams, Planner or the site
+	// administration of a Microsoft tenant are missing: they are outside the
+	// vocabulary of its provider, so no reconnection could add them. The mirror
+	// image holds too: the two Google-only capabilities are absent from this
+	// Microsoft list.
 	google := ReportCapabilities(models.ProviderGoogle, applicable, notApplicable, nil)
-	for _, capability := range google.Missing {
-		if capability == CapabilityTeams || capability == CapabilityPlanner {
-			t.Fatalf("a Google account is asked for %q, which its directory does not have", capability)
-		}
+	wantGoogleMissing := []Capability{
+		CapabilityFiles, CapabilityGroups, CapabilityMembers,
+		CapabilityDomains, CapabilityOrgUnits, CapabilityRoles, CapabilityLicenses,
+		CapabilityLogs, CapabilityMail, CapabilityCalendars, CapabilityDelegation,
+		CapabilityAnalytics, CapabilityYouTube,
 	}
-	if len(google.Missing) != len(wantMissing)-2 {
-		t.Fatalf("google missing = %v, want the same list without teams and planner", google.Missing)
+	if fmt.Sprint(google.Missing) != fmt.Sprint(wantGoogleMissing) {
+		t.Fatalf("missing = %v, want %v", google.Missing, wantGoogleMissing)
 	}
 }
 

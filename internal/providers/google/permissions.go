@@ -136,6 +136,27 @@ func (p *Provider) Permissions() []providers.Permission {
 			Scope:        "https://www.googleapis.com/auth/gmail.settings.sharing",
 			AdminConsent: true,
 		},
+		{
+			// Analytics Admin API: the `analytics` section of a report (the
+			// accounts and properties the granted identity can reach, with the
+			// date each property was created). Read-only: the report never
+			// writes an Analytics resource.
+			Capability:   providers.CapabilityAnalytics,
+			Title:        "analytics",
+			Scope:        "https://www.googleapis.com/auth/analytics.readonly",
+			AdminConsent: true,
+		},
+		{
+			// YouTube Data API: the `youtube` section of a report (the channels
+			// the granted identity owns, with their counters). Read-only, and
+			// scoped to the connection: the domain-wide listing needs a content
+			// owner, which is a partner identity Sync does not have (see
+			// docs/reports.md).
+			Capability:   providers.CapabilityYouTube,
+			Title:        "youtube",
+			Scope:        "https://www.googleapis.com/auth/youtube.readonly",
+			AdminConsent: true,
+		},
 	}
 }
 
@@ -147,5 +168,7 @@ func (p *Provider) ConsoleURLs() map[string]string {
 		"drive_api":     "https://console.cloud.google.com/apis/library/drive.googleapis.com",
 		"admin_api":     "https://console.cloud.google.com/apis/library/admin.googleapis.com",
 		"licensing_api": "https://console.cloud.google.com/apis/library/licensing.googleapis.com",
+		"analytics_api": "https://console.cloud.google.com/apis/library/analyticsadmin.googleapis.com",
+		"youtube_api":   "https://console.cloud.google.com/apis/library/youtube.googleapis.com",
 	}
 }

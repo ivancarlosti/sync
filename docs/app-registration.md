@@ -37,24 +37,34 @@ need.
 | `roles` — administrative role catalogue (read-only) | `admin.directory.rolemanagement.readonly` | `RoleManagement.Read.All` |
 | `licenses` — subscriptions and licence assignment | `apps.licensing` | `Organization.Read.All`, `LicenseAssignment.ReadWrite.All` |
 | `logs` — the organisation-wide activity feed ([audit-logs.md](audit-logs.md)) | `admin.reports.audit.readonly` | `AuditLog.Read.All` |
+| `analytics` — the GA4 properties the connection can reach ([reports.md](reports.md)) | `analytics.readonly` | — |
+| `youtube` — the channels the connection owns ([reports.md](reports.md)) | `youtube.readonly` | — |
 
-The **directory report** ([reports.md](reports.md)) adds exactly one row of its own
-on the Google side: `admin.directory.customer.readonly` under `domains`, which is
-what answers `GET /customers/my_customer` — the `organization` section of a Google
-report. Every other Google section is built from `users`, `groups`, `members`,
-`domains`, `orgunits`, `roles`, `licenses` and `files` above, shared drive members
-included: the Drive scope that lists a shared drive also answers its permissions
-(`/files/{id}/permissions`, the file listing with `useDomainAdminAccess=true`). The
-Microsoft vocabulary is covered by the table
+The **directory report** ([reports.md](reports.md)) adds three rows of its own on
+the Google side: `admin.directory.customer.readonly` under `domains`, which is what
+answers `GET /customers/my_customer` — the `organization` section of a Google
+report — plus the two rows `analytics` and `youtube` above for the GA4 property and
+YouTube channel sections. Every other Google section is built from `users`,
+`groups`, `members`, `domains`, `orgunits`, `roles`, `licenses` and `files` above,
+shared drive members included: the Drive scope that lists a shared drive also
+answers its permissions (`/files/{id}/permissions`, the file listing with
+`useDomainAdminAccess=true`). The `analytics` and `youtube` scopes are the two
+sections that describe the **connection** rather than the domain: the Analytics
+Admin API and the YouTube Data API answer for the granted identity alone, because a
+domain-wide listing needs domain-wide delegation (an impersonation Sync does not
+perform) or a content-owner identity (a YouTube partner, not a Workspace account).
+The Microsoft vocabulary is covered by the table
 plus the two rows `teams` and `planner` above, which this release added for the
 Teams and Planner sections — both directory scopes, granted tenant-wide with the
 same admin consent as the rest. A grant made before the customer scope existed
 still reports: the section is then derived from the domain list (see
 [reports.md §2](reports.md#2-permissions)), and Accounts → *Check the
 token* offers the upgrade. The collections that need a scope Sync does not
-request at all (Gmail delegates, YouTube CMS, Chrome management, per-user
-sign-in activity on the Microsoft side, Teams channels) are not offered until
-that row exists.
+request at all (Gmail delegates, Chrome management, per-user sign-in activity on
+the Microsoft side, Teams channels) are not offered until that row exists, and the
+YouTube **CMS** (content-owner reports) stays out even though the `youtube` row
+does: the two are different identities (a partner account vs. the connected one,
+[reports.md §1](reports.md#1-what-a-report-contains)).
 
 Every Graph scope in that column is a **delegated** permission, because the table
 *is* the authorization request: Entra refuses a request that names a permission
@@ -119,10 +129,12 @@ down together for every account.
 
 1. **Project** — <https://console.cloud.google.com/projectcreate>. Create a
    project dedicated to Sync (for example `sync-files`).
-2. **APIs** — enable the three APIs *in that project*:
+2. **APIs** — enable the five APIs *in that project*:
    [Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com),
    [Admin SDK API](https://console.cloud.google.com/apis/library/admin.googleapis.com),
-   [Enterprise License Manager API](https://console.cloud.google.com/apis/library/licensing.googleapis.com).
+   [Enterprise License Manager API](https://console.cloud.google.com/apis/library/licensing.googleapis.com),
+   [Google Analytics Admin API](https://console.cloud.google.com/apis/library/analyticsadmin.googleapis.com),
+   [YouTube Data API v3](https://console.cloud.google.com/apis/library/youtube.googleapis.com).
 3. **OAuth consent screen** (APIs & Services → OAuth consent screen):
    * *Internal* for a Workspace domain: only the domain's accounts can authorise,
      and Google does not review the scopes. This is the recommended choice.
@@ -161,6 +173,16 @@ down together for every account.
   with a narrower set once (an old release, a manual URL), the union of both
   grants is what Google reports back — and Sync reports the capabilities of that
   union.
+* `analytics.readonly` and `youtube.readonly` are **user** scopes, granted with
+  administrator consent like the directory ones: they answer for the connected
+  identity alone, so the Analytics and YouTube report sections describe the
+  connection rather than the domain (see
+  [reports.md §1](reports.md#1-what-a-report-contains)). Domain-wide analytics or
+  channel inventory would need domain-wide delegation, which this provider does not
+  use. Both scopes are read-only: the sections never write an Analytics or YouTube
+  resource. Whether an External app has to be reviewed for them depends on Google's
+  classification of each scope, which is why step 3 above keeps *Internal* the
+  recommended consent-screen type.
 * **A personal Google account (`@gmail.com`) cannot be connected.** The
   always-on scope set asks for `admin.directory.*` and `apps.licensing`, which
   only exist for a Workspace domain, so Google refuses the authorization request
@@ -304,10 +326,10 @@ answers everything the screen renders:
 |---|---|
 | `configured` | an OAuth client is usable (environment or Admin > Providers) |
 | `redirect_uri` | the exact URL to register |
-| `console_urls` | the console deep links (`drive_api`, `admin_api`, `licensing_api`, `entra_apps`, `entra_authentication`, `entra_credentials`, `entra_api_permissions`, `graph_permissions`) |
+| `console_urls` | the console deep links (`drive_api`, `admin_api`, `licensing_api`, `analytics_api`, `youtube_api`, `entra_apps`, `entra_authentication`, `entra_credentials`, `entra_api_permissions`, `graph_permissions`) |
 | `permissions[]` | the permission table: `capability`, `title` (i18n suffix), `scope`, `admin_consent`, `informational` (requested for the protocol, proves no capability — see §3.3), `kinds` (the account kinds that can hold the scope: absent means every kind, `["work"]` on the directory scopes and `Sites.ReadWrite.All`, which a personal Microsoft account can never be granted — see §1) |
 | `scopes[]` | the permission scopes in request order — the OAuth request joins them with a space (`scope` parameter); the guide renders them comma-separated, which is what the Google consent screen's *Manually add scopes* box expects |
-| `capabilities[]` | the capabilities the table unlocks, scoped to the provider (`providers.CapabilitiesFor`): `teams` and `planner` are Microsoft only, and a Workspace guide never offers them |
+| `capabilities[]` | the capabilities the table unlocks, scoped to the provider (`providers.CapabilitiesFor`): `teams` and `planner` are Microsoft only, `analytics` and `youtube` Google only, so no guide ever offers a capability its directory cannot hold |
 | `admin_consent_required` | the provider has a tenant-wide consent step (Microsoft) |
 | `admin_consent` | `{tenant, client_id, at, granted}` of this instance |
 | `steps[]` | the ordered walkthrough: `id`, `url`, `copy` (`redirect_uri` / `scopes` / `permissions`), `action` (`admin_consent`), `optional` |
@@ -351,6 +373,15 @@ files and simply do not offer the Teams and Planner report sections. Google need
 no equivalent step for `shared_drive_members`: it rides on the `drive` scope every
 connection already grants.
 
+The Google side has two upgrades of that kind this release: `analytics` and
+`youtube` (`analytics.readonly`, `youtube.readonly`, §1). A connection made before
+them reports both capabilities in `missing_capabilities`, and the two report
+sections fail alone (the rest of the report is unaffected) until the account is
+reconnected. Two things have to be in place first: the two APIs enabled in the
+Cloud project (§2.1 step 2), and the client trusted in the Admin console (step 7) —
+a scope the project does not enable answers a permission error at call time, which
+is the shape of a missing grant even when the grant is fine.
+
 The caveat of the Microsoft table belongs here too: a permission an account can
 never hold is **not** a missing permission. On a personal Microsoft account the
 directory scopes fall in that group, so `GET /api/accounts` reports them in
@@ -371,7 +402,7 @@ capability.
 | `code: "consent_required"` (412) when connecting | permissions refused: a denied prompt, a scope the app may not use, or a missing Microsoft admin consent | open the setup guide from the message, fix the console, retry |
 | `redirect_uri_mismatch` (Google) / `AADSTS50011` (Microsoft) | the registered URI differs from `APP_URL/api/oauth/<provider>/callback` | register the exact URL: scheme, host, path, no trailing slash |
 | Google: "This app is blocked" although the consent screen is configured | the client ID is not trusted in API controls | allow-list it for the organisational units (step 7) |
-| Google: directory call fails with a permission error right after connecting | the API is not enabled in the project, or the account is not an administrator | enable Admin SDK / License Manager, connect an administrator |
+| Google: directory call fails with a permission error right after connecting | the API is not enabled in the project, or the account is not an administrator | enable Admin SDK / License Manager (and the Analytics Admin / YouTube Data API for the two report sections), connect an administrator |
 | Google: the consent screen demands verification | the app is External and the scopes are sensitive | switch to Internal, or publish/verify the app |
 | Microsoft: `AADSTS65001` / `consent_required` | admin consent was never granted (or was granted to another client id) | use the consent step of the guide; check that the client id still matches |
 | Microsoft: `AADSTS650053` — *"The application asked for scope 'Tasks.Read.All' that doesn't exist on the resource `00000003-0000-0000-c000-000000000000`"*, although the registration lists it | the permission was added under **Application permissions**, and the authorization request asks for it as a delegated scope. An application permission has no delegated counterpart, so Entra refuses the whole request — the grant on the app registration does not help | add the delegated row instead (`Tasks.Read` for `planner`, §1) under **Delegated permissions**, *Grant admin consent*, then reconnect. Remove the application permission unless an app-only call needs it (§3.4) |

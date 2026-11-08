@@ -509,7 +509,9 @@
       "mail": "Mail",
       "calendars": "Calendars",
       "delegation": "Mailbox delegation",
-      "sitesadmin": "Site administration"
+      "sitesadmin": "Site administration",
+      "analytics": "Google Analytics",
+      "youtube": "YouTube"
     },
     "guide": {
       "title": "Setup guide",
@@ -560,8 +562,8 @@
             "body": "Open the project list and create one (for example sync-files), or select the project this instance should use."
           },
           "apis": {
-            "title": "Enable the three APIs",
-            "body": "Enable the Google Drive API, the Admin SDK API and the Enterprise License Manager API in that project. A directory permission fails until the API it belongs to is enabled."
+            "title": "Enable the five APIs",
+            "body": "Enable the Google Drive API, the Admin SDK API, the Enterprise License Manager API, the Google Analytics Admin API and the YouTube Data API in that project. A permission fails until the API it belongs to is enabled."
           },
           "consent": {
             "title": "Configure the OAuth consent screen",
@@ -745,6 +747,8 @@
     "section_team_members": "Team members",
     "section_planner_plans": "Planner plans",
     "section_shared_drive_members": "Shared drive members",
+    "section_analytics": "Analytics properties",
+    "section_youtube": "YouTube channels",
     "loadError": "The reports could not be loaded.",
     "error_busy": "A report of this account is already running.",
     "error_validation": "Check the account and the sections.",

@@ -45,6 +45,12 @@ const (
 	// reportDrivePageSize is the page the permissions of a shared drive are read
 	// with (the Drive API caps it at 100).
 	reportDrivePageSize = 100
+	// reportAnalyticsPageSize is the largest page accounts.list and
+	// properties.list accept (v1beta caps pageSize at 200).
+	reportAnalyticsPageSize = 200
+	// reportChannelPageSize is the largest page channels.list accepts (the Data
+	// API caps maxResults at 50).
+	reportChannelPageSize = 50
 )
 
 const (
@@ -54,6 +60,16 @@ const (
 	// licensingBase is the Enterprise License Manager API root, which is what
 	// answers the licence assignments of a user.
 	licensingBase = "https://licensing.googleapis.com/apps/licensing/v1"
+	// analyticsBase is the Analytics Admin API root (v1beta), which is what
+	// answers the accounts and properties of Google Analytics. v1beta is the
+	// version that carries `accounts.list` and `properties.list`; the v1alpha
+	// resource the UI shows is derived from them.
+	analyticsBase = "https://analyticsadmin.googleapis.com/v1beta"
+	// youtubeBase is the YouTube Data API root, which is what answers the
+	// channels of a Google identity. It is served by `youtube.googleapis.com` —
+	// the API the YouTube section enables in the Cloud console — even though the
+	// documented examples still carry the `www.googleapis.com/youtube/` host.
+	youtubeBase = "https://youtube.googleapis.com/youtube/v3"
 	// customerKey is the alias every call of a report is scoped to: the API
 	// resolves it to the customer of the authorised administrator, which is what
 	// makes a report follow the token instead of a stored id. The licence
@@ -102,6 +118,13 @@ var (
 	// licenseProductPattern is the shape of a product id of the catalogue
 	// above; it is narrowed for the same reason as the group key.
 	licenseProductPattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
+	// analyticsAccountPattern is the shape of an Analytics account resource
+	// name (`accounts/123`), which `analyticsPropertiesTarget` interpolates into
+	// the `filter` of the property listing. The filter grammar has its own
+	// operators, so a value that could carry one (`parent:`) would widen the
+	// listing past the account it names; narrowing it to the documented form
+	// keeps the request inside the parent it was read with.
+	analyticsAccountPattern = regexp.MustCompile(`^accounts/[0-9]{1,20}$`)
 )
 
 // Compile time guard: the registry hands this provider to the report service as
@@ -110,18 +133,23 @@ var _ providers.ReportSource = (*Provider)(nil)
 
 // ReportSections lists the sections this provider can collect.
 //
-// Every one of them is served by a scope Sync already requests (see
-// permissions.go), so a directory report needs no consent beyond the connection
-// itself: the users, groups, domains, organisational units, roles and licences
-// come from the same grant the capability badges of the accounts screen are
-// derived from, and the shared drives come from the Drive scope the transfers
-// already use.
+// Every one of them is served by a scope Sync requests (see permissions.go), so a
+// directory report needs no consent beyond the connection itself: the users,
+// groups, domains, organisational units, roles and licences come from the same
+// grant the capability badges of the accounts screen are derived from, the shared
+// drives from the Drive scope the transfers already use, the properties from
+// `analytics.readonly` and the channels from `youtube.readonly`.
 //
-// The collections a GAM style export can reach that Sync cannot are the ones
-// that need a per-mailbox identity (delegates), a YouTube content owner or a
-// Chrome management API: they are absent because the scope is absent, so the API
-// offers "reconnect the account" instead of failing a section nobody can fix
-// (see docs/reports.md).
+// The collections a GAM style export can reach that Sync cannot are the ones that
+// need a per-mailbox identity (delegates) or a Chrome management API: they are
+// absent because the scope is absent, so the API offers "reconnect the account"
+// instead of failing a section nobody can fix (see docs/reports.md).
+//
+// The two Google consumer products are reported for the *connection*, not per
+// user: both APIs answer for the authorised identity (Analytics: the accounts and
+// properties it can reach, YouTube: `mine=true`), and a domain-wide answer needs
+// domain-wide delegation, which this provider does not implement. The sections
+// therefore say what the account reaches and the docs say why.
 func (p *Provider) ReportSections() []providers.ReportSection {
 	return providers.ReportSectionsFor(models.ProviderGoogle)
 }
@@ -373,6 +401,10 @@ func (d *reportData) table(section providers.ReportSection) providers.ReportTabl
 		out = d.sharedDrivesTable()
 	case providers.ReportSectionSharedDriveMembers:
 		out = d.sharedDriveMembersTable()
+	case providers.ReportSectionAnalytics:
+		out = d.analyticsTable()
+	case providers.ReportSectionYouTube:
+		out = d.youtubeTable()
 	default:
 		out = providers.ReportTable{Error: fmt.Sprintf("google: report section %q is not collected for this provider", string(section))}
 	}
@@ -513,6 +545,46 @@ func membersTarget(groupKey string) (string, error) {
 	target := adminBase + "/groups/" + url.PathEscape(groupKey) + "/members"
 	target = withParam(target, "maxResults", strconv.Itoa(reportMemberPageSize))
 	return target, nil
+}
+
+// analyticsAccountsTarget builds the first page of the Analytics accounts the
+// grant can reach. There is no customer or domain parameter to scope it with: the
+// Admin API answers the accounts of the authorised identity, which is why the
+// section reports the connection instead of the domain.
+func analyticsAccountsTarget() string {
+	target := analyticsBase + "/accounts"
+	target = withParam(target, "pageSize", strconv.Itoa(reportAnalyticsPageSize))
+	return target
+}
+
+// analyticsPropertiesTarget builds the first page of the properties of one
+// Analytics account. `filter=parent:accounts/{id}` is the documented way to list
+// the properties below an account — the API has no `properties.list` per parent
+// in its path — so the account name is carried in the query and narrowed first
+// (see analyticsAccountPattern).
+func analyticsPropertiesTarget(account string) (string, error) {
+	if !analyticsAccountPattern.MatchString(account) {
+		return "", invalidIdentifierError("analytics account", account)
+	}
+	target := analyticsBase + "/properties"
+	target = withParam(target, "filter", "parent:"+account)
+	target = withParam(target, "pageSize", strconv.Itoa(reportAnalyticsPageSize))
+	return target, nil
+}
+
+// channelsTarget builds the first page of the YouTube channels of the grant.
+//
+// `mine=true` is what the section can ask for: the Data API filters channels by
+// `mine`, `id`, `forHandle` or `forUsername` (identity-scoped lookups), or by
+// `managedByMe` and `categoryId`. `managedByMe` is the only domain-wide one and it
+// needs a content owner — the CMS of a partner identity — so it is not a
+// substitute here: without one, another user's channels are not reachable at all.
+func channelsTarget() string {
+	target := youtubeBase + "/channels"
+	target = withParam(target, "part", "snippet,statistics")
+	target = withParam(target, "mine", "true")
+	target = withParam(target, "maxResults", strconv.Itoa(reportChannelPageSize))
+	return target
 }
 
 // customerTarget builds the customer record URL and the collections that hang off
@@ -1303,6 +1375,200 @@ func (d *reportData) sharedDriveMembersTable() providers.ReportTable {
 	return table
 }
 
+// reportAnalyticsAccount is one Analytics account, trimmed to what the analytics
+// section shows: the name the property listing is scoped with and the label the
+// row carries.
+type reportAnalyticsAccount struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+}
+
+// reportAnalyticsProperty is one Analytics property, trimmed to the columns of
+// the analytics section. `CreateTime` is what makes the section an inventory —
+// which property exists and when it was created — and `DeleteTime` is what tells
+// a live property from a recycled one.
+type reportAnalyticsProperty struct {
+	Name             string `json:"name"`
+	Parent           string `json:"parent"`
+	DisplayName      string `json:"displayName"`
+	PropertyType     string `json:"propertyType"`
+	IndustryCategory string `json:"industryCategory"`
+	TimeZone         string `json:"timeZone"`
+	CurrencyCode     string `json:"currencyCode"`
+	CreateTime       string `json:"createTime"`
+	DeleteTime       string `json:"deleteTime"`
+}
+
+// reportChannel is one YouTube channel of the connection. The counters arrive as
+// strings (the API quotes them because they outgrow a 32-bit integer) and the
+// subscriber count is the one field a channel may hide, which
+// `hiddenSubscriberCount` reports.
+type reportChannel struct {
+	ID      string `json:"id"`
+	Snippet struct {
+		Title       string `json:"title"`
+		CustomURL   string `json:"customUrl"`
+		Country     string `json:"country"`
+		PublishedAt string `json:"publishedAt"`
+	} `json:"snippet"`
+	Statistics struct {
+		ViewCount             string `json:"viewCount"`
+		SubscriberCount       string `json:"subscriberCount"`
+		HiddenSubscriberCount bool   `json:"hiddenSubscriberCount"`
+		VideoCount            string `json:"videoCount"`
+	} `json:"statistics"`
+}
+
+// analyticsTable builds the analytics section: the properties the connection can
+// reach, each with the Analytics account that holds it and the settings Analytics
+// records for it.
+//
+// The listing is two levels deep — `accounts.list`, then `properties.list` per
+// account — because a property is always owned by an account and the API only
+// lists a property under the parent it names. One unreadable account does not fail
+// the section while its siblings answer: the first error is kept and only surfaces
+// when *no* property could be read at all, which is what a revoked or disabled
+// Analytics Admin API looks like.
+//
+// An empty answer is not an error: an Analytics account is created by a person on
+// analytics.google.com, so a domain with analytics.readonly granted and no
+// Analytics use at all legitimately answers zero rows.
+func (d *reportData) analyticsTable() providers.ReportTable {
+	table := providers.ReportTable{Columns: analyticsColumns()}
+	accounts := []reportAnalyticsAccount{}
+	_, cut, err := d.walk(walkRequest{
+		section:    providers.ReportSectionAnalytics,
+		target:     analyticsAccountsTarget(),
+		collection: "accounts",
+		budget:     reportRowLimit,
+	}, func(raw json.RawMessage) bool {
+		var account reportAnalyticsAccount
+		if err := json.Unmarshal(raw, &account); err != nil {
+			return false
+		}
+		accounts = append(accounts, account)
+		return true
+	})
+	if err != nil {
+		table.Error = err.Error()
+		return table
+	}
+	if cut {
+		// The account listing itself was cut, so the properties of the accounts
+		// that did not fit are unknown: the section says so instead of looking
+		// complete.
+		table.Truncated = true
+	}
+	read := 0
+	var firstErr error
+	for _, account := range accounts {
+		if err := d.ctx.Err(); err != nil {
+			table.Error = err.Error()
+			return table
+		}
+		if len(table.Rows) >= reportRowLimit {
+			table.Truncated = true
+			return table
+		}
+		target, err := analyticsPropertiesTarget(account.Name)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		label := textCell(account.DisplayName)
+		if label == "" {
+			label = textCell(account.Name)
+		}
+		base := len(table.Rows)
+		_, cut, err := d.walk(walkRequest{
+			section:    providers.ReportSectionAnalytics,
+			target:     target,
+			collection: "properties",
+			base:       base,
+			budget:     reportRowLimit - base,
+		}, func(raw json.RawMessage) bool {
+			var property reportAnalyticsProperty
+			if err := json.Unmarshal(raw, &property); err != nil {
+				return false
+			}
+			table.Rows = append(table.Rows, providers.ReportRow{
+				label,
+				textCell(property.Name),
+				textCell(property.DisplayName),
+				textCell(property.PropertyType),
+				textCell(property.IndustryCategory),
+				textCell(property.TimeZone),
+				textCell(property.CurrencyCode),
+				textCell(property.CreateTime),
+				textCell(property.DeleteTime),
+			})
+			return true
+		})
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		read++
+		if cut {
+			table.Truncated = true
+			return table
+		}
+	}
+	if read == 0 && firstErr != nil {
+		table.Error = firstErr.Error()
+	}
+	return table
+}
+
+// youtubeTable builds the youtube section: the channels the connection owns, with
+// their handle, country, creation date and counters.
+//
+// A single walk (`channels.list?mine=true`) answers it, which is the whole
+// per-user story of the section: the Data API lists the channels of the identity
+// behind the token, and a domain-wide listing needs a content owner Sync does not
+// have (see channelsTarget). A connection with no channel answers an empty `items`
+// array — a Workspace user without YouTube is the normal case — so an empty table
+// is a valid section, not a failure.
+func (d *reportData) youtubeTable() providers.ReportTable {
+	table := providers.ReportTable{Columns: youtubeColumns()}
+	_, cut, err := d.walk(walkRequest{
+		section:    providers.ReportSectionYouTube,
+		target:     channelsTarget(),
+		collection: "items",
+		budget:     reportRowLimit,
+	}, func(raw json.RawMessage) bool {
+		var channel reportChannel
+		if err := json.Unmarshal(raw, &channel); err != nil {
+			return false
+		}
+		subscribers := textCell(channel.Statistics.SubscriberCount)
+		if channel.Statistics.HiddenSubscriberCount {
+			subscribers = "hidden"
+		}
+		table.Rows = append(table.Rows, providers.ReportRow{
+			textCell(channel.Snippet.Title),
+			textCell(channel.ID),
+			textCell(channel.Snippet.CustomURL),
+			textCell(channel.Snippet.Country),
+			textCell(channel.Snippet.PublishedAt),
+			subscribers,
+			textCell(channel.Statistics.VideoCount),
+			textCell(channel.Statistics.ViewCount),
+		})
+		return true
+	})
+	if err != nil {
+		table.Error = err.Error()
+		return table
+	}
+	table.Truncated = cut
+	return table
+}
+
 // column is one column of a section: the key the API and the CSV agree on and the
 // label both display.
 func column(key, title string) providers.ReportColumn {
@@ -1447,6 +1713,38 @@ func sharedDriveMemberColumns() []providers.ReportColumn {
 		column("role", "Role"),
 		column("type", "Type"),
 		column("domain", "Domain"),
+	}
+}
+
+// analyticsColumns is the header of the analytics section: the property, the
+// Analytics account that holds it and the settings Analytics records for it. The
+// dates stay in the ISO-8601 form the API answers, like every other date of a
+// report.
+func analyticsColumns() []providers.ReportColumn {
+	return []providers.ReportColumn{
+		column("account", "Analytics account"),
+		column("property", "Property"),
+		column("property_name", "Property name"),
+		column("property_type", "Property type"),
+		column("industry", "Industry category"),
+		column("time_zone", "Time zone"),
+		column("currency", "Currency"),
+		column("created", "Created"),
+		column("deleted", "Deleted"),
+	}
+}
+
+// youtubeColumns is the header of the youtube section.
+func youtubeColumns() []providers.ReportColumn {
+	return []providers.ReportColumn{
+		column("channel", "Channel"),
+		column("channel_id", "Channel id"),
+		column("handle", "Handle"),
+		column("country", "Country"),
+		column("created", "Created"),
+		column("subscribers", "Subscribers"),
+		column("videos", "Videos"),
+		column("views", "Views"),
 	}
 }
 
