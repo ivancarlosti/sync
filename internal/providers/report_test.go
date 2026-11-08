@@ -35,8 +35,8 @@ func TestReportSectionsFromNormalisesTheRequest(t *testing.T) {
 		t.Fatalf("ReportSectionsFrom = %v, want %v", ordered, want)
 	}
 
-	if _, err := ReportSectionsFrom([]string{"users", "teams"}); !errors.Is(err, ErrInvalidIdentifier) {
-		t.Fatalf("ReportSectionsFrom(teams) = %v, want an invalid identifier", err)
+	if _, err := ReportSectionsFrom([]string{"users", "channels"}); !errors.Is(err, ErrInvalidIdentifier) {
+		t.Fatalf("ReportSectionsFrom(channels) = %v, want an invalid identifier", err)
 	}
 }
 
@@ -61,8 +61,25 @@ func TestReportSectionsForSplitsTheVocabulary(t *testing.T) {
 	if containsSection(microsoft, ReportSectionSharedDrives) || containsSection(microsoft, ReportSectionOrgUnits) {
 		t.Fatal("a Microsoft account must not be offered a Google-only section")
 	}
+	if containsSection(microsoft, ReportSectionSharedDriveMembers) {
+		t.Fatal("a Microsoft account must not be offered the shared drive membership of a Workspace domain")
+	}
 	if containsSection(google, ReportSectionSites) || containsSection(google, ReportSectionGuests) {
 		t.Fatal("a Google account must not be offered a Microsoft-only section")
+	}
+	// Teams and Planner are Microsoft 365 products; a Workspace domain has
+	// neither, so the start form never offers them there — and Shared Drive
+	// membership is the Workspace answer to "who reaches this drive".
+	for _, section := range []ReportSection{ReportSectionTeams, ReportSectionTeamMembers, ReportSectionPlannerPlans} {
+		if !containsSection(microsoft, section) {
+			t.Fatalf("the Microsoft collector is not offered the %q section", section)
+		}
+		if containsSection(google, section) {
+			t.Fatalf("a Google account must not be offered the %q section", section)
+		}
+	}
+	if !containsSection(google, ReportSectionSharedDriveMembers) {
+		t.Fatal("the Google collector is not offered the shared drive members section")
 	}
 	// Every section of the vocabulary belongs to somebody: a section no provider
 	// collects would be a dead entry the UI would offer forever.

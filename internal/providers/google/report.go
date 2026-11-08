@@ -37,6 +37,9 @@ const (
 	// reportItemPageSize is the page the role catalogue and the role
 	// assignments are read with (the API caps both at 200).
 	reportItemPageSize = 200
+	// reportDrivePageSize is the page the permissions of a shared drive are read
+	// with (the Drive API caps it at 100).
+	reportDrivePageSize = 100
 )
 
 const (
@@ -181,6 +184,21 @@ type reportGroup struct {
 	DirectMembersCount string   `json:"directMembersCount"`
 }
 
+// reportDrivePermission is one permission of a shared drive, trimmed to the
+// columns of the shared drive members section. The Drive API returns a permission
+// per grantee, which is why a person who reaches a drive through a group appears
+// as the group (`type: group`) and not as themselves: the drive records the grant
+// it was given, and expanding a group is the directory's job (see the group
+// members section).
+type reportDrivePermission struct {
+	ID           string `json:"id"`
+	DisplayName  string `json:"displayName"`
+	EmailAddress string `json:"emailAddress"`
+	Role         string `json:"role"`
+	Type         string `json:"type"`
+	Domain       string `json:"domain"`
+}
+
 // reportMember is one membership of a group.
 type reportMember struct {
 	ID     string `json:"id"`
@@ -311,6 +329,12 @@ type reportData struct {
 	licensesErr    error
 	licenseRows    int
 	licenseCut     bool
+
+	// drives is the Drive listing (My Drive plus the shared drives), read once:
+	// the shared drives section lists it and the membership section opens it.
+	drives       []providers.Drive
+	drivesLoaded bool
+	drivesErr    error
 }
 
 // table collects one section and normalises the empty shapes the API and the UI
@@ -340,6 +364,8 @@ func (d *reportData) table(section providers.ReportSection) providers.ReportTabl
 		out = d.licensesTable()
 	case providers.ReportSectionSharedDrives:
 		out = d.sharedDrivesTable()
+	case providers.ReportSectionSharedDriveMembers:
+		out = d.sharedDriveMembersTable()
 	default:
 		out = providers.ReportTable{Error: fmt.Sprintf("google: report section %q is not collected for this provider", string(section))}
 	}
@@ -1100,7 +1126,7 @@ func (d *reportData) licensesTable() providers.ReportTable {
 // can transfer. `My Drive` is not a shared drive and is left out.
 func (d *reportData) sharedDrivesTable() providers.ReportTable {
 	table := providers.ReportTable{Columns: sharedDriveColumns()}
-	drives, err := d.provider.Drives(d.ctx, providers.Credentials{}, d.tokens)
+	drives, err := d.sharedDriveList()
 	if err != nil {
 		table.Error = err.Error()
 		return table
@@ -1114,6 +1140,102 @@ func (d *reportData) sharedDrivesTable() providers.ReportTable {
 			textCell(drive.ID),
 			textCell(drive.Owner),
 		})
+	}
+	return table
+}
+
+// sharedDriveList reads the Drive listing once. The shared drives section lists it
+// and the membership section opens every shared drive of it, so a report that
+// carries both sections pays for the listing once.
+func (d *reportData) sharedDriveList() ([]providers.Drive, error) {
+	if !d.drivesLoaded {
+		d.drivesLoaded = true
+		drives, err := d.provider.Drives(d.ctx, providers.Credentials{}, d.tokens)
+		d.drives, d.drivesErr = drives, err
+	}
+	return d.drives, d.drivesErr
+}
+
+// sharedDriveMembersTable builds the shared drive members section: who can reach
+// each shared drive of the domain, with the role the drive gives them.
+//
+// It reads the permissions of every shared drive (`/drives/{id}/permissions`),
+// which is the Drive API's own answer to "who has access to this shared drive" —
+// there is no directory-wide equivalent, because a shared drive belongs to a
+// Google Group and its members are permissions on the drive, not group members of
+// the domain. `My Drive` is skipped, exactly as in the shared drives section: its
+// permissions describe one person's files, not a shared location.
+func (d *reportData) sharedDriveMembersTable() providers.ReportTable {
+	table := providers.ReportTable{Columns: sharedDriveMemberColumns()}
+	drives, err := d.sharedDriveList()
+	if err != nil {
+		table.Error = err.Error()
+		return table
+	}
+	read := 0
+	var firstErr error
+	for _, drive := range drives {
+		if drive.Kind != "shared" {
+			continue
+		}
+		if err := d.ctx.Err(); err != nil {
+			table.Error = err.Error()
+			return table
+		}
+		if len(table.Rows) >= reportRowLimit {
+			table.Truncated = true
+			return table
+		}
+		if !identifierPattern.MatchString(drive.ID) {
+			if firstErr == nil {
+				firstErr = invalidIdentifierError("drive id", drive.ID)
+			}
+			continue
+		}
+		label := textCell(drive.Name)
+		if label == "" {
+			label = textCell(drive.ID)
+		}
+		target := withParam(
+			listURL("/drives/"+drive.ID+"/permissions", "nextPageToken,permissions(id,displayName,emailAddress,role,type,domain)"),
+			"pageSize", strconv.Itoa(reportDrivePageSize),
+		)
+		base := len(table.Rows)
+		_, cut, err := d.walk(walkRequest{
+			section:    providers.ReportSectionSharedDriveMembers,
+			target:     target,
+			collection: "permissions",
+			base:       base,
+			budget:     reportRowLimit - base,
+		}, func(raw json.RawMessage) bool {
+			var permission reportDrivePermission
+			if err := json.Unmarshal(raw, &permission); err != nil {
+				return false
+			}
+			table.Rows = append(table.Rows, providers.ReportRow{
+				label,
+				textCell(permission.DisplayName),
+				textCell(permission.EmailAddress),
+				textCell(permission.Role),
+				textCell(permission.Type),
+				textCell(permission.Domain),
+			})
+			return true
+		})
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		read++
+		if cut {
+			table.Truncated = true
+			return table
+		}
+	}
+	if read == 0 && firstErr != nil {
+		table.Error = firstErr.Error()
 	}
 	return table
 }
@@ -1250,6 +1372,18 @@ func sharedDriveColumns() []providers.ReportColumn {
 		column("name", "Name"),
 		column("drive_id", "Drive id"),
 		column("owner", "Owner"),
+	}
+}
+
+// sharedDriveMemberColumns is the header of the shared drive members section.
+func sharedDriveMemberColumns() []providers.ReportColumn {
+	return []providers.ReportColumn{
+		column("drive", "Shared drive"),
+		column("member", "Member"),
+		column("email", "Email"),
+		column("role", "Role"),
+		column("type", "Type"),
+		column("domain", "Domain"),
 	}
 }
 

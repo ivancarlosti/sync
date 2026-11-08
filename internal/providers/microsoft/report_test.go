@@ -71,6 +71,17 @@ func reportBodies() map[string]string {
 			`"authenticationType":"Managed","supportedServices":["Email","OfficeCommunicationsOnline"]}]}`,
 		"/v1.0/sites": `{"value":[{"id":"site-1","displayName":"Marketing","name":"marketing",` +
 			`"webUrl":"https://contoso.sharepoint.com/sites/marketing","createdDateTime":"2023-05-06T00:00:00Z"}]}`,
+		"/v1.0/teams": `{"value":[` +
+			`{"id":"t1","displayName":"Engineering","description":"Ship it","visibility":"private",` +
+			`"isArchived":false,"createdDateTime":"2024-04-05T00:00:00Z"},` +
+			`{"id":"t2","displayName":"Field ops","visibility":"public","isArchived":true}]}`,
+		"/v1.0/teams/t1/members": `{"value":[` +
+			`{"id":"tm1","roles":["owner"],"displayName":"Ada Lovelace","email":"ada@contoso.com","userId":"u1"},` +
+			`{"id":"tm2","roles":[],"displayName":"Grace Hopper","email":"grace@contoso.com","userId":"u3"}]}`,
+		"/v1.0/teams/t2/members": `{"value":[` +
+			`{"id":"tm3","roles":["owner"],"displayName":"Grace Hopper","userId":"u3"}]}`,
+		"/v1.0/groups/g1/planner/plans": `{"value":[{"id":"plan-1","title":"Launch","owner":"g1",` +
+			`"createdDateTime":"2024-03-04T00:00:00Z"}]}`,
 	}
 }
 
@@ -163,13 +174,52 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 		t.Errorf("default_domain cell = %q, want contoso.com", got)
 	}
 
+	teams := bySection[providers.ReportSectionTeams]
+	if len(teams.Rows) != 2 {
+		t.Fatalf("teams rows = %d, want the two teams", len(teams.Rows))
+	}
+	if got := cell(teams, teams.Rows[0], "visibility"); got != "private" {
+		t.Errorf("visibility cell = %q, want private", got)
+	}
+	if got := cell(teams, teams.Rows[1], "archived"); got != "true" {
+		t.Errorf("archived cell = %q, want true", got)
+	}
+
+	// The team membership comes from the team endpoint, not from the group one:
+	// the role is the conversation role of the member.
+	members := bySection[providers.ReportSectionTeamMembers]
+	if len(members.Rows) != 3 {
+		t.Fatalf("team members rows = %d, want 3", len(members.Rows))
+	}
+	if got := cell(members, members.Rows[0], "role"); got != "owner" {
+		t.Errorf("role cell = %q, want owner", got)
+	}
+	if got := cell(members, members.Rows[1], "role"); got != "member" {
+		t.Errorf("role cell = %q, want member", got)
+	}
+	if got := cell(members, members.Rows[0], "team"); got != "Engineering" {
+		t.Errorf("team cell = %q, want the team the member belongs to", got)
+	}
+
+	plans := bySection[providers.ReportSectionPlannerPlans]
+	if len(plans.Rows) != 1 {
+		t.Fatalf("planner plans rows = %d, want the plan of the one group that has one", len(plans.Rows))
+	}
+	if got := cell(plans, plans.Rows[0], "plan"); got != "Launch" {
+		t.Errorf("plan cell = %q, want Launch", got)
+	}
+	if got := cell(plans, plans.Rows[0], "group"); got != "Engineering" {
+		t.Errorf("group cell = %q, want the owning group", got)
+	}
+
 	if len(progress) == 0 {
 		t.Error("CollectReport reported no progress; the polling UI would stay empty")
 	}
 	// Two users pages, then one call per collection: the guests, distribution
-	// lists and licences sections must reuse them instead of re-reading.
-	if len(transport.urls) != 7 {
-		t.Errorf("issued %d requests (%v), want 7", len(transport.urls), transport.urls)
+	// lists, team members and licences sections must reuse them instead of
+	// re-reading, and the plans walk reuses the groups page.
+	if len(transport.urls) != 19 {
+		t.Errorf("issued %d requests (%v), want 19", len(transport.urls), transport.urls)
 	}
 }
 

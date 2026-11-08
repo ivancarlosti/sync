@@ -147,6 +147,29 @@ type OrgIdentifier interface {
 	OrgIDOf(tokens *Tokens) string
 }
 
+// OrganisationNamer is implemented by providers that can turn an organisation id
+// into the name a person recognises: the display name of an Entra tenant, the
+// primary domain (and the organisation name of the Workspace profile) of a Google
+// customer.
+//
+// It is what makes a failed feed identifiable. An audit-log failure is stored
+// against (provider, organisation, stream), so without this the operator reads a
+// bare tenant id in the banner and has to look up which of their tenants it is —
+// and, in the common case of one tenant waiting for a consent and the rest
+// reading fine, which of several tenants needs the grant.
+//
+// Two rules keep it honest. It is optional, so a provider that cannot name its
+// organisation simply answers nothing and the caller falls back to the id. And it
+// is deliberately cheap: the answer is a display label read from an endpoint the
+// connection already grants (see docs/audit-logs.md), never a new consent, and
+// the collector caches it for hours (see services.AuditLogService).
+type OrganisationNamer interface {
+	// OrganisationName answers the display name and the domain of the
+	// organisation behind tokens. An empty name is not an error: it means the
+	// provider could not resolve one, which is a label the caller may skip.
+	OrganisationName(ctx context.Context, creds Credentials, tokens *Tokens) (name, domain string, err error)
+}
+
 // ActivityEvent is one record of a provider's activity feed, already normalised
 // onto the vocabulary of models.AuditLogAction / models.AuditLogTarget. It is
 // what an ActivityLogSource returns and what the collector stores as a
@@ -381,6 +404,12 @@ const (
 	CapabilityGroups Capability = "groups"
 	// CapabilityMembers covers group membership.
 	CapabilityMembers Capability = "members"
+	// CapabilityTeams covers reading the Microsoft Teams of a tenant and their
+	// membership (the teams and team members report sections).
+	CapabilityTeams Capability = "teams"
+	// CapabilityPlanner covers reading the Planner plans of the groups of a
+	// tenant (the planner plans report section).
+	CapabilityPlanner Capability = "planner"
 	// CapabilityDomains covers the verified domains of a tenant.
 	CapabilityDomains Capability = "domains"
 	// CapabilityOrgUnits covers organisational units and their settings.
@@ -400,11 +429,37 @@ var ProviderCapabilities = []Capability{
 	CapabilityUsers,
 	CapabilityGroups,
 	CapabilityMembers,
+	CapabilityTeams,
+	CapabilityPlanner,
 	CapabilityDomains,
 	CapabilityOrgUnits,
 	CapabilityRoles,
 	CapabilityLicenses,
 	CapabilityLogs,
+}
+
+// capabilityExclusive names the capabilities only one provider declares, exactly
+// as reportSectionExclusive does for the report sections: the vocabulary is
+// shared, the products behind it are not. Google has no Teams and no Planner, so a
+// Workspace account is never offered them — not in the guide, not as a badge, and
+// above all not as a missing permission a reconnection could add. A capability
+// absent from this map is part of every provider's vocabulary.
+var capabilityExclusive = map[Capability]models.ProviderName{
+	CapabilityTeams:   models.ProviderMicrosoft,
+	CapabilityPlanner: models.ProviderMicrosoft,
+}
+
+// CapabilitiesFor answers the capabilities in the vocabulary of one provider, in
+// display order.
+func CapabilitiesFor(name models.ProviderName) []Capability {
+	capabilities := make([]Capability, 0, len(ProviderCapabilities))
+	for _, capability := range ProviderCapabilities {
+		if owner, exclusive := capabilityExclusive[capability]; exclusive && owner != name {
+			continue
+		}
+		capabilities = append(capabilities, capability)
+	}
+	return capabilities
 }
 
 // Permission documents one requested scope: why it is requested, which feature
@@ -575,9 +630,9 @@ type CapabilityReport struct {
 	NotApplicable []Capability
 }
 
-// ReportCapabilities builds the capability report of an account from the split of
-// its provider's permission table (ApplicablePermissions) and the scopes that were
-// granted.
+// ReportCapabilities builds the capability report of an account of one provider
+// from the split of its permission table (ApplicablePermissions) and the scopes
+// that were granted.
 //
 // The two halves of the table are read together because a capability can be
 // declared by both. CapabilityFiles on a personal Microsoft account is the case in
@@ -585,14 +640,15 @@ type CapabilityReport struct {
 // the same capability can never be granted, so it stays granted instead of being
 // reported twice — once green and once greyed out. A capability neither half
 // declares is reported missing, which is what an unpublished capability always
-// was.
-func ReportCapabilities(applicable, notApplicable []Permission, granted []string) CapabilityReport {
+// was; the ones outside the vocabulary of this provider are not reported at all
+// (see capabilityExclusive).
+func ReportCapabilities(provider models.ProviderName, applicable, notApplicable []Permission, granted []string) CapabilityReport {
 	report := CapabilityReport{
 		Granted:       []Capability{},
 		Missing:       []Capability{},
 		NotApplicable: []Capability{},
 	}
-	for _, capability := range ProviderCapabilities {
+	for _, capability := range CapabilitiesFor(provider) {
 		switch {
 		case !DeclaresCapability(applicable, capability) && DeclaresCapability(notApplicable, capability):
 			report.NotApplicable = append(report.NotApplicable, capability)

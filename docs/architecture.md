@@ -149,8 +149,10 @@ POST /api/reports ──► reserve account ──► report row (running)
                                 users ─┐
                                        ├─► guests / suspended users (derived)
                                 groups ─┴─► distribution lists (derived) / group members (one walk per group)
-                                sites, licenses, domains, organization,
-                                org units, roles, role assignments, shared drives
+                                teams ────► team members (one walk per team)
+                                groups ───► planner plans (one walk per group)
+                                shared drives ─► shared drive members (one walk per drive)
+                                sites, licenses, domains, organization, org units, roles, role assignments
                                 │
                                 ▼
                         report_sections (columns + rows as JSON) ──► finalise row ──► prune
@@ -162,11 +164,17 @@ POST /api/reports ──► reserve account ──► report row (running)
   `google/report.go`); a provider that does not is answered `supported:false`
   instead of starting a report nothing could build.
 * The vocabulary is provider neutral and each collector advertises its half
-  (`providers.ReportSectionsFor`): `guests`, `distribution_lists` and `sites`
-  belong to Microsoft, `suspended_users`, `group_members`, `org_units`, `roles`,
-  `role_assignments` and `shared_drives` to Google. `ReportSections` stays the
+  (`providers.ReportSectionsFor`): `guests`, `distribution_lists`, `sites`,
+  `teams`, `team_members` and `planner_plans` belong to Microsoft,
+  `suspended_users`, `group_members`, `org_units`, `roles`, `role_assignments`,
+  `shared_drives` and `shared_drive_members` to Google. `ReportSections` stays the
   validation union the API accepts, so a stored request never names a table no
   collector can produce.
+* The capability vocabulary is split the same way (`providers.CapabilitiesFor`
+  over `capabilityExclusive`): `teams` and `planner` are Microsoft only, so a
+  Workspace account is never offered them — not in the setup guide, not as a
+  badge, and above all not as a permission a reconnection could grant. A
+  capability absent from the map belongs to every provider.
 * Every section is independent: a refused endpoint fails **that** section
   (`partial`), never the pass. Each section is bounded (20 000 rows, 500 pages)
   and says so through `truncated`; the pass has a 15 minute budget.

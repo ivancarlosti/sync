@@ -506,7 +506,11 @@ export type ReportSection =
   | 'org_units'
   | 'roles'
   | 'role_assignments'
-  | 'shared_drives';
+  | 'shared_drives'
+  | 'teams'
+  | 'team_members'
+  | 'planner_plans'
+  | 'shared_drive_members';
 
 /** ReportColumn is one column of a section (the CSV header and the UI label). */
 export interface ReportColumn {
@@ -725,10 +729,13 @@ export type Capability =
   | 'users'
   | 'groups'
   | 'members'
+  | 'teams'
+  | 'planner'
   | 'domains'
   | 'orgunits'
   | 'roles'
-  | 'licenses';
+  | 'licenses'
+  | 'logs';
 
 /** AdminConsentStatus is the tenant-wide consent recorded for a provider. */
 export interface AdminConsentStatus {

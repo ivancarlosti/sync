@@ -270,10 +270,13 @@ func (p *Provider) startSubscription(ctx context.Context, tenant, token, content
 // ungranted application into the fix. The code comes with `permission set ()`,
 // which is the tell: the app-only token carries no application roles, so
 // ActivityFeed.Read was never granted (or an administrator of that directory
-// never consented to it) — no retry and no reconnect can change that. Neither
-// this message nor the AF10001 document names the directory, which is why the
-// hint says "this directory": the Audit Logs screen lists the organisation of the
-// cursor that carries the error.
+// never consented to it) — no retry and no reconnect can change that.
+//
+// Neither this message nor the AF10001 document names the directory, which is why
+// the hint says "this directory": the collector prefixes every stored failure with
+// the tenant it belongs to (display name, tenant id and the account that read it,
+// see services.AuditLogService.failureMessage), so the line the operator reads in
+// the Audit Logs banner names the directory before this text begins.
 func activityFeedConsentHint(summary string) string {
 	if !strings.Contains(summary, "AF10001") {
 		return ""

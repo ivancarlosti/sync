@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ivancarlosti/sync/internal/models"
@@ -37,14 +38,22 @@ type AuditLogService struct {
 	store  *Store
 	tokens *TokenManager
 	now    func() time.Time
+
+	// tenants caches the display name of every organisation under
+	// AuditLogFeedKey, so a pass that fails on four streams of one tenant names
+	// it once instead of calling the provider four times (and so the API can
+	// name a feed without a provider call of its own). See tenantName.
+	tenantMu sync.Mutex
+	tenants  map[string]auditLogTenant
 }
 
 // NewAuditLogService builds the collector.
 func NewAuditLogService(store *Store, tokens *TokenManager) *AuditLogService {
 	return &AuditLogService{
-		store:  store,
-		tokens: tokens,
-		now:    func() time.Time { return time.Now().UTC() },
+		store:   store,
+		tokens:  tokens,
+		now:     func() time.Time { return time.Now().UTC() },
+		tenants: map[string]auditLogTenant{},
 	}
 }
 
@@ -247,7 +256,7 @@ func (s *AuditLogService) collectStream(ctx context.Context, group auditLogOrgan
 	}
 	events, next, err := source.ActivityLogs(ctx, session.Credentials, session.Tokens, stream, cursor.Cursor)
 	if err != nil {
-		s.recordFailure(ctx, &cursor, err)
+		s.recordFailure(ctx, &cursor, s.failureMessage(ctx, group, session, err))
 		return 0, err
 	}
 
@@ -260,7 +269,7 @@ func (s *AuditLogService) collectStream(ctx context.Context, group auditLogOrgan
 		rows = append(rows, row)
 	}
 	if err := s.store.InsertAuditLogEvents(ctx, rows); err != nil {
-		s.recordFailure(ctx, &cursor, err)
+		s.recordFailure(ctx, &cursor, s.failureMessage(ctx, group, session, err))
 		return 0, err
 	}
 
@@ -518,13 +527,144 @@ func (r auditLogEventRepair) target() string {
 
 // recordFailure stores why a feed could not be read, so the screen explains a
 // stale list instead of showing a silently short one.
-func (s *AuditLogService) recordFailure(ctx context.Context, cursor *models.AuditLogCursor, cause error) {
-	cursor.LastError = cause.Error()
+func (s *AuditLogService) recordFailure(ctx context.Context, cursor *models.AuditLogCursor, message string) {
+	cursor.LastError = message
 	cursor.LastRunAt = timePointer(s.now())
 	if err := s.store.SaveAuditLogCursor(ctx, cursor); err != nil {
 		slog.Warn("recording the failure of an activity feed failed",
 			"provider", cursor.Provider, "org_id", cursor.OrgID, "stream", cursor.Stream, "error", err)
 	}
+}
+
+// Bounds of the organisation-name cache. A tenant is renamed rarely, so a long
+// hit window keeps the label without a provider call per pass; a failed lookup is
+// retried sooner, because the usual cause — a scope that was never granted — is
+// fixed by an administrator and must show up without a restart. The lookup itself
+// is bounded because it runs inside a collect pass.
+const (
+	auditLogTenantTTL      = 6 * time.Hour
+	auditLogTenantRetryTTL = 10 * time.Minute
+	auditLogTenantTimeout  = 10 * time.Second
+)
+
+// auditLogTenant is one cached answer of the organisation-name lookup. An empty
+// name is a cached failure: it is remembered too, so a provider that refuses the
+// call is not asked again on every stream of the same pass.
+type auditLogTenant struct {
+	name    string
+	expires time.Time
+}
+
+// AuditLogFeedKey is the key a feed of one organisation is cached and indexed
+// under: the provider and the organisation id, the same pair the cursors and the
+// collector group by. It is exported so the API can join a resolved name onto a
+// cursor without rebuilding the key by hand.
+func AuditLogFeedKey(provider, orgID string) string {
+	return provider + "\x00" + orgID
+}
+
+// failureMessage turns the error of a feed into the line the operator reads in the
+// banner: which tenant it is, which account read it, and only then what failed.
+//
+// The order is the fix. A stored failure used to be the provider's message alone,
+// which for an ungranted Office 365 management API names no directory at all (see
+// microsoft.activityFeedConsentHint) — so an operator with several tenants could
+// not tell which one needed the grant. The cause keeps its own wording; only the
+// duplicated provider prefix is dropped, because the label below already carries
+// it.
+func (s *AuditLogService) failureMessage(ctx context.Context, group auditLogOrganisation, session ProviderSession, cause error) string {
+	message := strings.TrimSpace(cause.Error())
+	if prefix := string(group.provider) + ": "; strings.HasPrefix(message, prefix) {
+		message = strings.TrimPrefix(message, prefix)
+	}
+	return fmt.Sprintf("%s: %s: %s", group.provider, s.feedLabel(ctx, group, session), message)
+}
+
+// feedLabel names one organisation feed: `tenant "Contoso Ltd" (059c3987-…), read
+// by admin@contoso.com`, or the id alone when the provider cannot name it. The id
+// is always present (it is what the operator checks in the provider console); the
+// name is what makes it recognisable; the account is what makes "grant it"
+// actionable.
+func (s *AuditLogService) feedLabel(ctx context.Context, group auditLogOrganisation, session ProviderSession) string {
+	tenant := "tenant " + group.orgID
+	if name := s.tenantName(ctx, group, session); name != "" && !strings.EqualFold(name, group.orgID) {
+		tenant = fmt.Sprintf("tenant %q (%s)", name, group.orgID)
+	}
+	if email := strings.TrimSpace(group.email); email != "" {
+		return fmt.Sprintf("%s, read by %s", tenant, email)
+	}
+	return tenant
+}
+
+// tenantName resolves the display name of the organisation of a feed, through the
+// provider's OrganisationNamer, and caches it. An organisation that cannot be
+// named answers "", which every caller renders as the bare id: naming a tenant is
+// an improvement, never a reason to fail a pass.
+func (s *AuditLogService) tenantName(ctx context.Context, group auditLogOrganisation, session ProviderSession) string {
+	key := AuditLogFeedKey(string(group.provider), group.orgID)
+	if name, ok := s.cachedTenantName(key); ok {
+		return name
+	}
+	name := ""
+	if namer, ok := session.Provider.(providers.OrganisationNamer); ok {
+		lookup, cancel := context.WithTimeout(ctx, auditLogTenantTimeout)
+		resolved, _, err := namer.OrganisationName(lookup, session.Credentials, session.Tokens)
+		cancel()
+		if err != nil {
+			// Debug, not warn: the label is a convenience, and the call that
+			// failed is reported on the cursor by the error that caused it.
+			slog.Debug("naming the organisation of an activity feed failed",
+				"provider", group.provider, "org_id", group.orgID, "error", err)
+		} else {
+			name = strings.TrimSpace(resolved)
+		}
+	}
+	s.rememberTenantName(key, name)
+	return name
+}
+
+// cachedTenantName answers the cached label of a feed, or false when it has to be
+// resolved. A failed lookup is cached as "" so it is not asked twice in one pass.
+func (s *AuditLogService) cachedTenantName(key string) (string, bool) {
+	s.tenantMu.Lock()
+	defer s.tenantMu.Unlock()
+	tenant, ok := s.tenants[key]
+	if !ok || !s.now().Before(tenant.expires) {
+		return "", false
+	}
+	return tenant.name, true
+}
+
+// rememberTenantName caches one label, with a shorter window for a failed lookup.
+func (s *AuditLogService) rememberTenantName(key, name string) {
+	ttl := auditLogTenantTTL
+	if name == "" {
+		ttl = auditLogTenantRetryTTL
+	}
+	s.tenantMu.Lock()
+	defer s.tenantMu.Unlock()
+	if s.tenants == nil {
+		s.tenants = map[string]auditLogTenant{}
+	}
+	s.tenants[key] = auditLogTenant{name: name, expires: s.now().Add(ttl)}
+}
+
+// OrganisationNames answers the display name of every organisation the collector
+// has resolved so far, under AuditLogFeedKey. The API joins it onto the cursors so
+// the screen names a feed ("Contoso Ltd") instead of showing a bare tenant id; an
+// organisation that was never resolved is simply absent, and the screen falls back
+// to the id and to the accounts that read the feed.
+func (s *AuditLogService) OrganisationNames() map[string]string {
+	s.tenantMu.Lock()
+	defer s.tenantMu.Unlock()
+	names := make(map[string]string, len(s.tenants))
+	for key, tenant := range s.tenants {
+		if tenant.name == "" {
+			continue
+		}
+		names[key] = tenant.name
+	}
+	return names
 }
 
 // auditLogRow turns one normalised event into the row the store keeps. It answers
@@ -661,7 +801,12 @@ const (
 type AuditLogCursorView struct {
 	Provider string `json:"provider"`
 	OrgID    string `json:"org_id"`
-	Stream   string `json:"stream"`
+	// OrgName is the display name of the organisation (the Entra tenant, the
+	// Workspace customer) when the collector has resolved one. It is what makes
+	// a failure identifiable: the same tenant as a name and as an id. Empty
+	// when the provider could not name it, which the screen renders as the id.
+	OrgName string `json:"org_name,omitempty"`
+	Stream  string `json:"stream"`
 	// Cursor is the opaque resume token, shown only as evidence of progress.
 	Cursor string `json:"cursor,omitempty"`
 	// LastEventAt is when the newest stored event of the feed happened.
@@ -677,13 +822,16 @@ type AuditLogCursorView struct {
 	LastError    string `json:"last_error,omitempty"`
 }
 
-// NewAuditLogCursorViews converts the stored cursors.
-func NewAuditLogCursorViews(rows []models.AuditLogCursor) []AuditLogCursorView {
+// NewAuditLogCursorViews converts the stored cursors, joining the display name of
+// the organisation each feed belongs to (see AuditLogService.OrganisationNames;
+// a nil map is fine and simply leaves every OrgName empty).
+func NewAuditLogCursorViews(rows []models.AuditLogCursor, orgNames map[string]string) []AuditLogCursorView {
 	views := make([]AuditLogCursorView, 0, len(rows))
 	for _, row := range rows {
 		views = append(views, AuditLogCursorView{
 			Provider:     row.Provider,
 			OrgID:        row.OrgID,
+			OrgName:      orgNames[AuditLogFeedKey(row.Provider, row.OrgID)],
 			Stream:       row.Stream,
 			Cursor:       row.Cursor,
 			LastEventAt:  row.LastEventAt,

@@ -305,6 +305,14 @@ func (s *Scheduler) RunAuditLogRepair(ctx context.Context) AuditLogRepairResult 
 	return s.logs.RepairActors(ctx)
 }
 
+// AuditLogOrganisationNames answers the display name of every organisation the
+// collector has resolved so far (see AuditLogService.OrganisationNames). The API
+// joins it onto the feed cursors so the Audit Logs screen names a tenant instead
+// of showing its id alone.
+func (s *Scheduler) AuditLogOrganisationNames() map[string]string {
+	return s.logs.OrganisationNames()
+}
+
 // NextRunAt computes the next execution of a job: now plus its interval for an
 // enabled scheduled job and nil for a job that is disabled or manual only. The
 // job handlers use it whenever an interval or the enabled flag changes.

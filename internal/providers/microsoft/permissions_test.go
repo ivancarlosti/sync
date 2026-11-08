@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ivancarlosti/sync/internal/models"
 	"github.com/ivancarlosti/sync/internal/providers"
 )
 
@@ -25,6 +26,9 @@ var wantScopes = []string{
 	"https://graph.microsoft.com/Group.ReadWrite.All",
 	"https://graph.microsoft.com/Directory.ReadWrite.All",
 	"https://graph.microsoft.com/GroupMember.ReadWrite.All",
+	"https://graph.microsoft.com/Team.ReadBasic.All",
+	"https://graph.microsoft.com/TeamMember.Read.All",
+	"https://graph.microsoft.com/Tasks.Read.All",
 	"https://graph.microsoft.com/Domain.Read.All",
 	"https://graph.microsoft.com/AdministrativeUnit.ReadWrite.All",
 	"https://graph.microsoft.com/RoleManagement.Read.All",
@@ -157,7 +161,7 @@ func TestPersonalAccountsKeepOnlyTheScopesTheyCanHold(t *testing.T) {
 	// Connect ones Entra ID never reports back (see Permissions).
 	granted := providers.SplitScopes("https://graph.microsoft.com/User.Read " +
 		"https://graph.microsoft.com/Files.ReadWrite.All offline_access openid profile email")
-	report := providers.ReportCapabilities(applicable, notApplicable, granted)
+	report := providers.ReportCapabilities(models.ProviderMicrosoft, applicable, notApplicable, granted)
 
 	if len(report.Granted) != 1 || report.Granted[0] != providers.CapabilityFiles {
 		t.Fatalf("granted = %v, want only files", report.Granted)
@@ -166,12 +170,14 @@ func TestPersonalAccountsKeepOnlyTheScopesTheyCanHold(t *testing.T) {
 		t.Fatalf("a personal account is asked to reconnect for %v", report.Missing)
 	}
 
-	// Everything the account cannot hold — the 12 directory scopes behind these
-	// eight capabilities, and nothing else: files is reachable through OneDrive.
+	// Everything the account cannot hold — the 14 directory scopes behind these
+	// ten capabilities, and nothing else: files is reachable through OneDrive.
 	want := []providers.Capability{
 		providers.CapabilityUsers,
 		providers.CapabilityGroups,
 		providers.CapabilityMembers,
+		providers.CapabilityTeams,
+		providers.CapabilityPlanner,
 		providers.CapabilityDomains,
 		providers.CapabilityOrgUnits,
 		providers.CapabilityRoles,

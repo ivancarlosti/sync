@@ -30,6 +30,9 @@ the list for the account, which is what the start form offers.
 | `sites` | `GET /sites?search=*` (paged) | `ceil(sites / 200)` |
 | `licenses` | `GET /subscribedSkus` | 1 |
 | `domains` | `GET /domains` | 1 |
+| `teams` | `GET /teams` (paged, 999) | `ceil(teams / 999)` |
+| `team_members` | `GET /teams/{id}/members` per team | one walk per team |
+| `planner_plans` | `GET /groups/{id}/planner/plans` per group | one walk per group |
 
 **Google Workspace** (`internal/providers/google/report.go`):
 
@@ -46,6 +49,7 @@ the list for the account, which is what the start form offers.
 | `role_assignments` | `GET /customer/my_customer/roleassignments` (paged, 200) | `ceil(assignments / 200)` |
 | `licenses` | `GET licensing/v1/product/{id}/users` per product of the catalogue | 11 |
 | `shared_drives` | `GET drive/v3/drives` (the listing the folder picker uses) | `ceil(drives / 100)` |
+| `shared_drive_members` | `GET /drives/{id}/permissions` per shared drive (paged, 100) | one walk per shared drive |
 
 The derived sections are the point of the design: the n8n flows asked Graph for
 `/users/{id}/licenseDetails` once per user and re-listed the Google directory with
@@ -63,6 +67,24 @@ tenant-wide membership listing, and neither has GAM. It is why the section is
 opt-in: a report started from the screen picks it explicitly, and a scheduled
 report that leaves it out pays nothing for it.
 
+The same is true of the two product sections on the Microsoft side and of the
+Google membership section, for the same reason: Graph has no tenant-wide team
+membership (`/teams/{id}/members` is per team) and no tenant-wide Planner
+collection at all (a plan hangs off the group that owns it), and a shared drive's
+permissions are permissions *on a drive*, not group members of the domain. Each
+reuses a collection the report already reads — `teams`/`team_members` share the
+`/teams` page, `planner_plans` walks the `groups` page, and
+`shared_drive_members` walks the listing `shared_drives` already reads — so the
+listing itself is never paid for twice. `team_members` reads the team endpoint
+rather than the group one because the role of a member there is the *conversation*
+role of the team (owner of the team, not owner of the backing group).
+
+A `shared_drive_members` walk that fails on one drive keeps the rows of the others
+and reports the error only when it could not read a single drive; `team_members`
+and `planner_plans` stop at the shared per-collection walk limit
+(`reportGroupWalkLimit`, 5000 collections) and mark themselves truncated, exactly
+like `group_members` does.
+
 A report that asks for `users` also walks the licence catalogue (one call per
 product, eleven of them), because `users.list` carries no licence: that is the
 one place where a section pays for a column it does not own. A grant without
@@ -70,11 +92,24 @@ one place where a section pays for a column it does not own. A grant without
 
 ## 2. Permissions
 
-**Microsoft 365** needs nothing new: every section is served by a scope the
-account already granted when it was connected (`User.Read.All`,
-`Group.ReadWrite.All`, `Directory.ReadWrite.All`, `Domain.Read.All`,
-`Organization.Read.All`, `Sites.ReadWrite.All` — see
-[app-registration.md](app-registration.md)).
+**Microsoft 365** is served by the scopes the account grants at connection time
+(`User.Read.All`, `Group.ReadWrite.All`, `Directory.ReadWrite.All`,
+`Domain.Read.All`, `Organization.Read.All`, `Sites.ReadWrite.All` — see
+[app-registration.md](app-registration.md)), with two product additions this
+release introduced: `Team.ReadBasic.All` + `TeamMember.Read.All` for the `teams`
+and `team_members` sections, and `Tasks.Read.All` for `planner_plans`
+(`internal/providers/microsoft/permissions.go`). All three are directory scopes,
+so an administrator grants them tenant-wide, and none of them is offered to a
+personal Microsoft account (a team and a plan live in a directory, and an MSA has
+none — see [app-registration.md §1](app-registration.md#1-what-the-permissions-are-for)).
+
+An account connected **before** those scopes joined the always-on set keeps
+synchronising files exactly as it did; `GET /api/accounts` reports `teams` and
+`planner` in `missing_capabilities` (`needs_reconnect`), and a report that asks
+for the sections fails only those tables until the account is reconnected. The
+capability badges are filtered per provider (`providers.CapabilitiesFor`), so a
+Workspace account is never offered `teams` or `planner`: they are not missing
+there, they do not exist.
 
 **Google Workspace** is covered by the always-on Workspace scope set as well
 (`admin.directory.user`, `.group`, `.group.member`, `.domain.readonly`,
@@ -82,9 +117,10 @@ account already granted when it was connected (`User.Read.All`,
 deliberate addition: `admin.directory.customer.readonly`, which is what answers
 `GET /customers/my_customer` — the `organization` row (primary domain, address,
 administrator). Everything else — the users, groups, members, domains,
-organisational units, roles, role assignments, licence assignments and shared
-drives — comes from the scopes the capability badges of the Accounts screen are
-already derived from.
+organisational units, roles, role assignments, licence assignments, shared drives
+and their members — comes from the scopes the capability badges of the Accounts
+screen are already derived from. `shared_drive_members` needs no new scope: the
+Drive scope that lists the shared drives also answers `/drives/{id}/permissions`.
 
 That one scope is additive and forgiving:
 
@@ -106,11 +142,12 @@ because the scope behind it is absent:
 | Gmail delegates, per-mailbox settings | needs per-mailbox impersonation (`gmail.settings.sharing` + domain-wide delegation), not a user consent |
 | YouTube CMS (content owner reports) | needs a content owner identity, not a Workspace account |
 | Chrome management (browsers, profiles, telemetry) | needs the Chrome Management API and a separate admin role |
-| Shared drive permissions (`teamdriveacls`) | the Drive API needs one call per file; deferred until a report can stream it |
+| Per-file permissions of a shared drive | `/drives/{id}/permissions` answers the drive level (what `shared_drive_members` reports); the ACLs *inside* a drive need one call per file, deferred until a report can stream them |
 
-The Microsoft side defers its own set (teams, channels, mailbox settings,
-per-user sign-in activity), and both lists arrive the same way: a permission row
-first, a section second, with `reconnect` for a grant that predates it.
+The Microsoft side defers its own set (teams **channels**, mailbox settings,
+per-user sign-in activity — teams, team membership and Planner plans are
+collected since this release), and both lists arrive the same way: a permission
+row first, a section second, with `reconnect` for a grant that predates it.
 
 ## 3. Lifecycle
 
@@ -170,8 +207,8 @@ step, and it keeps the export dependency free (standard library only).
 | Piece | File |
 |---|---|
 | Vocabulary (`ReportSection`, `ReportSectionsFor`, `ReportTable`, `ReportSource`) | `internal/providers/report.go` |
-| Microsoft collector (paged Graph reads, derived sections) | `internal/providers/microsoft/report.go` |
-| Google collector (Admin SDK Directory, License Manager, shared drives) | `internal/providers/google/report.go` |
+| Microsoft collector (paged Graph reads, Teams and Planner walks, derived sections) | `internal/providers/microsoft/report.go` |
+| Google collector (Admin SDK Directory, License Manager, shared drives and their permissions) | `internal/providers/google/report.go` |
 | Google scopes the collector relies on | `internal/providers/google/permissions.go` |
 | Models (`directory_reports`, `report_sections`, `report_schedules`) | `internal/models/report.go` |
 | Service (lifecycle, schedules, pruning) | `internal/services/report.go` |

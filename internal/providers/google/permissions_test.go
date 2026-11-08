@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ivancarlosti/sync/internal/models"
 	"github.com/ivancarlosti/sync/internal/providers"
 )
 
@@ -56,7 +57,7 @@ func TestPermissionsAreCompleteAndUnique(t *testing.T) {
 			t.Fatalf("scope %q has no i18n title", permission.Scope)
 		}
 	}
-	for _, capability := range providers.ProviderCapabilities {
+	for _, capability := range providers.CapabilitiesFor(models.ProviderGoogle) {
 		if !providers.HasCapability(permissions, wantScopes, capability) {
 			t.Fatalf("capability %q is not satisfied by the requested set", capability)
 		}

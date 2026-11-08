@@ -119,7 +119,7 @@ func TestStartReportValidatesTheRequest(t *testing.T) {
 
 	recorder = call(t, server, http.MethodPost, "/api/reports", map[string]any{
 		"account_id": 1,
-		"sections":   []string{"teams"},
+		"sections":   []string{"channels"},
 	})
 	requireStatus(t, recorder, http.StatusBadRequest)
 	requireErrorCode(t, recorder, codeValidation)

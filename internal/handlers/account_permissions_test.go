@@ -30,12 +30,15 @@ const msaGrant = "https://graph.microsoft.com/User.Read " +
 	"https://graph.microsoft.com/Files.ReadWrite.All offline_access openid profile email"
 
 // directoryCapabilities are the capabilities a personal Microsoft account can
-// never satisfy: exactly the ones the directory scopes back. CapabilityFiles is
-// deliberately not among them — a personal account does reach its OneDrive.
+// never satisfy: exactly the ones the directory scopes back — including the two
+// product ones, Teams and Planner, which hang off the same directory. CapabilityFiles
+// is deliberately not among them — a personal account does reach its OneDrive.
 var directoryCapabilities = []providers.Capability{
 	providers.CapabilityUsers,
 	providers.CapabilityGroups,
 	providers.CapabilityMembers,
+	providers.CapabilityTeams,
+	providers.CapabilityPlanner,
 	providers.CapabilityDomains,
 	providers.CapabilityOrgUnits,
 	providers.CapabilityRoles,

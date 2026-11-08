@@ -122,7 +122,7 @@ func newAccountView(account models.ConnectedAccount, permissions, notApplicable 
 	if permissions == nil && notApplicable == nil {
 		return view
 	}
-	report := providers.ReportCapabilities(permissions, notApplicable, granted)
+	report := providers.ReportCapabilities(models.ProviderName(account.Provider), permissions, notApplicable, granted)
 	view.Capabilities = report.Granted
 	view.MissingCapabilities = report.Missing
 	view.NotApplicableCapabilities = report.NotApplicable

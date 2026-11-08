@@ -212,7 +212,7 @@ func (s *Server) handleListAuditLogs(c *gin.Context) {
 		"total":   total,
 		"limit":   filter.Limit,
 		"offset":  filter.Offset,
-		"cursors": services.NewAuditLogCursorViews(cursors),
+		"cursors": services.NewAuditLogCursorViews(cursors, s.deps.Scheduler.AuditLogOrganisationNames()),
 	})
 }
 
@@ -225,7 +225,7 @@ func (s *Server) handleAuditLogCursors(c *gin.Context) {
 		fail(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"cursors": services.NewAuditLogCursorViews(cursors)})
+	c.JSON(http.StatusOK, gin.H{"cursors": services.NewAuditLogCursorViews(cursors, s.deps.Scheduler.AuditLogOrganisationNames())})
 }
 
 // handleExportAuditLogs answers GET /api/audit-logs/export: it streams the

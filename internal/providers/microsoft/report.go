@@ -26,17 +26,26 @@ const (
 	reportPageLimit = 500
 	// reportPageSize is Graph's ceiling for $top on the directory collections.
 	reportPageSize = 999
+	// reportGroupWalkLimit caps how many groups (or teams) the membership
+	// sections open. Those sections pay one or two calls per parent, so a tenant
+	// with tens of thousands of groups would otherwise turn one report into a
+	// throttling storm; a truncated section says so instead.
+	reportGroupWalkLimit = 5000
 )
 
 // ReportSections lists the sections this provider can collect. Every one of them
-// is served by a scope Sync already requests, so a directory report needs no
-// extra consent: users, groups, sites, licences and domains come from the same
-// grant the capability badges of the accounts screen are derived from.
+// is served by a scope Sync requests, so a directory report needs no extra
+// consent beyond the connection: users, groups, sites, licences and domains come
+// from the directory grant, and the membership sections (group members, teams,
+// team members, planner plans) from CapabilityMembers, CapabilityTeams and
+// CapabilityPlanner.
 //
-// The sections that would need Team.ReadBasic.All, Channel.ReadBasic.All or
-// MailboxSettings.Read (teams, channels, mailbox purpose) are deliberately
-// absent: they arrive when the permission table does, so the API can offer
-// "reconnect the account" instead of failing a section nobody can fix.
+// An account connected before those scopes were added to the table reports them as
+// missing capabilities instead of failing a section silently, which is what makes
+// "reconnect the account" the honest answer (see docs/reports.md). The sections
+// that would need a per-mailbox identity (delegates), a channel or mailbox
+// settings remain absent for the same reason they always were: no scope of the
+// connection serves them.
 //
 // The list is the shared vocabulary filtered to what an Entra ID directory has:
 // the Google-only sections (organisational units, administrative roles, shared
@@ -85,6 +94,50 @@ type reportSite struct {
 	WebURL               string `json:"webUrl"`
 	CreatedDateTime      string `json:"createdDateTime"`
 	LastModifiedDateTime string `json:"lastModifiedDateTime"`
+}
+
+// reportMember is one member or owner of a group, as the directory endpoints
+// return it. The `@odata.type` of the record tells whether the subject is a user,
+// a group, a device or a service principal, which is what the member type column
+// shows: a group nested in a group is a member like any other, but it is not a
+// person.
+type reportMember struct {
+	ODataType         string `json:"@odata.type"`
+	ID                string `json:"id"`
+	DisplayName       string `json:"displayName"`
+	UserPrincipalName string `json:"userPrincipalName"`
+	Mail              string `json:"mail"`
+	AccountEnabled    *bool  `json:"accountEnabled"`
+}
+
+// reportTeam is one Microsoft Team of the tenant, trimmed to the columns of the
+// teams section.
+type reportTeam struct {
+	ID              string `json:"id"`
+	DisplayName     string `json:"displayName"`
+	Description     string `json:"description"`
+	Visibility      string `json:"visibility"`
+	IsArchived      *bool  `json:"isArchived"`
+	CreatedDateTime string `json:"createdDateTime"`
+}
+
+// reportTeamMember is one member of a team: the `aadUserConversationMember` of
+// the team membership endpoint, whose Roles list says whether the member is an
+// owner of the team (a team member can hold both, and Graph reports both).
+type reportTeamMember struct {
+	ID          string   `json:"id"`
+	DisplayName string   `json:"displayName"`
+	Email       string   `json:"email"`
+	UserID      string   `json:"userId"`
+	Roles       []string `json:"roles"`
+}
+
+// reportPlan is one Planner plan of a group.
+type reportPlan struct {
+	ID              string `json:"id"`
+	Title           string `json:"title"`
+	Owner           string `json:"owner"`
+	CreatedDateTime string `json:"createdDateTime"`
 }
 
 // reportSku is one subscribed licence of the tenant.
@@ -190,6 +243,11 @@ type reportData struct {
 	groupsCut    bool
 	groupsErr    error
 
+	teams       []reportTeam
+	teamsLoaded bool
+	teamsCut    bool
+	teamsErr    error
+
 	skus       []reportSku
 	skusLoaded bool
 	skusErr    error
@@ -216,6 +274,14 @@ func (d *reportData) table(section providers.ReportSection) providers.ReportTabl
 		out = d.licensesTable()
 	case providers.ReportSectionDomains:
 		out = d.domainsTable()
+	case providers.ReportSectionGroupMembers:
+		out = d.groupMembersTable()
+	case providers.ReportSectionTeams:
+		out = d.teamsTable()
+	case providers.ReportSectionTeamMembers:
+		out = d.teamMembersTable()
+	case providers.ReportSectionPlannerPlans:
+		out = d.plannerPlansTable()
 	default:
 		out = providers.ReportTable{Error: fmt.Sprintf("unknown report section %q", string(section))}
 	}
@@ -307,6 +373,42 @@ func groupsTarget() string {
 	}, url.Values{"$top": {strconv.Itoa(reportPageSize)}})
 }
 
+// teamsTarget builds the first page of the teams collection. It is a distinct
+// endpoint from `/groups` (a team is the workload behind a group), which is why
+// the teams section lists it instead of filtering the groups page.
+func teamsTarget() string {
+	return collectionTarget("/teams", []string{
+		"id", "displayName", "description", "visibility", "isArchived", "createdDateTime",
+	}, url.Values{"$top": {strconv.Itoa(reportPageSize)}})
+}
+
+// membersTarget builds the first page of the members or owners of a group.
+//
+// The projection is deliberately the small set every directory object type
+// carries a value for (a member can be a user, a nested group, a device or a
+// service principal): Graph rejects a `$select` naming a property the collection
+// does not have, and losing the whole section over one column would be a poor
+// trade. The `@odata.type` of each record is what the member type column shows.
+func membersTarget(groupID, relation string) string {
+	return collectionTarget("/groups/"+url.PathEscape(groupID)+"/"+relation, []string{
+		"id", "displayName", "userPrincipalName", "mail",
+	}, nil)
+}
+
+// teamMembersTarget builds the first page of the members of a team.
+func teamMembersTarget(teamID string) string {
+	return collectionTarget("/teams/"+url.PathEscape(teamID)+"/members", []string{
+		"id", "displayName", "email", "userId", "roles",
+	}, nil)
+}
+
+// plansTarget builds the first page of the Planner plans of a group.
+func plansTarget(groupID string) string {
+	return collectionTarget("/groups/"+url.PathEscape(groupID)+"/planner/plans", []string{
+		"id", "title", "owner", "createdDateTime",
+	}, nil)
+}
+
 // loadUsers reads the users collection once, with the licence column when the
 // tenant allows it.
 //
@@ -361,6 +463,25 @@ func (d *reportData) loadGroups() {
 		return true
 	})
 	d.groups, d.groupsCut, d.groupsErr = groups, cut, err
+}
+
+// loadTeams reads the teams collection once; the teams section lists it and the
+// team members section opens it, so one call serves both.
+func (d *reportData) loadTeams() {
+	if d.teamsLoaded {
+		return
+	}
+	d.teamsLoaded = true
+	teams := make([]reportTeam, 0, reportPageSize)
+	_, cut, err := d.walk(providers.ReportSectionTeams, teamsTarget(), func(raw json.RawMessage) bool {
+		var team reportTeam
+		if err := json.Unmarshal(raw, &team); err != nil {
+			return false
+		}
+		teams = append(teams, team)
+		return true
+	})
+	d.teams, d.teamsCut, d.teamsErr = teams, cut, err
 }
 
 // loadSkus reads the subscribed licence catalogue once. The users section uses
@@ -486,6 +607,52 @@ func domainColumns() []providers.ReportColumn {
 	}
 }
 
+// groupMemberColumns is the header of the group members section.
+func groupMemberColumns() []providers.ReportColumn {
+	return []providers.ReportColumn{
+		column("group", "Group"),
+		column("member", "Member"),
+		column("member_type", "Member type"),
+		column("mail", "Mail"),
+		column("role", "Role"),
+		column("member_id", "Member id"),
+	}
+}
+
+// teamColumns is the header of the teams section.
+func teamColumns() []providers.ReportColumn {
+	return []providers.ReportColumn{
+		column("display_name", "Display name"),
+		column("visibility", "Visibility"),
+		column("archived", "Archived"),
+		column("description", "Description"),
+		column("created", "Created"),
+		column("team_id", "Team id"),
+	}
+}
+
+// teamMemberColumns is the header of the team members section.
+func teamMemberColumns() []providers.ReportColumn {
+	return []providers.ReportColumn{
+		column("team", "Team"),
+		column("member", "Member"),
+		column("mail", "Mail"),
+		column("role", "Role"),
+		column("user_id", "User id"),
+	}
+}
+
+// plannerPlanColumns is the header of the planner plans section.
+func plannerPlanColumns() []providers.ReportColumn {
+	return []providers.ReportColumn{
+		column("group", "Group"),
+		column("plan", "Plan"),
+		column("owner", "Owner"),
+		column("created", "Created"),
+		column("plan_id", "Plan id"),
+	}
+}
+
 // organizationColumns is the header of the organization section.
 func organizationColumns() []providers.ReportColumn {
 	return []providers.ReportColumn{
@@ -503,6 +670,67 @@ func organizationColumns() []providers.ReportColumn {
 
 // textCell trims a value so a CSV never carries a stray newline or padding.
 func textCell(value string) string { return strings.TrimSpace(value) }
+
+// label is how a group is named inside another section: its display name, then its
+// mail, then its id. A group an administrator never named is still reported, and
+// it is reported under something an operator can search for.
+func (g reportGroup) label() string {
+	if name := textCell(g.DisplayName); name != "" {
+		return name
+	}
+	if mail := textCell(g.Mail); mail != "" {
+		return mail
+	}
+	return textCell(g.ID)
+}
+
+// decodeMember reads one member or owner record, answering false for a document
+// the section cannot use.
+func decodeMember(raw json.RawMessage) (reportMember, bool) {
+	var member reportMember
+	if err := json.Unmarshal(raw, &member); err != nil {
+		return reportMember{}, false
+	}
+	return member, true
+}
+
+// memberRow renders one member or owner of a group. The address column falls back
+// to the user principal name, because a user whose mailbox was never provisioned
+// has a mail property that is empty while the UPN is still the address people use.
+func memberRow(group string, member reportMember, role string) providers.ReportRow {
+	mail := textCell(member.Mail)
+	if mail == "" {
+		mail = textCell(member.UserPrincipalName)
+	}
+	return providers.ReportRow{
+		group,
+		textCell(member.DisplayName),
+		memberType(member.ODataType),
+		mail,
+		role,
+		textCell(member.ID),
+	}
+}
+
+// memberType turns the `@odata.type` of a directory object into the short word the
+// member type column shows (`user`, `group`, `servicePrincipal`, …). The type is
+// what tells a nested group or a service principal from a person, which a bare
+// display name cannot.
+func memberType(odataType string) string {
+	return strings.TrimPrefix(textCell(odataType), "#microsoft.graph.")
+}
+
+// teamRole renders the roles of a team member as the one word the role column
+// carries. A member can hold several roles at once; owner is the one that grants
+// the team, so it wins and the row stays filterable.
+func teamRole(roles []string) string {
+	for _, role := range roles {
+		if strings.EqualFold(strings.TrimSpace(role), "owner") {
+			return "owner"
+		}
+	}
+	return "member"
+}
 
 // flagCell renders an optional boolean; nil stays empty ("not reported").
 func flagCell(value *bool) string {
@@ -741,6 +969,208 @@ func (d *reportData) domainsTable() providers.ReportTable {
 	})
 	table.Truncated = cut
 	table.Error = errorText(err)
+	return table
+}
+
+// groupMembersTable builds the group members section: who belongs to every group
+// of the directory, with the role the group gives them.
+//
+// The section pays two calls per group (owners, then members) because Graph keeps
+// the two relationships apart while a report wants one row per subject with the
+// role that matters. A person who is both is therefore reported once, as an
+// owner: a second row would say nothing the first does not. It is the same pair of
+// endpoints (`/groups/{id}/members`, `/groups/{id}/owners`) the n8n flow called
+// for every group it walked.
+//
+// The walk is bounded (reportGroupWalkLimit groups, reportRowLimit rows) because
+// every parent costs calls: a tenant with tens of thousands of groups would turn
+// one report into a throttling storm, and a truncated section says so instead.
+func (d *reportData) groupMembersTable() providers.ReportTable {
+	table := providers.ReportTable{Columns: groupMemberColumns()}
+	d.loadGroups()
+	if d.groupsErr != nil {
+		table.Error = d.groupsErr.Error()
+		return table
+	}
+	walked := 0
+	for _, group := range d.groups {
+		if err := d.ctx.Err(); err != nil {
+			table.Error = err.Error()
+			return table
+		}
+		if walked >= reportGroupWalkLimit || len(table.Rows) >= reportRowLimit {
+			table.Truncated = true
+			return table
+		}
+		if strings.TrimSpace(group.ID) == "" {
+			continue
+		}
+		walked++
+		label := group.label()
+		owners := map[string]bool{}
+		_, cut, err := d.walk(providers.ReportSectionGroupMembers, membersTarget(group.ID, "owners"), func(raw json.RawMessage) bool {
+			member, ok := decodeMember(raw)
+			if !ok {
+				return false
+			}
+			if member.ID != "" {
+				owners[member.ID] = true
+			}
+			table.Rows = append(table.Rows, memberRow(label, member, "owner"))
+			return true
+		})
+		if cut {
+			table.Truncated = true
+		}
+		if err != nil {
+			table.Error = errorText(err)
+			return table
+		}
+		_, cut, err = d.walk(providers.ReportSectionGroupMembers, membersTarget(group.ID, "members"), func(raw json.RawMessage) bool {
+			member, ok := decodeMember(raw)
+			if !ok {
+				return false
+			}
+			if owners[member.ID] {
+				return false
+			}
+			table.Rows = append(table.Rows, memberRow(label, member, "member"))
+			return true
+		})
+		if cut {
+			table.Truncated = true
+		}
+		if err != nil {
+			table.Error = errorText(err)
+			return table
+		}
+	}
+	return table
+}
+
+// teamsTable builds the teams section from the cached teams collection.
+func (d *reportData) teamsTable() providers.ReportTable {
+	table := providers.ReportTable{Columns: teamColumns()}
+	d.loadTeams()
+	if d.teamsErr != nil {
+		table.Error = d.teamsErr.Error()
+		return table
+	}
+	for _, team := range d.teams {
+		table.Rows = append(table.Rows, providers.ReportRow{
+			textCell(team.DisplayName),
+			textCell(team.Visibility),
+			flagCell(team.IsArchived),
+			textCell(team.Description),
+			textCell(team.CreatedDateTime),
+			textCell(team.ID),
+		})
+	}
+	table.Truncated = d.teamsCut
+	return table
+}
+
+// teamMembersTable builds the team members section: who belongs to every team,
+// with the role the team gives them. It reads `/teams/{id}/members` rather than
+// the group membership, because the conversation roles of a member (owner of the
+// team, as opposed to owner of the backing group) only exist there.
+func (d *reportData) teamMembersTable() providers.ReportTable {
+	table := providers.ReportTable{Columns: teamMemberColumns()}
+	d.loadTeams()
+	if d.teamsErr != nil {
+		table.Error = d.teamsErr.Error()
+		return table
+	}
+	walked := 0
+	for _, team := range d.teams {
+		if err := d.ctx.Err(); err != nil {
+			table.Error = err.Error()
+			return table
+		}
+		if walked >= reportGroupWalkLimit || len(table.Rows) >= reportRowLimit {
+			table.Truncated = true
+			return table
+		}
+		if strings.TrimSpace(team.ID) == "" {
+			continue
+		}
+		walked++
+		label := textCell(team.DisplayName)
+		if label == "" {
+			label = textCell(team.ID)
+		}
+		_, cut, err := d.walk(providers.ReportSectionTeamMembers, teamMembersTarget(team.ID), func(raw json.RawMessage) bool {
+			var member reportTeamMember
+			if err := json.Unmarshal(raw, &member); err != nil {
+				return false
+			}
+			table.Rows = append(table.Rows, providers.ReportRow{
+				label,
+				textCell(member.DisplayName),
+				textCell(member.Email),
+				teamRole(member.Roles),
+				textCell(member.UserID),
+			})
+			return true
+		})
+		if cut {
+			table.Truncated = true
+		}
+		if err != nil {
+			table.Error = errorText(err)
+			return table
+		}
+	}
+	return table
+}
+
+// plannerPlansTable builds the planner plans section: every plan of every group,
+// with the group that owns it. Graph has no directory-wide plans collection (a
+// plan hangs off the group that owns it), which is why this is the groups walk.
+func (d *reportData) plannerPlansTable() providers.ReportTable {
+	table := providers.ReportTable{Columns: plannerPlanColumns()}
+	d.loadGroups()
+	if d.groupsErr != nil {
+		table.Error = d.groupsErr.Error()
+		return table
+	}
+	walked := 0
+	for _, group := range d.groups {
+		if err := d.ctx.Err(); err != nil {
+			table.Error = err.Error()
+			return table
+		}
+		if walked >= reportGroupWalkLimit || len(table.Rows) >= reportRowLimit {
+			table.Truncated = true
+			return table
+		}
+		if strings.TrimSpace(group.ID) == "" {
+			continue
+		}
+		walked++
+		label := group.label()
+		_, cut, err := d.walk(providers.ReportSectionPlannerPlans, plansTarget(group.ID), func(raw json.RawMessage) bool {
+			var plan reportPlan
+			if err := json.Unmarshal(raw, &plan); err != nil {
+				return false
+			}
+			table.Rows = append(table.Rows, providers.ReportRow{
+				label,
+				textCell(plan.Title),
+				textCell(plan.Owner),
+				textCell(plan.CreatedDateTime),
+				textCell(plan.ID),
+			})
+			return true
+		})
+		if cut {
+			table.Truncated = true
+		}
+		if err != nil {
+			table.Error = errorText(err)
+			return table
+		}
+	}
 	return table
 }
 

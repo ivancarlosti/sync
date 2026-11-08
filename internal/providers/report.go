@@ -59,6 +59,20 @@ const (
 	ReportSectionRoleAssignments ReportSection = "role_assignments"
 	// ReportSectionSharedDrives is every Google Shared Drive of the domain.
 	ReportSectionSharedDrives ReportSection = "shared_drives"
+	// ReportSectionTeams is every Microsoft Team of the tenant: its name, its
+	// visibility and whether it is archived.
+	ReportSectionTeams ReportSection = "teams"
+	// ReportSectionTeamMembers is the membership of every Microsoft Team, with
+	// the role the team gives the member (owner or member). It is the Team
+	// specific view of the group membership: a team is a Microsoft 365 group,
+	// but Graph exposes its members (and their conversation roles) separately.
+	ReportSectionTeamMembers ReportSection = "team_members"
+	// ReportSectionPlannerPlans is every Planner plan of the groups of the
+	// tenant: the plan, the group that owns it and its creation date.
+	ReportSectionPlannerPlans ReportSection = "planner_plans"
+	// ReportSectionSharedDriveMembers is who can reach a Google Shared Drive,
+	// with the role the drive gives them (manager, content manager, writer…).
+	ReportSectionSharedDriveMembers ReportSection = "shared_drive_members"
 )
 
 // ReportSections lists every section of the report vocabulary in the order the
@@ -84,6 +98,10 @@ var ReportSections = []ReportSection{
 	ReportSectionRoles,
 	ReportSectionRoleAssignments,
 	ReportSectionSharedDrives,
+	ReportSectionTeams,
+	ReportSectionTeamMembers,
+	ReportSectionPlannerPlans,
+	ReportSectionSharedDriveMembers,
 }
 
 // reportSectionExclusive names the sections exactly one provider can collect:
@@ -97,13 +115,16 @@ var reportSectionExclusive = map[ReportSection]models.ProviderName{
 	ReportSectionGuests:            models.ProviderMicrosoft,
 	ReportSectionDistributionLists: models.ProviderMicrosoft,
 	ReportSectionSites:             models.ProviderMicrosoft,
+	ReportSectionTeams:             models.ProviderMicrosoft,
+	ReportSectionTeamMembers:       models.ProviderMicrosoft,
+	ReportSectionPlannerPlans:      models.ProviderMicrosoft,
 
-	ReportSectionSuspendedUsers:  models.ProviderGoogle,
-	ReportSectionGroupMembers:    models.ProviderGoogle,
-	ReportSectionOrgUnits:        models.ProviderGoogle,
-	ReportSectionRoles:           models.ProviderGoogle,
-	ReportSectionRoleAssignments: models.ProviderGoogle,
-	ReportSectionSharedDrives:    models.ProviderGoogle,
+	ReportSectionSuspendedUsers:     models.ProviderGoogle,
+	ReportSectionOrgUnits:           models.ProviderGoogle,
+	ReportSectionRoles:              models.ProviderGoogle,
+	ReportSectionRoleAssignments:    models.ProviderGoogle,
+	ReportSectionSharedDrives:       models.ProviderGoogle,
+	ReportSectionSharedDriveMembers: models.ProviderGoogle,
 }
 
 // ReportSectionsFor answers the sections a provider can collect: the shared ones

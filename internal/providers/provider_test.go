@@ -213,7 +213,7 @@ func TestApplicablePermissionsSplitsByAccountKind(t *testing.T) {
 	// alone — is out of reach instead of missing, and the capabilities this small
 	// table never mentions are reported missing exactly as they were before kinds
 	// existed.
-	report := ReportCapabilities(applicable, notApplicable, []string{"files.read"})
+	report := ReportCapabilities(models.ProviderMicrosoft, applicable, notApplicable, []string{"files.read"})
 	if fmt.Sprint(report.Granted) != fmt.Sprint([]Capability{CapabilityFiles}) {
 		t.Fatalf("granted = %v, want files", report.Granted)
 	}
@@ -221,18 +221,54 @@ func TestApplicablePermissionsSplitsByAccountKind(t *testing.T) {
 		t.Fatalf("notApplicable = %v, want users alone", report.NotApplicable)
 	}
 	undeclared := []Capability{
-		CapabilityGroups, CapabilityMembers, CapabilityDomains,
-		CapabilityOrgUnits, CapabilityRoles, CapabilityLicenses, CapabilityLogs,
+		CapabilityGroups, CapabilityMembers, CapabilityTeams, CapabilityPlanner,
+		CapabilityDomains, CapabilityOrgUnits, CapabilityRoles, CapabilityLicenses,
+		CapabilityLogs,
 	}
 	if fmt.Sprint(report.Missing) != fmt.Sprint(undeclared) {
 		t.Fatalf("missing = %v, want %v", report.Missing, undeclared)
 	}
 
 	// Without that scope files is missing — not out of reach.
-	report = ReportCapabilities(applicable, notApplicable, nil)
+	report = ReportCapabilities(models.ProviderMicrosoft, applicable, notApplicable, nil)
 	wantMissing := append([]Capability{CapabilityFiles}, undeclared...)
 	if fmt.Sprint(report.Missing) != fmt.Sprint(wantMissing) {
 		t.Fatalf("missing = %v, want %v", report.Missing, wantMissing)
+	}
+
+	// A Google account is never told that Teams or Planner are missing: they are
+	// outside the vocabulary of its provider, so no reconnection could add them.
+	google := ReportCapabilities(models.ProviderGoogle, applicable, notApplicable, nil)
+	for _, capability := range google.Missing {
+		if capability == CapabilityTeams || capability == CapabilityPlanner {
+			t.Fatalf("a Google account is asked for %q, which its directory does not have", capability)
+		}
+	}
+	if len(google.Missing) != len(wantMissing)-2 {
+		t.Fatalf("google missing = %v, want the same list without teams and planner", google.Missing)
+	}
+}
+
+// TestCapabilitiesForSplitsTheVocabulary pins the provider affinity of the
+// capability vocabulary: it is shared like the report sections, except for the
+// capabilities behind a product only one directory has.
+func TestCapabilitiesForSplitsTheVocabulary(t *testing.T) {
+	microsoft := CapabilitiesFor(models.ProviderMicrosoft)
+	google := CapabilitiesFor(models.ProviderGoogle)
+
+	if fmt.Sprint(microsoft) != fmt.Sprint(ProviderCapabilities) {
+		t.Fatalf("CapabilitiesFor(microsoft) = %v, want the whole vocabulary", microsoft)
+	}
+	// The display order is the vocabulary order: filtering never reshuffles.
+	filtered := []Capability{}
+	for _, capability := range ProviderCapabilities {
+		if capability == CapabilityTeams || capability == CapabilityPlanner {
+			continue
+		}
+		filtered = append(filtered, capability)
+	}
+	if fmt.Sprint(google) != fmt.Sprint(filtered) {
+		t.Fatalf("CapabilitiesFor(google) = %v, want %v", google, filtered)
 	}
 }
 
@@ -252,7 +288,7 @@ func TestApplicablePermissionsKeepsUnknownKindsWhole(t *testing.T) {
 	// With no non applicable half the report is the one the screen always had:
 	// granted plus missing, and nothing greyed out.
 	for _, granted := range [][]string{nil, {"files.read"}, {"files.read", "files.write"}} {
-		report := ReportCapabilities(applicable, notApplicable, granted)
+		report := ReportCapabilities(models.ProviderMicrosoft, applicable, notApplicable, granted)
 		if len(report.NotApplicable) != 0 {
 			t.Fatalf("granted %v: notApplicable = %v, want none", granted, report.NotApplicable)
 		}

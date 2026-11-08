@@ -30,23 +30,29 @@ need.
 | `users` — user accounts | `admin.directory.user`, `admin.directory.user.alias` | `User.Read.All`, `User.ReadWrite.All` |
 | `groups` — groups and distribution lists | `admin.directory.group` | `Group.ReadWrite.All`, `Directory.ReadWrite.All` |
 | `members` — group membership | `admin.directory.group.member` | `GroupMember.ReadWrite.All` |
+| `teams` — Teams teams and their members ([reports.md](reports.md)) | — | `Team.ReadBasic.All`, `TeamMember.Read.All` |
+| `planner` — Planner plans of the tenant's groups ([reports.md](reports.md)) | — | `Tasks.Read.All` |
 | `domains` — verified domains and the tenant record | `admin.directory.domain.readonly`, `admin.directory.customer.readonly` | `Domain.Read.All` |
 | `orgunits` — organisational units | `admin.directory.orgunit` | `AdministrativeUnit.ReadWrite.All` |
 | `roles` — administrative role catalogue (read-only) | `admin.directory.rolemanagement.readonly` | `RoleManagement.Read.All` |
 | `licenses` — subscriptions and licence assignment | `apps.licensing` | `Organization.Read.All`, `LicenseAssignment.ReadWrite.All` |
 | `logs` — the organisation-wide activity feed ([audit-logs.md](audit-logs.md)) | `admin.reports.audit.readonly` | `AuditLog.Read.All` |
 
-The **directory report** ([reports.md](reports.md)) adds exactly one row to this
-table: `admin.directory.customer.readonly` under `domains`, which is what answers
-`GET /customers/my_customer` — the `organization` section of a Google report.
-Every other Google section is built from `users`, `groups`, `members`, `domains`,
-`orgunits`, `roles`, `licenses` and `files` above, and the whole Microsoft
-vocabulary is covered by the scopes already listed. A grant made before the
-customer scope existed still reports: the section is then derived from the domain
-list (see [reports.md §2](reports.md#2-permissions)), and Accounts → *Check the
+The **directory report** ([reports.md](reports.md)) adds exactly one row of its own
+on the Google side: `admin.directory.customer.readonly` under `domains`, which is
+what answers `GET /customers/my_customer` — the `organization` section of a Google
+report. Every other Google section is built from `users`, `groups`, `members`,
+`domains`, `orgunits`, `roles`, `licenses` and `files` above, shared drive members
+included: the Drive scope that lists a shared drive also answers its permissions
+(`/drives/{id}/permissions`). The Microsoft vocabulary is covered by the table
+plus the two rows `teams` and `planner` above, which this release added for the
+Teams and Planner sections — both directory scopes, granted tenant-wide with the
+same admin consent as the rest. A grant made before the customer scope existed
+still reports: the section is then derived from the domain list (see
+[reports.md §2](reports.md#2-permissions)), and Accounts → *Check the
 token* offers the upgrade. The collections that need a scope Sync does not
 request at all (Gmail delegates, YouTube CMS, Chrome management, per-user
-sign-in activity on the Microsoft side, teams and channels) are not offered until
+sign-in activity on the Microsoft side, Teams channels) are not offered until
 that row exists.
 
 `GET /api/accounts` reports, per connected account, which of these capabilities
@@ -288,7 +294,7 @@ answers everything the screen renders:
 | `console_urls` | the console deep links (`drive_api`, `admin_api`, `licensing_api`, `entra_apps`, `entra_authentication`, `entra_credentials`, `entra_api_permissions`, `graph_permissions`) |
 | `permissions[]` | the permission table: `capability`, `title` (i18n suffix), `scope`, `admin_consent`, `informational` (requested for the protocol, proves no capability — see §3.3), `kinds` (the account kinds that can hold the scope: absent means every kind, `["work"]` on the directory scopes and `Sites.ReadWrite.All`, which a personal Microsoft account can never be granted — see §1) |
 | `scopes[]` | the permission scopes in request order — the OAuth request joins them with a space (`scope` parameter); the guide renders them comma-separated, which is what the Google consent screen's *Manually add scopes* box expects |
-| `capabilities[]` | the capabilities the table unlocks |
+| `capabilities[]` | the capabilities the table unlocks, scoped to the provider (`providers.CapabilitiesFor`): `teams` and `planner` are Microsoft only, and a Workspace guide never offers them |
 | `admin_consent_required` | the provider has a tenant-wide consent step (Microsoft) |
 | `admin_consent` | `{tenant, client_id, at, granted}` of this instance |
 | `steps[]` | the ordered walkthrough: `id`, `url`, `copy` (`redirect_uri` / `scopes` / `permissions`), `action` (`admin_consent`), `optional` |
@@ -318,6 +324,16 @@ When a release adds a permission:
 
 File synchronisation keeps working the whole time: the missing capabilities only
 affect the operations that need them, and the engine never calls one.
+
+This release adds one such upgrade on the Microsoft side: `teams` and `planner`
+(`Team.ReadBasic.All`, `TeamMember.Read.All`, `Tasks.Read.All`, §1). The app
+registration has to carry them before the reconnect is useful — Entra refuses to
+authorise a scope the registration does not declare (`AADSTS65001`) — so the order
+is: add the three delegated permissions in the console, *Grant admin consent*, then
+reconnect. Connections that skip it keep syncing files and simply do not offer the
+Teams and Planner report sections. Google needs no equivalent step for
+`shared_drive_members`: it rides on the `drive` scope every connection already
+grants.
 
 The caveat of the Microsoft table belongs here too: a permission an account can
 never hold is **not** a missing permission. On a personal Microsoft account the

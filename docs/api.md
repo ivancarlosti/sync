@@ -121,7 +121,10 @@ account, whose organisation has no administrator feed). The third list,
 `not_applicable_capabilities[]`, holds the capabilities the account can never be
 granted: on a personal Microsoft account (an MSA) the directory permissions are
 outside what the account can hold, so they are neither satisfied nor missing, and
-`needs_reconnect` ignores them — reconnecting could not deliver them. `status` is
+`needs_reconnect` ignores them — reconnecting could not deliver them. The
+vocabulary itself is scoped per provider (`providers.CapabilitiesFor`): `teams` and
+`planner` are Microsoft only, so a Workspace account is never offered them and they
+never appear in its `missing_capabilities`. `status` is
 `connected` while the stored token works and `error` once a
 refresh was refused (with `last_error` holding the reason). The Accounts screen
 offers the same reconnect action for a missing capability and for an `error`
@@ -366,14 +369,16 @@ provider again.
 
 `sections` is the closed vocabulary `organization`, `users`, `guests`, `groups`,
 `distribution_lists`, `sites`, `licenses`, `domains`, `suspended_users`,
-`group_members`, `org_units`, `roles`, `role_assignments`, `shared_drives`; **an
+`group_members`, `org_units`, `roles`, `role_assignments`, `shared_drives`,
+`teams`, `team_members`, `planner_plans`, `shared_drive_members`; **an
 empty list means every section the provider supports**, and an unknown name is a
 **400**. A section the provider cannot collect is dropped from the run (the
 answered `section_list` is what was actually requested), and `GET
 /api/reports/sections` is what tells the UI which half of the vocabulary the
-account's provider owns — `guests`, `distribution_lists` and `sites` belong to
-Microsoft, `suspended_users`, `group_members`, `org_units`, `roles`,
-`role_assignments` and `shared_drives` to Google (see
+account's provider owns — `guests`, `distribution_lists`, `sites`, `teams`,
+`team_members` and `planner_plans` belong to Microsoft, `suspended_users`,
+`group_members`, `org_units`, `roles`, `role_assignments`, `shared_drives` and
+`shared_drive_members` to Google (see
 [reports.md §1](reports.md#1-what-a-report-contains)).
 
 `reportView` = the `directory_reports` row (`id, account_id, account_email,

@@ -61,7 +61,7 @@ func TestGuideDescribesBothProviders(t *testing.T) {
 		if len(built.Permissions) != len(built.Scopes) || len(built.Scopes) == 0 {
 			t.Fatalf("%s: the permission table and the scope list differ", name)
 		}
-		if len(built.Capabilities) != len(providers.ProviderCapabilities) {
+		if len(built.Capabilities) != len(providers.CapabilitiesFor(name)) {
 			t.Fatalf("%s: %v does not cover every capability", name, built.Capabilities)
 		}
 		if len(built.Steps) < 6 {

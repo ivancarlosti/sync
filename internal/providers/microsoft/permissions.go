@@ -63,6 +63,17 @@ func (p *Provider) Permissions() []providers.Permission {
 
 		{Capability: providers.CapabilityMembers, Title: "members", Scope: graphScope("GroupMember.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
 
+		// Teams are groups with a team resource behind them, and Graph keeps
+		// the team membership on its own endpoint (the conversation roles of a
+		// member live there, not on the group). Both scopes are read-only: the
+		// teams and team members report sections never write.
+		{Capability: providers.CapabilityTeams, Title: "teams", Scope: graphScope("Team.ReadBasic.All"), AdminConsent: true, Kinds: workAccounts},
+		{Capability: providers.CapabilityTeams, Title: "teams", Scope: graphScope("TeamMember.Read.All"), AdminConsent: true, Kinds: workAccounts},
+
+		// Planner plans hang off the group that owns them; Tasks.Read.All is the
+		// read scope of the planner API (the planner plans report section).
+		{Capability: providers.CapabilityPlanner, Title: "planner", Scope: graphScope("Tasks.Read.All"), AdminConsent: true, Kinds: workAccounts},
+
 		{Capability: providers.CapabilityDomains, Title: "domains", Scope: graphScope("Domain.Read.All"), AdminConsent: true, Kinds: workAccounts},
 
 		// Administrative units are the closest Graph equivalent of the Google

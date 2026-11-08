@@ -125,7 +125,7 @@ func TestAccountCapabilitiesAreDerived(t *testing.T) {
 	if len(older.Capabilities) != 1 || older.Capabilities[0] != providers.CapabilityFiles {
 		t.Fatalf("capabilities = %v, want only files", older.Capabilities)
 	}
-	if !older.NeedsReconnect || len(older.MissingCapabilities) != len(providers.ProviderCapabilities)-1 {
+	if !older.NeedsReconnect || len(older.MissingCapabilities) != len(providers.CapabilitiesFor(models.ProviderGoogle))-1 {
 		t.Fatalf("missing = %v (needs_reconnect=%v)", older.MissingCapabilities, older.NeedsReconnect)
 	}
 
@@ -143,8 +143,8 @@ func TestAccountCapabilitiesAreDerived(t *testing.T) {
 	if current.NeedsReconnect || len(current.MissingCapabilities) != 0 {
 		t.Fatalf("missing = %v, want none", current.MissingCapabilities)
 	}
-	if len(current.Capabilities) != len(providers.ProviderCapabilities) {
-		t.Fatalf("capabilities = %v, want every one", current.Capabilities)
+	if len(current.Capabilities) != len(providers.CapabilitiesFor(models.ProviderGoogle)) {
+		t.Fatalf("capabilities = %v, want every one of the provider", current.Capabilities)
 	}
 }
 
@@ -185,7 +185,7 @@ func TestAccountCapabilitiesReportAnEntraGrantAsComplete(t *testing.T) {
 	if connected.NeedsReconnect || len(connected.MissingCapabilities) != 0 {
 		t.Fatalf("missing = %v (needs_reconnect=%v), want none", connected.MissingCapabilities, connected.NeedsReconnect)
 	}
-	if len(connected.Capabilities) != len(providers.ProviderCapabilities) {
+	if len(connected.Capabilities) != len(providers.CapabilitiesFor(models.ProviderMicrosoft)) {
 		t.Fatalf("capabilities = %v, want every one", connected.Capabilities)
 	}
 }
@@ -240,7 +240,7 @@ func TestProviderGuideEndpoint(t *testing.T) {
 		if len(guide.Steps) == 0 || len(guide.Warnings) == 0 {
 			t.Fatalf("%s: the walkthrough or the caveats are missing", name)
 		}
-		if len(guide.Capabilities) != len(providers.ProviderCapabilities) {
+		if len(guide.Capabilities) != len(providers.CapabilitiesFor(name)) {
 			t.Fatalf("%s: capabilities = %v", name, guide.Capabilities)
 		}
 		if want := name == models.ProviderMicrosoft; guide.AdminConsentRequired != want {
