@@ -34,9 +34,14 @@ const (
 	// reportLicensePageSize is the largest page the Enterprise License Manager
 	// API accepts.
 	reportLicensePageSize = 1000
-	// reportItemPageSize is the page the role catalogue and the role
-	// assignments are read with (the API caps both at 200).
-	reportItemPageSize = 200
+	// reportRolePageSize is the largest page roles.list accepts. The role
+	// catalogue caps maxResults at 100 — unlike roleassignments.list below,
+	// which accepts 200 — and answers anything above it with a 400
+	// invalidParameter, so the two collections cannot share one constant.
+	reportRolePageSize = 100
+	// reportAssignmentPageSize is the largest page roleassignments.list
+	// accepts.
+	reportAssignmentPageSize = 200
 	// reportDrivePageSize is the page the permissions of a shared drive are read
 	// with (the Drive API caps it at 100).
 	reportDrivePageSize = 100
@@ -49,9 +54,11 @@ const (
 	// licensingBase is the Enterprise License Manager API root, which is what
 	// answers the licence assignments of a user.
 	licensingBase = "https://licensing.googleapis.com/apps/licensing/v1"
-	// customerKey is the customer every call of a report is scoped to: the API
-	// resolves the alias to the customer of the authorised administrator, which
-	// is what makes a report follow the token instead of a stored id.
+	// customerKey is the alias every call of a report is scoped to: the API
+	// resolves it to the customer of the authorised administrator, which is what
+	// makes a report follow the token instead of a stored id. The licence
+	// catalogue is the one exception — it prefers the id of the customer record,
+	// see licenseCustomer — and this alias is its fallback.
 	customerKey = "my_customer"
 )
 
@@ -538,6 +545,24 @@ func (d *reportData) loadCustomer() {
 	d.customer = customer
 }
 
+// licenseCustomer answers the customer the licence catalogue is scoped to.
+//
+// The License Manager API documents `customerId` as "the customer's unique ID as
+// defined in the Admin console" (C00000000) and, unlike the Directory API, never
+// mentions the `my_customer` alias the rest of a report uses — a domain that
+// answers `403 Unauthorized operation for the given domain` is the shape of an
+// alias the endpoint could not resolve. The record of the domain is therefore read
+// first and its id used, and the alias stays the fallback of a grant that cannot
+// read the record (one made before admin.directory.customer.readonly was
+// requested), because half a catalogue is better than none.
+func (d *reportData) licenseCustomer() string {
+	d.loadCustomer()
+	if id := strings.TrimSpace(d.customer.CustomerID); id != "" {
+		return id
+	}
+	return customerKey
+}
+
 // loadUsers reads the users collection once; the suspended users section filters
 // it instead of listing the directory a second time with `query=isSuspended=true`.
 func (d *reportData) loadUsers() {
@@ -615,16 +640,25 @@ func (d *reportData) loadDomains() {
 //
 // One product is one walk. A product the API does not know (an id Google
 // retired) answers 400 and is skipped, because a stale catalogue entry must never
-// cost a section; only when *every* product refuses does the section fail, which
-// is the shape of a grant that predates the apps.licensing scope.
+// cost a section; only when *no* product answers does the section fail.
+//
+// A 403 is a different animal: the Enterprise License Manager API refuses a whole
+// domain ("Unauthorized operation for the given domain") when the subscription is
+// not a paid edition an administrator manages directly, or when the grant was made
+// before the apps.licensing scope was requested. That decision does not depend on
+// the product, so the walk stops at the first refusal and the section explains it
+// once, instead of repeating the same 403 for every product of the catalogue.
 func (d *reportData) loadLicenses() {
 	if d.licensesLoaded {
 		return
 	}
 	d.licensesLoaded = true
 	d.licenses = make(map[string][]reportLicense, 256)
+	// The catalogue is scoped to the id of the domain (see licenseCustomer)
+	// rather than to the alias the rest of the report uses.
+	customer := d.licenseCustomer()
 	answered := 0
-	var firstErr error
+	var refusal, firstErr error
 	for _, product := range reportLicenseProducts {
 		if err := d.ctx.Err(); err != nil {
 			if firstErr == nil {
@@ -636,32 +670,50 @@ func (d *reportData) loadLicenses() {
 			d.licenseCut = true
 			break
 		}
-		count, err := d.scanLicenses(product)
-		if err != nil {
-			if apiStatus(err) == http.StatusBadRequest {
-				continue
-			}
-			if firstErr == nil {
-				firstErr = err
-			}
+		count, err := d.scanLicenses(product, customer)
+		if err == nil {
+			answered++
+			d.licenseRows += count
 			continue
 		}
-		answered++
-		d.licenseRows += count
+		status := apiStatus(err)
+		if status == http.StatusBadRequest {
+			// A product id Google retired: the catalogue is stale, the
+			// assignment simply does not exist.
+			continue
+		}
+		if status == http.StatusUnauthorized || status == http.StatusForbidden {
+			// The domain, not the product, refused the catalogue: no other
+			// product will answer either.
+			refusal = err
+			break
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
 	}
-	if answered == 0 {
+	switch {
+	case answered > 0:
+		// One product answered: the section is the assignments of the products
+		// this domain has, and the ones that did not answer are simply absent.
+	case refusal != nil:
+		d.licensesErr = fmt.Errorf("google licensing api: the domain does not answer the licence catalogue (%w): "+
+			"the Enterprise License Manager API only answers the paid edition of a domain an administrator "+
+			"manages directly, so the licenses column of the users section stays empty", refusal)
+	default:
 		d.licensesErr = firstErr
 	}
 }
 
 // scanLicenses reads one product of the catalogue, adding every assignment to the
-// per-user index.
-func (d *reportData) scanLicenses(product string) (int, error) {
+// per-user index. The customer is the id the caller resolved (licenseCustomer), not
+// the alias: the License Manager API documents an Admin console id.
+func (d *reportData) scanLicenses(product, customer string) (int, error) {
 	if !licenseProductPattern.MatchString(product) {
 		return 0, invalidIdentifierError("license product", product)
 	}
 	target := licensingBase + "/product/" + url.PathEscape(product) + "/users"
-	target = withParam(target, "customerId", customerKey)
+	target = withParam(target, "customerId", customer)
 	target = withParam(target, "maxResults", strconv.Itoa(reportLicensePageSize))
 	count, _, err := d.walk(walkRequest{
 		section:    providers.ReportSectionLicenses,
@@ -1034,7 +1086,7 @@ func (d *reportData) rolesTable() providers.ReportTable {
 	table := providers.ReportTable{Columns: roleColumns()}
 	_, cut, err := d.walk(walkRequest{
 		section:    providers.ReportSectionRoles,
-		target:     customerTarget("roles", url.Values{"maxResults": {strconv.Itoa(reportItemPageSize)}}),
+		target:     customerTarget("roles", url.Values{"maxResults": {strconv.Itoa(reportRolePageSize)}}),
 		collection: "items",
 		budget:     reportRowLimit,
 	}, func(raw json.RawMessage) bool {
@@ -1062,7 +1114,7 @@ func (d *reportData) roleAssignmentsTable() providers.ReportTable {
 	table := providers.ReportTable{Columns: roleAssignmentColumns()}
 	_, cut, err := d.walk(walkRequest{
 		section:    providers.ReportSectionRoleAssignments,
-		target:     customerTarget("roleassignments", url.Values{"maxResults": {strconv.Itoa(reportItemPageSize)}}),
+		target:     customerTarget("roleassignments", url.Values{"maxResults": {strconv.Itoa(reportAssignmentPageSize)}}),
 		collection: "items",
 		budget:     reportRowLimit,
 	}, func(raw json.RawMessage) bool {

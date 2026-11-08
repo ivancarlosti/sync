@@ -45,9 +45,9 @@ the list for the account, which is what the start form offers.
 | `group_members` | `GET /groups/{key}/members` per group (paged, 200) | one walk per group |
 | `domains` | `GET /customer/my_customer/domains` | 1 |
 | `org_units` | `GET /customer/my_customer/orgunits?type=all` | 1 |
-| `roles` | `GET /customer/my_customer/roles` (paged, 200) | `ceil(roles / 200)` |
+| `roles` | `GET /customer/my_customer/roles` (paged, 100 — the endpoint refuses more) | `ceil(roles / 100)` |
 | `role_assignments` | `GET /customer/my_customer/roleassignments` (paged, 200) | `ceil(assignments / 200)` |
-| `licenses` | `GET licensing/v1/product/{id}/users` per product of the catalogue | 11 |
+| `licenses` | `GET licensing/v1/product/{id}/users` per product of the catalogue, scoped to the id of the customer record | 11 (+1) |
 | `shared_drives` | `GET drive/v3/drives` (the listing the folder picker uses) | `ceil(drives / 100)` |
 | `shared_drive_members` | `GET /files/{id}/permissions` per shared drive (`useDomainAdminAccess`, paged, 100) | one walk per shared drive |
 
@@ -106,10 +106,32 @@ refusal almost never means the report is broken:
   answer. It fails only when every Microsoft 365 group refused it, which is the
   shape of a missing `Tasks.Read` grant rather than of an empty tenant.
 
+The two page sizes of the role collections are **not** interchangeable: `roles`
+caps `maxResults` at 100 and answers a `400 invalidParameter`
+(`Invalid value '200'. Values must be within range [1, 100]`) to anything above
+it, while `roleassignments` accepts 200. They are two constants
+(`reportRolePageSize`, `reportAssignmentPageSize`) for that reason.
+
 A report that asks for `users` also walks the licence catalogue (one call per
 product, eleven of them), because `users.list` carries no licence: that is the
 one place where a section pays for a column it does not own. A grant without
 `apps.licensing` leaves the column empty instead of failing the table.
+
+The catalogue is scoped to the **id** of the domain (`C01abc`), read from the
+customer record, and not to the `my_customer` alias the rest of a report uses:
+the License Manager API documents `customerId` as "the customer's unique ID as
+defined in the Admin console" and never mentions the alias — which is why a
+domain asked through it can answer `403 Unauthorized operation for the given
+domain`. A grant that cannot read the customer record (one made before
+`admin.directory.customer.readonly`) falls back to the alias, and the call it
+costs the section is the one the `organization` section already pays for when it
+is part of the same report.
+
+A `403` from the catalogue is a decision about the *domain*, not about the
+product — the subscription is not a paid edition an administrator manages
+directly (a reseller-managed or free domain), or the grant predates the scope — so
+the walk stops at the first one and the `licenses` section carries the reason,
+while the `users` table keeps its rows with an empty `licenses` column.
 
 ## 2. Permissions
 
@@ -231,7 +253,12 @@ POST /api/reports ──► reserve account ──► report row (running)
 * **Degradation, not failure.** A Google grant that predates the customer scope
   still produces an `organization` row (derived from the domain list), and a
   grant without `apps.licensing` still produces the `users` table with an empty
-  `licenses` column. Losing one column is not worth losing the table.
+  `licenses` column. Losing one column is not worth losing the table. The same
+  holds for a domain the Enterprise License Manager API refuses outright
+  (`403 Unauthorized operation for the given domain`, which is the answer of a
+  subscription no paid edition backs): the `licenses` section reports the refusal
+  once, the walk stops there instead of paying ten more calls, and every other
+  table is unaffected.
 * **Cancellation** is cooperative (`ReportService.Cancel`), and the scheduler's
   `Bootstrap` closes the reports a restart interrupted.
 * **Retention.** The newest 20 reports per account are kept (`PruneReports`);

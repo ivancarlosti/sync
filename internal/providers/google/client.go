@@ -52,20 +52,58 @@ const (
 // fields Sync consumes, which keeps large listings cheap.
 const itemFields = "id,name,mimeType,size,modifiedTime,md5Checksum,parents,trashed,shortcutDetails,driveId"
 
-// apiError is the error shape returned by the Drive API.
+// apiError is the error shape the Google APIs answer a refused call with: Drive
+// and the Admin SDK share it, which is why it carries the API it came from.
 type apiError struct {
 	Status  int
 	Code    int
 	Message string
 	Reason  string
+	// API names the API that refused the call ("drive api", "directory api",
+	// "licensing api"). A directory report talks to three of them, so a failure
+	// of one must never be reported as a failure of another: the operator reads
+	// this message to know which grant or which feature is missing.
+	API string
 }
 
 // Error renders a diagnostic message that never contains the access token.
 func (e *apiError) Error() string {
-	if e.Reason != "" {
-		return fmt.Sprintf("google drive api: http %d (%s): %s", e.Status, e.Reason, e.Message)
+	api := e.API
+	if api == "" {
+		api = "api"
 	}
-	return fmt.Sprintf("google drive api: http %d: %s", e.Status, e.Message)
+	if e.Reason != "" {
+		return fmt.Sprintf("google %s: http %d (%s): %s", api, e.Status, e.Reason, e.Message)
+	}
+	return fmt.Sprintf("google %s: http %d: %s", api, e.Status, e.Message)
+}
+
+// apiLabels name the hosts of the APIs Sync talks to. All of them answer the same
+// error envelope, so the host of the answer is the only thing that tells them
+// apart.
+var apiLabels = map[string]string{
+	"www.googleapis.com":       "drive api",
+	"upload.googleapis.com":    "drive api",
+	"admin.googleapis.com":     "directory api",
+	"licensing.googleapis.com": "licensing api",
+	"oauth2.googleapis.com":    "oauth api",
+}
+
+// apiLabel answers the name of the API a refused response came from, derived from
+// the host of the request it belongs to. An answer without a request (a response
+// built by a test) leaves the label empty, and Error falls back to a neutral one.
+func apiLabel(resp *http.Response) string {
+	if resp == nil || resp.Request == nil || resp.Request.URL == nil {
+		return ""
+	}
+	host := resp.Request.URL.Host
+	if label, ok := apiLabels[host]; ok {
+		return label
+	}
+	if name, ok := strings.CutSuffix(host, ".googleapis.com"); ok && name != "" {
+		return name + " api"
+	}
+	return ""
 }
 
 // IsNotFound reports whether err is a 404/410 answered by the Drive API.
@@ -298,7 +336,7 @@ func decodeError(resp *http.Response) error {
 			}
 		}
 	}
-	return &apiError{Status: status, Code: code, Message: message, Reason: reason}
+	return &apiError{Status: status, Code: code, Message: message, Reason: reason, API: apiLabel(resp)}
 }
 
 // safeURL trims a URL to a length that is safe to log.

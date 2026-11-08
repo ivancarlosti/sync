@@ -380,8 +380,10 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 	if count := requestsTo(transport.urls, licensePath("Google-Apps")); count != 1 {
 		t.Errorf("licence calls of Google-Apps = %d, want 1", count)
 	}
-	if !containsURL(transport.urls, "customerId=my_customer") {
-		t.Error("the licence listing was not scoped to the customer")
+	// The catalogue is scoped to the id of the domain, which is the value the
+	// License Manager API documents (an Admin console id), not to the alias.
+	if !containsURL(transport.urls, "customerId=C01abc") {
+		t.Error("the licence listing was not scoped to the customer record")
 	}
 }
 
@@ -507,6 +509,12 @@ func TestCollectReportIsolatesAFailedSection(t *testing.T) {
 	if !strings.Contains(groups.Error, "403") {
 		t.Errorf("groups error = %q, want the API status", groups.Error)
 	}
+	// A section of the Admin SDK must not be reported as a Drive failure: the
+	// operator reads this message to know which API (and therefore which scope)
+	// refused the call.
+	if !strings.Contains(groups.Error, "directory api") {
+		t.Errorf("groups error = %q, want the API that refused the call", groups.Error)
+	}
 	members := bySection[providers.ReportSectionGroupMembers]
 	if !members.Failed() {
 		t.Fatalf("group_members section = %+v, want the same refusal", members)
@@ -570,6 +578,29 @@ func TestLicensesSkipAProductTheAPIRetired(t *testing.T) {
 	}
 }
 
+// TestLicensesFallBackToTheCustomerAlias pins the other half of the scoping: a
+// grant that cannot read the customer record (one made before
+// admin.directory.customer.readonly was requested) still asks the catalogue, with
+// the `my_customer` alias, instead of losing the section.
+func TestLicensesFallBackToTheCustomerAlias(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(),
+		map[string]int{pathCustomer: http.StatusForbidden})
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionLicenses}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	licenses := tables[0]
+	if licenses.Failed() || len(licenses.Rows) != 2 {
+		t.Fatalf("licenses section = %+v, want the 2 assignments", licenses)
+	}
+	if !containsURL(transport.urls, "customerId=my_customer") {
+		t.Error("the licence listing did not fall back to the customer alias")
+	}
+}
+
 // TestCollectReportKeepsTheUsersWhenLicencesAreRefused pins the trade of the
 // licence column: a grant without apps.licensing leaves it empty and fails only
 // the licences section, because the users of the domain are the point of the
@@ -601,6 +632,17 @@ func TestCollectReportKeepsTheUsersWhenLicencesAreRefused(t *testing.T) {
 	if !licenses.Failed() {
 		t.Fatalf("licenses section = %+v, want the refusal reported", licenses)
 	}
+	// A 403 is a decision of the domain, not of the product: the section says so
+	// once instead of failing ten more times on the rest of the catalogue.
+	if !strings.Contains(licenses.Error, "licence catalogue") {
+		t.Errorf("licenses error = %q, want the refused catalogue explained", licenses.Error)
+	}
+	if !strings.Contains(licenses.Error, "403") {
+		t.Errorf("licenses error = %q, want the reason the API gave", licenses.Error)
+	}
+	if count := requestsTo(transport.urls, "/apps/licensing/"); count != 1 {
+		t.Errorf("licence calls = %d, want 1 (the walk stops at the refusal)", count)
+	}
 }
 
 // TestReportSectionsAreTheGoogleDirectory pins the sections a Workspace domain
@@ -625,6 +667,33 @@ func TestReportSectionsAreTheGoogleDirectory(t *testing.T) {
 		if containsSection(sections, section) {
 			t.Errorf("ReportSections offered the Microsoft-only section %q", section)
 		}
+	}
+}
+
+// TestReportReadsTheRolesWithThePageSizeTheAPIAccepts pins the 400 the roles
+// section answered for a while: roles.list caps `maxResults` at 100 and refuses
+// 200 with `Invalid value '200'. Values must be within range [1, 100]`, while
+// roleassignments.list accepts 200. The two collections used to share one page
+// constant, so the catalogue could not be read at all.
+func TestReportReadsTheRolesWithThePageSizeTheAPIAccepts(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionRoles, providers.ReportSectionRoleAssignments}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	bySection := reportSections(t, tables)
+	roles := bySection[providers.ReportSectionRoles]
+	if roles.Failed() || len(roles.Rows) != 2 {
+		t.Fatalf("roles section = %+v, want the two roles of the catalogue", roles)
+	}
+	if count := requestsTo(transport.urls, pathRoles+"?maxResults=100"); count != 1 {
+		t.Errorf("roles calls with maxResults=100 = %d, want 1 (the endpoint caps the page at 100)", count)
+	}
+	if count := requestsTo(transport.urls, pathRoleAssignments+"?maxResults=200"); count != 1 {
+		t.Errorf("role assignment calls with maxResults=200 = %d, want 1", count)
 	}
 }
 
