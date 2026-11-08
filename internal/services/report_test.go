@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -285,7 +286,16 @@ func TestReportStatusMapping(t *testing.T) {
 			t.Errorf("%s: reportStatus = %q, want %q", test.name, got, test.want)
 		}
 	}
-	if message := reportMessage(string(models.RunPartial), 2); message == "" {
+	if message := reportMessage(string(models.RunPartial), 2, nil); message == "" {
 		t.Error("reportMessage returned an empty summary")
+	}
+	// The summary names the sections that failed, so a `partial` row in the
+	// history says what is missing and not only how many tables are.
+	message := reportMessage(string(models.RunPartial), 2, []string{"licenses", "shared_drive_members"})
+	if !strings.Contains(message, "licenses") || !strings.Contains(message, "shared_drive_members") {
+		t.Errorf("reportMessage = %q, want the names of the failed sections", message)
+	}
+	if named := reportMessage(string(models.RunSuccess), 2, []string{"licenses"}); named != "completed" {
+		t.Errorf("reportMessage(success) = %q, want the plain success summary", named)
 	}
 }

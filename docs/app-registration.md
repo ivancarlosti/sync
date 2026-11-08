@@ -44,7 +44,8 @@ what answers `GET /customers/my_customer` — the `organization` section of a Go
 report. Every other Google section is built from `users`, `groups`, `members`,
 `domains`, `orgunits`, `roles`, `licenses` and `files` above, shared drive members
 included: the Drive scope that lists a shared drive also answers its permissions
-(`/drives/{id}/permissions`). The Microsoft vocabulary is covered by the table
+(`/files/{id}/permissions`, the file listing with `useDomainAdminAccess=true`). The
+Microsoft vocabulary is covered by the table
 plus the two rows `teams` and `planner` above, which this release added for the
 Teams and Planner sections — both directory scopes, granted tenant-wide with the
 same admin consent as the rest. A grant made before the customer scope existed

@@ -287,9 +287,17 @@ func (s *ReportService) execute(passCtx context.Context, session ProviderSession
 	tables, collectErr := source.CollectReport(passCtx, session.Credentials, session.Tokens, sections, progress)
 	failed, truncated := 0, false
 	rows := 0
+	failedSections := make([]string, 0, 4)
 	for _, table := range tables {
 		if table.Failed() {
 			failed++
+			failedSections = append(failedSections, string(table.Section))
+			// The reason of a failed section is stored in its table, which is only
+			// visible once the report is opened in the UI: a `partial` row in the
+			// history would otherwise be a count nobody can explain from the log.
+			slog.Warn("report section failed",
+				"report", run.ID, "account", run.AccountID,
+				"section", table.Section, "error", table.Error)
 		}
 		if table.Truncated {
 			truncated = true
@@ -316,7 +324,7 @@ func (s *ReportService) execute(passCtx context.Context, session ProviderSession
 	run.Truncated = truncated
 	run.Status = string(reportStatus(passCtx, collectErr, failed))
 	if run.Message == "" {
-		run.Message = reportMessage(run.Status, failed)
+		run.Message = reportMessage(run.Status, failed, failedSections)
 	}
 	if err := s.store.FinishReport(ctx, run); err != nil {
 		slog.Error("closing the report failed", "report", run.ID, "error", err)
@@ -325,12 +333,15 @@ func (s *ReportService) execute(passCtx context.Context, session ProviderSession
 		slog.Warn("pruning the report history failed", "error", err)
 	}
 	if collectErr != nil {
-		slog.Error("directory report failed", "report", run.ID, "account", run.AccountID, "error", collectErr)
+		slog.Error("directory report failed", "report", run.ID, "account", run.AccountID,
+			"failed_sections", strings.Join(failedSections, ","), "error", collectErr)
 		return
 	}
 	slog.Info("directory report finished",
 		"report", run.ID, "status", run.Status, "sections", run.SectionCount,
-		"rows", run.RowCount, "failed", run.Failed, "truncated", run.Truncated)
+		"rows", run.RowCount, "failed", run.Failed,
+		"failed_sections", strings.Join(failedSections, ","),
+		"truncated", run.Truncated, "duration_ms", run.DurationMS)
 }
 
 // storeTables persists the collected tables as JSON documents.
@@ -375,11 +386,19 @@ func reportStatus(passCtx context.Context, err error, failed int) models.RunStat
 }
 
 // reportMessage is the human readable summary the history screen shows.
-func reportMessage(status string, failed int) string {
+//
+// A `partial` report names the sections it could not collect, so the summary says
+// *what* is missing instead of only how many tables are. The reason of every
+// failed section is not repeated here — it is stored in the section itself and
+// logged by finish — so the message stays a one line summary.
+func reportMessage(status string, failed int, failedSections []string) string {
 	switch models.RunStatus(status) {
 	case models.RunSuccess:
 		return "completed"
 	case models.RunPartial:
+		if names := strings.Join(failedSections, ", "); names != "" {
+			return fmt.Sprintf("completed with %d unusable section(s): %s", failed, names)
+		}
 		return fmt.Sprintf("completed with %d unusable section(s)", failed)
 	case models.RunCancelled:
 		return "the report was cancelled"

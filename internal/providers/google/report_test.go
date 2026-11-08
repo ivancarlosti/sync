@@ -85,6 +85,11 @@ const (
 	pathRoles           = "/admin/directory/v1/customer/my_customer/roles"
 	pathRoleAssignments = "/admin/directory/v1/customer/my_customer/roleassignments"
 	pathDrives          = "/drive/v3/drives"
+	// pathDrivePermissions is the membership listing of one shared drive. Drive
+	// exposes it through the *file* resource: a shared drive id is a file id, and
+	// the `drives` resource has no `permissions` method (hence not
+	// /drive/v3/drives/{id}/permissions, which answers 404).
+	pathDrivePermissions = "/drive/v3/files/0AJxyz/permissions"
 )
 
 // licensePath is the assignment listing of one product of the catalogue.
@@ -101,7 +106,7 @@ func membersPath(key string) string {
 // users spread over two pages (one an administrator with a licence, one
 // suspended), two groups with three memberships between them, two domains, one
 // organisational unit next to the root, two administrative roles, one assignment,
-// two licence assignments and one shared drive.
+// two licence assignments, one shared drive and the two permissions of it.
 func reportBodies() map[string][]string {
 	return map[string][]string{
 		pathCustomer: {`{"id":"C01abc","customerId":"C01abc","customerDomain":"contoso.com",` +
@@ -164,6 +169,12 @@ func reportBodies() map[string][]string {
 			`"userId":"grace@contoso.com"}` +
 			`]}`},
 		pathDrives: {`{"drives":[{"id":"0AJxyz","name":"Engineering"}]}`},
+		pathDrivePermissions: {`{"permissions":[` +
+			`{"id":"p1","type":"user","role":"organizer","emailAddress":"ada@contoso.com",` +
+			`"displayName":"Ada Lovelace","domain":"contoso.com"},` +
+			`{"id":"p2","type":"group","role":"fileOrganizer","emailAddress":"eng@contoso.com",` +
+			`"displayName":"Engineering","domain":"contoso.com"}` +
+			`]}`},
 	}
 }
 
@@ -339,6 +350,24 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 		t.Errorf("shared drive name = %q, want the drive of the domain", got)
 	}
 
+	// The membership section walks the permissions of every shared drive, which
+	// is the section that used to fail on a `drives/{id}/permissions` endpoint
+	// the Drive API does not have: a pass that carries the section must produce
+	// its rows, not an error.
+	driveMembers := bySection[providers.ReportSectionSharedDriveMembers]
+	if driveMembers.Failed() {
+		t.Fatalf("shared_drive_members section failed: %s", driveMembers.Error)
+	}
+	if len(driveMembers.Rows) != 2 {
+		t.Fatalf("shared_drive_members rows = %d, want the 2 permissions of the drive", len(driveMembers.Rows))
+	}
+	if got := reportCell(driveMembers, driveMembers.Rows[0], "drive"); got != "Engineering" {
+		t.Errorf("member drive = %q, want the drive the permission belongs to", got)
+	}
+	if got := reportCell(driveMembers, driveMembers.Rows[0], "role"); got != "organizer" {
+		t.Errorf("member role = %q, want organizer", got)
+	}
+
 	// The users collection is read once (two pages) with the projection the
 	// columns need, and the licence catalogue is walked once per product: the
 	// per-user loop of the GAM flow must not come back.
@@ -353,6 +382,48 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 	}
 	if !containsURL(transport.urls, "customerId=my_customer") {
 		t.Error("the licence listing was not scoped to the customer")
+	}
+}
+
+// TestCollectReportReadsThePermissionsOfASharedDrive pins the endpoint of the
+// membership section: Drive exposes the permissions of a shared drive through
+// files/{fileId}/permissions — a shared drive id *is* a file id — and not through
+// /drives/{driveId}/permissions, which the API does not implement and answers 404,
+// which is why this section used to come back unusable on every domain.
+// useDomainAdminAccess is what lets the administrator behind the account read the
+// members of a drive it does not belong to; supportsAllDrives (from listURL) is
+// what makes the call look at a shared drive instead of My Drive.
+func TestCollectReportReadsThePermissionsOfASharedDrive(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionSharedDriveMembers}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	table := tables[0]
+	if table.Failed() {
+		t.Fatalf("shared_drive_members section = %q, want the permissions of the drive", table.Error)
+	}
+	if len(table.Rows) != 2 {
+		t.Fatalf("shared_drive_members rows = %d, want the 2 permissions of the drive", len(table.Rows))
+	}
+	if count := requestsTo(transport.urls, pathDrivePermissions); count != 1 {
+		t.Fatalf("permission calls = %d, want 1 on %s: %v", count, pathDrivePermissions, transport.urls)
+	}
+	if count := requestsTo(transport.urls, "/drive/v3/drives/0AJxyz/permissions"); count != 0 {
+		t.Errorf("the pass asked %d times for the non-existent drives/{id}/permissions listing", count)
+	}
+	for _, fragment := range []string{"useDomainAdminAccess=true", "supportsAllDrives=true"} {
+		if !containsURL(transport.urls, fragment) {
+			t.Errorf("the permission listing did not carry %s", fragment)
+		}
+	}
+	if got := reportCell(table, table.Rows[1], "member"); got != "Engineering" {
+		t.Errorf("member = %q, want the group behind the second permission", got)
+	}
+	if got := reportCell(table, table.Rows[1], "type"); got != "group" {
+		t.Errorf("type = %q, want group", got)
 	}
 }
 

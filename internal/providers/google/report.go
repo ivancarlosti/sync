@@ -1159,12 +1159,20 @@ func (d *reportData) sharedDriveList() ([]providers.Drive, error) {
 // sharedDriveMembersTable builds the shared drive members section: who can reach
 // each shared drive of the domain, with the role the drive gives them.
 //
-// It reads the permissions of every shared drive (`/drives/{id}/permissions`),
+// It reads the permissions of every shared drive (`/files/{id}/permissions`),
 // which is the Drive API's own answer to "who has access to this shared drive" —
 // there is no directory-wide equivalent, because a shared drive belongs to a
 // Google Group and its members are permissions on the drive, not group members of
 // the domain. `My Drive` is skipped, exactly as in the shared drives section: its
 // permissions describe one person's files, not a shared location.
+//
+// The endpoint is the *file* one: a shared drive id is a file id to Drive, and
+// the `drives` resource has no `permissions` method at all (asking
+// `/drives/{driveId}/permissions` answers 404, which is what made this section
+// fail on every domain). `useDomainAdminAccess` is what lets the administrator
+// behind the account read the members of a drive it does not belong to;
+// `supportsAllDrives` (added by listURL) is what makes the call consider a shared
+// drive instead of My Drive.
 func (d *reportData) sharedDriveMembersTable() providers.ReportTable {
 	table := providers.ReportTable{Columns: sharedDriveMemberColumns()}
 	drives, err := d.sharedDriveList()
@@ -1197,7 +1205,10 @@ func (d *reportData) sharedDriveMembersTable() providers.ReportTable {
 			label = textCell(drive.ID)
 		}
 		target := withParam(
-			listURL("/drives/"+drive.ID+"/permissions", "nextPageToken,permissions(id,displayName,emailAddress,role,type,domain)"),
+			withParam(
+				listURL("/files/"+drive.ID+"/permissions", "nextPageToken,permissions(id,displayName,emailAddress,role,type,domain)"),
+				"useDomainAdminAccess", "true",
+			),
 			"pageSize", strconv.Itoa(reportDrivePageSize),
 		)
 		base := len(table.Rows)

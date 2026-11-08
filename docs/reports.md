@@ -49,7 +49,7 @@ the list for the account, which is what the start form offers.
 | `role_assignments` | `GET /customer/my_customer/roleassignments` (paged, 200) | `ceil(assignments / 200)` |
 | `licenses` | `GET licensing/v1/product/{id}/users` per product of the catalogue | 11 |
 | `shared_drives` | `GET drive/v3/drives` (the listing the folder picker uses) | `ceil(drives / 100)` |
-| `shared_drive_members` | `GET /drives/{id}/permissions` per shared drive (paged, 100) | one walk per shared drive |
+| `shared_drive_members` | `GET /files/{id}/permissions` per shared drive (`useDomainAdminAccess`, paged, 100) | one walk per shared drive |
 
 The derived sections are the point of the design: the n8n flows asked Graph for
 `/users/{id}/licenseDetails` once per user and re-listed the Google directory with
@@ -125,7 +125,11 @@ administrator). Everything else — the users, groups, members, domains,
 organisational units, roles, role assignments, licence assignments, shared drives
 and their members — comes from the scopes the capability badges of the Accounts
 screen are already derived from. `shared_drive_members` needs no new scope: the
-Drive scope that lists the shared drives also answers `/drives/{id}/permissions`.
+Drive scope that lists the shared drives also answers `/files/{id}/permissions`,
+the *file* listing of a drive's members (a shared drive id is a file id to Drive;
+the `drives` resource has no `permissions` method of its own), asked with
+`useDomainAdminAccess=true` so an administrator can read the members of a drive
+it does not belong to.
 
 That one scope is additive and forgiving:
 
@@ -147,7 +151,7 @@ because the scope behind it is absent:
 | Gmail delegates, per-mailbox settings | needs per-mailbox impersonation (`gmail.settings.sharing` + domain-wide delegation), not a user consent |
 | YouTube CMS (content owner reports) | needs a content owner identity, not a Workspace account |
 | Chrome management (browsers, profiles, telemetry) | needs the Chrome Management API and a separate admin role |
-| Per-file permissions of a shared drive | `/drives/{id}/permissions` answers the drive level (what `shared_drive_members` reports); the ACLs *inside* a drive need one call per file, deferred until a report can stream them |
+| Per-file permissions of a shared drive | `/files/{id}/permissions` answers the drive level (what `shared_drive_members` reports); the ACLs *inside* a drive need one call per file, deferred until a report can stream them |
 
 The Microsoft side defers its own set (teams **channels**, mailbox settings,
 per-user sign-in activity — teams, team membership and Planner plans are
@@ -176,6 +180,15 @@ POST /api/reports ──► reserve account ──► report row (running)
   no `/sites`, a Google grant without `apps.licensing` cannot list licences) sets
   that section's `error`; the report becomes `partial` and the rest of the tables
   survive. The pass itself only fails on a cancelled or timed-out context.
+  Every failed section is logged the moment the pass closes
+  (`report section failed`, with the report id, the account, the section and the
+  reason the API gave), the closing `directory report finished` line carries
+  `failed_sections`, the run's `message` names them
+  (`completed with 3 unusable section(s): licenses, …`) and the screen shows that
+  message under the status badge, marks the failed tab of the report detail with a
+  warning and offers the API's reason as its tooltip. The container log is
+  therefore enough to explain a `partial` row without opening the report, and the
+  report is enough to explain it without the log.
 * **Budgets.** 20 000 rows per section and 500 pages per walk; hitting either
   sets `truncated` on that section. The whole pass has a 15 minute budget
   (`ReportTimeout`) and ends as `timeout` instead of holding the slot forever.

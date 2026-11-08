@@ -7,7 +7,7 @@
 // internal/services/report.go). It is async: the screen starts one against an
 // account, polls the history while it runs, then reads the stored tables one
 // section at a time and downloads the whole workbook as a ZIP of CSVs.
-import { BarChart3, Download, Eye, Play, XCircle } from '@lucide/vue';
+import { BarChart3, Download, Eye, Play, TriangleAlert, XCircle } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
@@ -544,6 +544,11 @@ onBeforeUnmount(clearTimer);
                     {{ t('reports.failedSections', { count: run.failed }) }}
                   </span>
                 </span>
+                <!-- The message names the sections that could not be collected, so a
+                     partial row says what is missing without opening the report. -->
+                <p v-if="run.failed > 0 && run.message" class="mt-1 text-xs text-muted-foreground">
+                  {{ run.message }}
+                </p>
               </td>
               <td class="px-3 py-2 text-muted-foreground">{{ t(`reports.trigger_${run.trigger}`) }}</td>
               <td class="px-3 py-2 text-end">
@@ -626,6 +631,7 @@ onBeforeUnmount(clearTimer);
             v-for="entry in detailSections"
             :key="entry.section"
             type="button"
+            :title="sectionSummary(entry.section)?.error"
             :class="
               cn(
                 'rounded-md px-3 py-1 text-sm font-medium transition-colors',
@@ -637,6 +643,14 @@ onBeforeUnmount(clearTimer);
             @click="selectSection(entry.section)"
           >
             {{ sectionLabel(entry.section) }}
+            <!-- A failed section keeps its tab (the tab is the only way to read the
+                 reason), so the marker is what points at it: the warning icon and
+                 the native tooltip carry the error the API gave. -->
+            <TriangleAlert
+              v-if="sectionSummary(entry.section)?.error"
+              class="ms-1 inline h-3 w-3 align-text-top text-warning"
+              aria-hidden="true"
+            />
             <span class="numeric ms-1 text-xs text-muted-foreground">
               {{ count(entry.row_count) }}
             </span>
