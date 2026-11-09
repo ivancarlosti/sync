@@ -118,10 +118,18 @@ func (s *Server) handleManagementOptions(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		fail(c, err)
+		managementProviderFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"users": users, "groups": groups, "drives": drives})
+}
+
+// managementProviderFailure answers a provider error the form has to show. It
+// keeps the provider's own explanation (a disabled Gmail API, a missing consent,
+// a throttled Graph) instead of the generic 500, because that text is the fix an
+// operator has to apply.
+func managementProviderFailure(c *gin.Context, err error) {
+	c.JSON(http.StatusBadGateway, gin.H{"code": "provider_error", "error": err.Error()})
 }
 
 // managementOptionNeeds says which collections the form of an operation reads.
@@ -164,7 +172,7 @@ func (s *Server) handleManagementDelegates(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		fail(c, err)
+		managementProviderFailure(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"delegates": delegates})
