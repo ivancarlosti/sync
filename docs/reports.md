@@ -23,8 +23,8 @@ the list for the account, which is what the start form offers.
 | Section | Source | Calls |
 |---|---|---|
 | `organization` | `GET /organization` | 1 |
-| `users` | `GET /users` (paged) | `ceil(users / 999)` |
-| `guests` | derived from the users pages (`userType == Guest`) | 0 |
+| `users` | `GET /users` (paged), with optional `signInActivity`; last login falls back to the unified audit log (`UserLoggedIn`, 7 days) when the tenant has no Entra ID P1/P2 | `ceil(users / 999)` |
+| `guests` | derived from the users pages (`userType == Guest` or `#EXT#` principal name); members are not repeated in `users` | 0 |
 | `groups` | `GET /groups` (paged) | `ceil(groups / 999)` |
 | `distribution_lists` | derived from the groups pages (mail-enabled, not security, no Teams) | 0 |
 | `sites` | `GET /sites?search=*` (paged) | `ceil(sites / 200)` |
@@ -60,9 +60,24 @@ both `users` and `guests`/`suspended_users`, the groups page feeds both `groups`
 and the walk of `group_members`, and the licence names of the users section come
 from the catalogue the `licenses` section already reads.
 
-`users` keeps every account (the `user_type`/`suspended` column tells them apart)
-and `groups` keeps every group (the `kind`/`direct_members` column classifies it),
-so a report that skips the derived sections still lists them.
+`users` and `guests` are complementary halves of the same listing: a member
+account belongs to `users`, a guest account to `guests`, so the Users tab is the
+tenant's workforce without the external identities that already have their own
+tab. Both keep the `user_type` column so a row read on its own still says what it
+is. `groups` keeps every group (the `kind`/`direct_members` column classifies it),
+so a report that skips the derived section still lists them.
+
+**Last login.** The `users` and `guests` tables carry a `last_login` column.
+Graph's `signInActivity.lastSuccessfulSignInDateTime` is the precise source, but it
+requires Microsoft Entra ID P1/P2: Microsoft 365 Business Standard (Entra ID Free)
+refuses the property, and the report drops it without losing the users table. On
+that tenant the collector falls back to the Microsoft 365 unified audit log, whose
+`Audit.AzureActiveDirectory` content type records `UserLoggedIn` events, read with
+the app-only `ActivityFeed.Read` permission the Audit Logs screen already uses.
+The activity API serves the last **seven days**, so a user who has not signed in
+during that window keeps an empty cell rather than a guessed date. The fallback is
+best effort: a tenant without the audit subscription still gets the users table,
+with the last-login column empty.
 
 `group_members` is the one section that costs a call per group — the API has no
 tenant-wide membership listing, and neither has GAM. It is why the section is

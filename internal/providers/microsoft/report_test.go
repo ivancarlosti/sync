@@ -50,9 +50,12 @@ func reportBodies() map[string]string {
 			`"verifiedDomains":[{"name":"contoso.com","isDefault":true,"type":"Managed"}],` +
 			`"technicalNotificationMails":["it@contoso.com"]}]}`,
 		"/v1.0/users": `{"value":[` +
-			`{"id":"u1","displayName":"Ada Lovelace","userPrincipalName":"ada@contoso.com","mail":"ada@contoso.com",` +
+			`{"id":"u1","displayName":"Ada Lovelace","givenName":"Ada","surname":"Lovelace",` +
+			`"userPrincipalName":"ada@contoso.com","mail":"ada@contoso.com","mailNickname":"ada",` +
+			`"otherMails":["ada@example.com"],"proxyAddresses":["SMTP:ada@contoso.com"],` +
 			`"userType":"Member","accountEnabled":true,"jobTitle":"CTO","department":"R&D","officeLocation":"Lisbon",` +
-			`"createdDateTime":"2024-01-02T03:04:05Z","assignedLicenses":[{"skuId":"SKU-1"}]},` +
+			`"createdDateTime":"2024-01-02T03:04:05Z","assignedLicenses":[{"skuId":"SKU-1"}],` +
+			`"signInActivity":{"lastSuccessfulSignInDateTime":"2026-11-08T09:00:00Z"}},` +
 			`{"id":"u2","displayName":"Guest User","userPrincipalName":"guest@contoso.com","userType":"Guest",` +
 			`"accountEnabled":true,"assignedLicenses":[]}],` +
 			`"@odata.nextLink":"https://graph.microsoft.com/v1.0/users?page=2"}`,
@@ -102,8 +105,8 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 	bySection := sectionsOf(t, tables)
 
 	users := bySection[providers.ReportSectionUsers]
-	if len(users.Rows) != 3 {
-		t.Fatalf("users rows = %d, want 3 (both pages)", len(users.Rows))
+	if len(users.Rows) != 2 {
+		t.Fatalf("users rows = %d, want 2 members (the guest belongs to the guests section)", len(users.Rows))
 	}
 	if users.Truncated || users.Failed() {
 		t.Fatalf("users section = %+v, want a complete table", users)
@@ -114,8 +117,27 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 	if got := cell(users, users.Rows[0], "license_count"); got != "1" {
 		t.Errorf("license_count cell = %q, want 1", got)
 	}
-	if got := cell(users, users.Rows[2], "account_enabled"); got != "false" {
+	if got := cell(users, users.Rows[0], "last_login"); got != "2026-11-08T09:00:00Z" {
+		t.Errorf("last_login cell = %q, want the Graph signInActivity value", got)
+	}
+	for key, want := range map[string]string{
+		"given_name":      "Ada",
+		"surname":         "Lovelace",
+		"mail_nickname":   "ada",
+		"other_mails":     "ada@example.com",
+		"proxy_addresses": "SMTP:ada@contoso.com",
+	} {
+		if got := cell(users, users.Rows[0], key); got != want {
+			t.Errorf("%s cell = %q, want %q", key, got, want)
+		}
+	}
+	if got := cell(users, users.Rows[1], "account_enabled"); got != "false" {
 		t.Errorf("account_enabled cell = %q, want false", got)
+	}
+	for _, row := range users.Rows {
+		if cell(users, row, "user_type") == "Guest" {
+			t.Error("the users section still lists a guest; guests have their own section")
+		}
 	}
 
 	guests := bySection[providers.ReportSectionGuests]
@@ -384,7 +406,7 @@ func TestCollectReportKeepsThePlansWhenAGroupHasNone(t *testing.T) {
 // refuses `assignedLicenses` in $select: the users section is read again without
 // the property and the licence column stays empty instead of losing the section.
 func TestCollectReportRetriesWithoutTheLicenceProperty(t *testing.T) {
-	plain := strings.TrimPrefix(usersTarget(false), "https://graph.microsoft.com")
+	plain := strings.TrimPrefix(usersTarget(false, false), "https://graph.microsoft.com")
 	transport := &recordingTransport{
 		bodies:   map[string]string{plain: `{"value":[{"id":"u1","displayName":"Ada"}]}`},
 		statuses: map[string]int{"/v1.0/users": http.StatusBadRequest},
@@ -407,8 +429,10 @@ func TestCollectReportRetriesWithoutTheLicenceProperty(t *testing.T) {
 	if got := cell(tables[0], tables[0].Rows[0], "licenses"); got != "" {
 		t.Errorf("licenses cell = %q, want empty without the property", got)
 	}
-	if len(transport.urls) != 2 {
-		t.Errorf("issued %v, want the refused listing then the plain one", transport.urls)
+	// Both optional properties are tried first; the tenant refuses every
+	// projection that carries one, so the plain listing is the fourth attempt.
+	if len(transport.urls) != 4 {
+		t.Errorf("issued %v, want each optional projection refused and the plain listing", transport.urls)
 	}
 }
 

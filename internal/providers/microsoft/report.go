@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ivancarlosti/sync/internal/models"
 	"github.com/ivancarlosti/sync/internal/providers"
@@ -56,21 +57,38 @@ func (p *Provider) ReportSections() []providers.ReportSection {
 
 // reportUser is one user record, trimmed to the columns of the users section.
 type reportUser struct {
-	ID                string `json:"id"`
-	DisplayName       string `json:"displayName"`
-	UserPrincipalName string `json:"userPrincipalName"`
-	Mail              string `json:"mail"`
-	UserType          string `json:"userType"`
-	AccountEnabled    *bool  `json:"accountEnabled"`
-	JobTitle          string `json:"jobTitle"`
-	Department        string `json:"department"`
-	OfficeLocation    string `json:"officeLocation"`
-	CreatedDateTime   string `json:"createdDateTime"`
+	ID                string   `json:"id"`
+	DisplayName       string   `json:"displayName"`
+	GivenName         string   `json:"givenName"`
+	Surname           string   `json:"surname"`
+	UserPrincipalName string   `json:"userPrincipalName"`
+	Mail              string   `json:"mail"`
+	MailNickname      string   `json:"mailNickname"`
+	OtherMails        []string `json:"otherMails"`
+	ProxyAddresses    []string `json:"proxyAddresses"`
+	UserType          string   `json:"userType"`
+	AccountEnabled    *bool    `json:"accountEnabled"`
+	JobTitle          string   `json:"jobTitle"`
+	Department        string   `json:"department"`
+	OfficeLocation    string   `json:"officeLocation"`
+	CreatedDateTime   string   `json:"createdDateTime"`
 	// AssignedLicenses is empty when the tenant refused the navigation property
 	// in $select (see reportUsers).
 	AssignedLicenses []struct {
 		SkuID string `json:"skuId"`
 	} `json:"assignedLicenses"`
+	// SignInActivity is the last sign-in Graph reports for the user. It is
+	// present only on a tenant with Microsoft Entra ID P1/P2; Business Standard
+	// (Entra ID Free) refuses the property, which is why the collector retries
+	// without it and falls back to the unified audit log (see lastlogin.go).
+	SignInActivity *reportSignInActivity `json:"signInActivity"`
+}
+
+// reportSignInActivity is the `signInActivity` property of a user.
+type reportSignInActivity struct {
+	LastSignInDateTime               string `json:"lastSignInDateTime"`
+	LastNonInteractiveSignInDateTime string `json:"lastNonInteractiveSignInDateTime"`
+	LastSuccessfulSignInDateTime     string `json:"lastSuccessfulSignInDateTime"`
 }
 
 // reportGroup is one group record, trimmed to the columns of the groups and
@@ -202,7 +220,7 @@ type reportPage struct {
 // A section that cannot be collected is returned with its Error set instead of
 // failing the pass: a personal account has no `/sites`, and a tenant may refuse
 // `/domains`, but the users of both are still worth reporting.
-func (p *Provider) CollectReport(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, sections []providers.ReportSection, progress func(providers.ReportProgress)) ([]providers.ReportTable, error) {
+func (p *Provider) CollectReport(ctx context.Context, creds providers.Credentials, tokens *providers.Tokens, sections []providers.ReportSection, progress func(providers.ReportProgress)) ([]providers.ReportTable, error) {
 	if tokens == nil || strings.TrimSpace(tokens.AccessToken) == "" {
 		return nil, fmt.Errorf("microsoft graph: a directory report needs an access token")
 	}
@@ -213,6 +231,8 @@ func (p *Provider) CollectReport(ctx context.Context, _ providers.Credentials, t
 		provider: p,
 		ctx:      ctx,
 		token:    tokens.AccessToken,
+		tokens:   tokens,
+		creds:    creds,
 		progress: progress,
 	}
 	tables := make([]providers.ReportTable, 0, len(sections))
@@ -231,12 +251,21 @@ type reportData struct {
 	provider *Provider
 	ctx      context.Context
 	token    string
+	tokens   *providers.Tokens
+	creds    providers.Credentials
 	progress func(providers.ReportProgress)
 
 	users       []reportUser
 	usersLoaded bool
 	usersCut    bool
 	usersErr    error
+
+	// lastLogins is the last successful UserLoggedIn event per address, read from
+	// the unified audit log when Graph would not answer signInActivity (a tenant
+	// without Entra ID P1/P2, such as Microsoft 365 Business Standard).
+	lastLogins       map[string]time.Time
+	lastLoginsLoaded bool
+	lastLoginsErr    error
 
 	groups       []reportGroup
 	groupsLoaded bool
@@ -356,15 +385,22 @@ func collectionTarget(resource string, selectFields []string, values url.Values)
 	return baseURL + resource + "?" + encoded
 }
 
-// usersTarget builds the first page of the users collection. The licence
-// property is optional: see loadUsers.
-func usersTarget(withLicences bool) string {
+// usersTarget builds the first page of the users collection. Both optional
+// properties are tried first and dropped on the retry of loadUsers:
+// `assignedLicenses` is a navigation property a tenant may refuse in $select, and
+// `signInActivity` is refused by a tenant without Microsoft Entra ID P1/P2 (the
+// shape of Microsoft 365 Business Standard).
+func usersTarget(withLicences, withSignInActivity bool) string {
 	fields := []string{
-		"id", "displayName", "userPrincipalName", "mail", "userType", "accountEnabled",
+		"id", "displayName", "givenName", "surname", "userPrincipalName", "mail",
+		"mailNickname", "otherMails", "proxyAddresses", "userType", "accountEnabled",
 		"jobTitle", "department", "officeLocation", "createdDateTime",
 	}
 	if withLicences {
 		fields = append(fields, "assignedLicenses")
+	}
+	if withSignInActivity {
+		fields = append(fields, "signInActivity")
 	}
 	return collectionTarget("/users", fields, url.Values{"$top": {strconv.Itoa(reportPageSize)}})
 }
@@ -423,22 +459,38 @@ func plansTarget(groupID string) string {
 	}, nil)
 }
 
-// loadUsers reads the users collection once, with the licence column when the
-// tenant allows it.
+// loadUsers reads the users collection once, with the licence and last-login
+// columns when the tenant allows them.
 //
 // `assignedLicenses` is a navigation property and a tenant may refuse it in
-// $select (Graph answers 400). The reader retries the collection without it and
-// leaves the licence column empty: losing the whole users section over one
-// optional column would be a poor trade, and the licences section still reports
-// the catalogue.
+// $select (Graph answers 400). `signInActivity` is refused by a tenant without
+// Microsoft Entra ID P1/P2, which is the licence Microsoft 365 Business Standard
+// has. The reader drops the refused property and keeps the other one, then falls
+// back to the plain listing: losing the whole users section over an optional
+// column would be a poor trade, and the licence catalogue and the unified audit
+// log still answer what the property could not.
 func (d *reportData) loadUsers() {
 	if d.usersLoaded {
 		return
 	}
 	d.usersLoaded = true
-	users, cut, err := d.scanUsers(providers.ReportSectionUsers, usersTarget(true))
-	if isStatus(err, http.StatusBadRequest) {
-		users, cut, err = d.scanUsers(providers.ReportSectionUsers, usersTarget(false))
+	projections := []struct {
+		licences bool
+		signIn   bool
+	}{
+		{true, true},
+		{true, false},
+		{false, true},
+		{false, false},
+	}
+	var users []reportUser
+	var cut bool
+	var err error
+	for _, projection := range projections {
+		users, cut, err = d.scanUsers(providers.ReportSectionUsers, usersTarget(projection.licences, projection.signIn))
+		if err == nil || (!isStatus(err, http.StatusBadRequest) && !isStatus(err, http.StatusForbidden)) {
+			break
+		}
 	}
 	d.users, d.usersCut, d.usersErr = users, cut, err
 }
@@ -543,14 +595,20 @@ func column(key, title string) providers.ReportColumn {
 func userColumns() []providers.ReportColumn {
 	return []providers.ReportColumn{
 		column("display_name", "Display name"),
+		column("given_name", "Given name"),
+		column("surname", "Surname"),
 		column("user_principal_name", "User principal name"),
 		column("mail", "Mail"),
+		column("mail_nickname", "Mail nickname"),
+		column("other_mails", "Other mails"),
+		column("proxy_addresses", "Proxy addresses"),
 		column("user_type", "User type"),
 		column("account_enabled", "Account enabled"),
 		column("job_title", "Job title"),
 		column("department", "Department"),
 		column("office_location", "Office location"),
 		column("created", "Created"),
+		column("last_login", "Last login"),
 		column("licenses", "Licenses"),
 		column("license_count", "License count"),
 	}
@@ -771,9 +829,15 @@ func boolCell(value bool) string {
 	return "false"
 }
 
-// isGuestUser reports whether a record is a guest account.
+// isGuestUser reports whether a record is a guest account. `userType` is the
+// authoritative field; the `#EXT#` in the user principal name is the shape the
+// n8n collector used to split the two sheets, and it catches a guest object whose
+// userType was not projected by an older Graph answer.
 func isGuestUser(user reportUser) bool {
-	return strings.EqualFold(strings.TrimSpace(user.UserType), "guest")
+	if strings.EqualFold(strings.TrimSpace(user.UserType), "guest") {
+		return true
+	}
+	return strings.Contains(strings.ToLower(user.UserPrincipalName), "#ext#")
 }
 
 // hasAssignedLicences reports whether any user of the listing carries a licence,
@@ -788,9 +852,11 @@ func hasAssignedLicences(users []reportUser) bool {
 }
 
 // usersTable builds the users section, or the guests section when guests is
-// true: the second is the first filtered, which is why it costs no extra call.
-// The users section keeps every account (the user type column tells a guest from
-// a member), so a report that skips the guests section still lists them.
+// true. The two are complementary halves of the same listing, which is why they
+// cost no extra call: a member account belongs to `users`, a guest to `guests`,
+// and the separate guests report is the only place a guest is listed. The user
+// type column stays on both tables so a row read on its own still says what it
+// is.
 func (d *reportData) usersTable(guests bool) providers.ReportTable {
 	table := providers.ReportTable{Columns: userColumns()}
 	d.loadUsers()
@@ -805,8 +871,9 @@ func (d *reportData) usersTable(guests bool) providers.ReportTable {
 	if hasAssignedLicences(d.users) {
 		names = d.skuNames()
 	}
+	d.loadLastLogins()
 	for _, user := range d.users {
-		if guests && !isGuestUser(user) {
+		if isGuestUser(user) != guests {
 			continue
 		}
 		licenses := make([]string, 0, len(user.AssignedLicenses))
@@ -821,14 +888,20 @@ func (d *reportData) usersTable(guests bool) providers.ReportTable {
 		}
 		table.Rows = append(table.Rows, providers.ReportRow{
 			textCell(user.DisplayName),
+			textCell(user.GivenName),
+			textCell(user.Surname),
 			textCell(user.UserPrincipalName),
 			textCell(user.Mail),
+			textCell(user.MailNickname),
+			strings.Join(user.OtherMails, "; "),
+			strings.Join(user.ProxyAddresses, "; "),
 			textCell(user.UserType),
 			flagCell(user.AccountEnabled),
 			textCell(user.JobTitle),
 			textCell(user.Department),
 			textCell(user.OfficeLocation),
 			textCell(user.CreatedDateTime),
+			textCell(d.lastLoginOf(user)),
 			strings.Join(licenses, "; "),
 			strconv.Itoa(len(licenses)),
 		})
