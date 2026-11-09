@@ -127,8 +127,10 @@ The credential is one of three: a service-account key with domain-wide delegatio
 stores (`-client-id`, `-client-secret`, `-refresh-token`), or a token minted
 elsewhere (`-access-token "$(gcloud auth print-access-token)"`). `-sections`
 selects the sections (default `users,licenses`, the two a licence gap needs),
-`-debug` logs the answer of every part of a licence batch, and `-out` is where the
-CSVs and `summary.txt` land. A section the tenant refused is written as
+`-ask-scopes` narrows what the delegation grant is asked for when it authorises only
+part of the provider's list (a grant that omits one asked scope fails the whole
+exchange), `-debug` logs the answer of every part of a licence batch, and `-out` is
+where the CSVs and `summary.txt` land. A section the tenant refused is written as
 `<section>.error.txt` rather than as an empty CSV.
 
 `summary.txt` is the point of the tool: it counts the users that hold a licence, the

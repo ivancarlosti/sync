@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/ivancarlosti/sync/internal/providers"
+	"github.com/ivancarlosti/sync/internal/providers/google"
 )
 
 // testServiceAccount answers a key whose private part is a real (throwaway) RSA
@@ -308,5 +310,39 @@ func TestWriteTablesWritesEveryAnswer(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "licenses.csv")); !os.IsNotExist(err) {
 		t.Fatal("a failed section must not leave an empty CSV behind")
+	}
+}
+
+// TestAskScopesNarrowsADelegationGrant: an empty value asks for the provider's whole
+// list (the grant a connection is made with) and a value asks for exactly what it
+// names, whatever separator the operator copied it with — a scope the grant does not
+// carry fails the whole token exchange, so this is worth holding down.
+func TestAskScopesNarrowsADelegationGrant(t *testing.T) {
+	if got := len(askScopes("")); got != len(google.New().Scopes()) {
+		t.Fatalf("askScopes(\"\") answered %d scopes, want every scope of the provider", got)
+	}
+	raw := "https://www.googleapis.com/auth/admin.directory.user," +
+		" https://www.googleapis.com/auth/apps.licensing\nhttps://www.googleapis.com/auth/admin.directory.customer.readonly"
+	want := "https://www.googleapis.com/auth/admin.directory.user " +
+		"https://www.googleapis.com/auth/apps.licensing " +
+		"https://www.googleapis.com/auth/admin.directory.customer.readonly"
+	if got := strings.Join(askScopes(raw), " "); got != want {
+		t.Fatalf("askScopes = %q, want %q", got, want)
+	}
+}
+
+// TestDescribePrefixesOnce keeps the two layers of message readable: a failure of the
+// report is prefixed where it was wrapped, everything else here.
+func TestDescribePrefixesOnce(t *testing.T) {
+	for name, c := range map[string]struct {
+		err  error
+		want string
+	}{
+		"plain":    {errors.New("no such file"), "reportprobe: no such file"},
+		"prefixed": {errors.New("reportprobe: the token endpoint refused the grant"), "reportprobe: the token endpoint refused the grant"},
+	} {
+		if got := describe(c.err); got != c.want {
+			t.Fatalf("%s: describe = %q, want %q", name, got, c.want)
+		}
 	}
 }

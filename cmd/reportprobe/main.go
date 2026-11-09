@@ -78,6 +78,7 @@ type options struct {
 	refreshToken   string
 	sections       string
 	out            string
+	askScopes      string
 	timeout        time.Duration
 	debug          bool
 	scopes         bool
@@ -95,6 +96,9 @@ func main() {
 	flag.StringVar(&opts.clientSecret, "client-secret", "", "OAuth client secret of that client")
 	flag.StringVar(&opts.refreshToken, "refresh-token", "",
 		"refresh token of the administrator account, instead of a service account")
+	flag.StringVar(&opts.askScopes, "ask-scopes", "",
+		"comma or space separated scopes to ask for, when the delegation grant authorises "+
+			"only some of them (default: every scope of the provider, see -scopes)")
 	flag.StringVar(&opts.sections, "sections", "users,licenses", "comma separated sections to collect")
 	flag.StringVar(&opts.out, "out", filepath.Join(".local", "report"),
 		"directory the section CSVs and the summary are written to")
@@ -121,9 +125,20 @@ func main() {
 	defer cancel()
 
 	if err := run(ctx, opts); err != nil {
-		fmt.Fprintf(os.Stderr, "reportprobe: %v\n", err)
+		fmt.Fprintln(os.Stderr, describe(err))
 		os.Exit(1)
 	}
+}
+
+// describe prefixes an error with the command name once, whichever layer built the
+// message: a failure of the report itself is already prefixed, a plain one from the
+// standard library is not.
+func describe(err error) string {
+	message := err.Error()
+	if strings.HasPrefix(message, "reportprobe: ") {
+		return message
+	}
+	return "reportprobe: " + message
 }
 
 // run reads the sections with a token of the credentials the caller gave, writes
@@ -190,6 +205,21 @@ func sectionsOf(raw string) ([]providers.ReportSection, error) {
 	return chosen, nil
 }
 
+// askScopes answers the scopes the delegated token is asked for: the ones given on
+// the command line when a grant authorises a subset of them, and every scope of the
+// provider otherwise (the set a connection is made with). The token endpoint refuses
+// the whole exchange when one asked scope is not part of the domain-wide delegation
+// grant, so a grant narrower than the provider needs `-ask-scopes`.
+func askScopes(raw string) []string {
+	fields := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	if len(fields) == 0 {
+		return google.New().Scopes()
+	}
+	return fields
+}
+
 // token answers the access token the report is read with, from whichever
 // credential the caller gave: a service account with domain-wide delegation (the
 // GAM arrangement), the OAuth client and refresh token a connection stores, or a
@@ -239,12 +269,13 @@ func tokenFromServiceAccount(ctx context.Context, opts options) (*providers.Toke
 		return nil, fmt.Errorf("reportprobe: -subject is the administrator the service account impersonates " +
 			"(the Admin SDK answers a bare service account with nothing)")
 	}
-	assertion, err := signAssertion(key, subject, google.New().Scopes(), key.audience(), time.Now())
+	assertion, err := signAssertion(key, subject, askScopes(opts.askScopes), key.audience(), time.Now())
 	if err != nil {
 		return nil, err
 	}
 	slog.Info("asking for a delegated access token",
-		"service_account", key.ClientEmail, "subject", subject)
+		"service_account", key.ClientEmail, "subject", subject,
+		"scopes", strings.Join(askScopes(opts.askScopes), " "))
 	return exchangeToken(ctx, key.audience(), url.Values{
 		"grant_type": {"urn:ietf:params:oauth:grant-type:jwt-bearer"},
 		"assertion":  {assertion},
