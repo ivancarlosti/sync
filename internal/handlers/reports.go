@@ -123,7 +123,7 @@ func (s *Server) handleReportSections(c *gin.Context) {
 			return
 		}
 		sections = source.ReportSections()
-		// The shared mailboxes section needs MailboxSettings.Read.All. A grant
+		// The shared mailboxes section needs MailboxSettings.Read. A grant
 		// made before that scope existed cannot fill it, so the start form
 		// leaves it out until the account is reconnected (Accounts shows the
 		// missing capability) instead of offering a section every report would

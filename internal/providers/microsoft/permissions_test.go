@@ -23,7 +23,7 @@ var wantScopes = []string{
 	"https://graph.microsoft.com/Sites.ReadWrite.All",
 	"https://graph.microsoft.com/User.Read.All",
 	"https://graph.microsoft.com/User.ReadWrite.All",
-	"https://graph.microsoft.com/MailboxSettings.Read.All",
+	"https://graph.microsoft.com/MailboxSettings.Read",
 	"https://graph.microsoft.com/Group.ReadWrite.All",
 	"https://graph.microsoft.com/Directory.ReadWrite.All",
 	"https://graph.microsoft.com/GroupMember.ReadWrite.All",

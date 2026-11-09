@@ -65,7 +65,7 @@ from the catalogue the `licenses` section already reads.
 `User`, `Guest`, `Shared mailbox`, `Room` or `Equipment` (and `Mailbox` for a
 purpose Graph reports but the list above does not name). The classification comes
 from `userType` and `mailboxSettings.userPurpose`; the purpose is one
-`/users/{id}/mailboxSettings` call per user and needs `MailboxSettings.Read.All`.
+`/users/{id}/mailboxSettings` call per user and needs `MailboxSettings.Read`.
 A grant without it still renders the users table, but shared mailboxes and
 resources show as `User` and the `shared_mailboxes` section reports the missing
 scope. The old `guests` section is hidden from new reports; guests are part of
@@ -268,7 +268,7 @@ licence columns in `summary.txt`.
 **Microsoft 365** is served by the scopes the account grants at connection time
 (`User.Read.All`, `Group.ReadWrite.All`, `Directory.ReadWrite.All`,
 `Domain.Read.All`, `Organization.Read.All`, `Sites.ReadWrite.All`,
-`MailboxSettings.Read.All` — see [app-registration.md](app-registration.md)),
+`MailboxSettings.Read` — see [app-registration.md](app-registration.md)),
 with two product additions this
 release introduced: `Team.ReadBasic.All` + `TeamMember.Read.All` for the `teams`
 and `team_members` sections, and `Tasks.Read` for `planner_plans`

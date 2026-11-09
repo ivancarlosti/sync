@@ -85,7 +85,7 @@ type reportUser struct {
 	SignInActivity *reportSignInActivity `json:"signInActivity"`
 	// MailboxPurpose is `mailboxSettings.userPurpose`: user, shared, room or
 	// equipment. It is read per user (the property cannot be selected on the
-	// users collection) and is empty when the grant lacks MailboxSettings.Read.All.
+	// users collection) and is empty when the grant lacks MailboxSettings.Read.
 	MailboxPurpose string `json:"-"`
 }
 
@@ -266,7 +266,7 @@ type reportData struct {
 	usersErr    error
 	// mailboxSettings says the per-user mailbox purpose was read, and
 	// mailboxSettingsErr is the reason it could not be (the grant does not cover
-	// MailboxSettings.Read.All). The users table still renders; the shared
+	// MailboxSettings.Read). The users table still renders; the shared
 	// mailboxes section reports the reason.
 	mailboxSettingsLoaded bool
 	mailboxSettingsErr    error
@@ -985,7 +985,7 @@ func accountType(user reportUser) string {
 
 // loadMailboxSettings reads mailboxSettings.userPurpose for every user. Graph
 // does not expose the property on the users collection, so this is one call per
-// user; a grant without MailboxSettings.Read.All answers 403 on the first one
+// user; a grant without MailboxSettings.Read answers 403 on the first one
 // and the rest are skipped, leaving the purpose empty and the reason in
 // mailboxSettingsErr for the shared mailboxes section.
 func (d *reportData) loadMailboxSettings() {
