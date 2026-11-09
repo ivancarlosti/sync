@@ -9,19 +9,17 @@
 import { Play } from '@lucide/vue';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRouter } from 'vue-router';
 
 import StatusBadge from '@/components/StatusBadge.vue';
 import Alert from '@/components/ui/Alert.vue';
 import Badge from '@/components/ui/Badge.vue';
 import Button from '@/components/ui/Button.vue';
 import Card from '@/components/ui/Card.vue';
-import Dialog from '@/components/ui/Dialog.vue';
 import EmptyState from '@/components/ui/EmptyState.vue';
-import Input from '@/components/ui/Input.vue';
 import Label from '@/components/ui/Label.vue';
 import Select from '@/components/ui/Select.vue';
 import Spinner from '@/components/ui/Spinner.vue';
-import Switch from '@/components/ui/Switch.vue';
 import { accountLabel } from '@/lib/accounts';
 import {
   accounts as accountsApi,
@@ -39,6 +37,7 @@ const POLL_INTERVAL = 2000;
 const RECENT_LIMIT = 5;
 
 const { t, locale } = useI18n();
+const router = useRouter();
 
 const accounts = ref<ConnectedAccount[]>([]);
 const accountId = ref(0);
@@ -47,13 +46,6 @@ const recent = ref<ManagementTask[]>([]);
 const loading = ref(true);
 const failure = ref('');
 
-const dialogOpen = ref(false);
-const activeOp = ref<ManagementOperation | null>(null);
-const form = ref<Record<string, string>>({});
-const confirmed = ref(false);
-const starting = ref(false);
-const startError = ref('');
-
 let timer: ReturnType<typeof setInterval> | undefined;
 
 const accountOptions = computed(() => [
@@ -61,24 +53,9 @@ const accountOptions = computed(() => [
   ...accounts.value.map((account) => ({ value: account.id, label: accountLabel(account) })),
 ]);
 
-const actionOptions = computed(() => [
-  { value: 'add', label: t('management.actions.add') },
-  { value: 'remove', label: t('management.actions.remove') },
-  { value: 'list', label: t('management.actions.list') },
-]);
-
-const editableParams = computed(() =>
-  activeOp.value ? activeOp.value.params.filter((param) => param.key !== 'confirm') : [],
-);
-
 const unsupported = computed(
   () => !loading.value && operations.value.length === 0 && accountId.value > 0,
 );
-
-/** fieldLabel translates one parameter of an operation. */
-function fieldLabel(key: string): string {
-  return t(`management.params.${key}`);
-}
 
 /** capabilityLabel translates the capability an operation needs. */
 function capabilityLabel(capability: string): string {
@@ -117,23 +94,18 @@ async function refresh(): Promise<void> {
   failure.value = '';
   try {
     await Promise.all([loadOperations(), loadRecent()]);
+    ensurePolling();
   } catch (error) {
     failure.value = messageOf(error);
   }
 }
 
-function openDialog(operation: ManagementOperation): void {
-  activeOp.value = operation;
-  const next: Record<string, string> = {};
-  for (const param of operation.params) {
-    if (param.key !== 'confirm') {
-      next[param.key] = '';
-    }
-  }
-  form.value = next;
-  confirmed.value = false;
-  startError.value = '';
-  dialogOpen.value = true;
+function openOperation(operation: ManagementOperation): void {
+  void router.push({
+    name: 'management-operation',
+    params: { kind: operation.kind },
+    query: accountId.value > 0 ? { account: String(accountId.value) } : undefined,
+  });
 }
 
 function stopPolling(): void {
@@ -153,44 +125,6 @@ function ensurePolling(): void {
       stopPolling();
     }
   }, POLL_INTERVAL);
-}
-
-async function submit(): Promise<void> {
-  if (!activeOp.value) {
-    return;
-  }
-  const operation = activeOp.value;
-  const params: Record<string, string> = {};
-  for (const [key, value] of Object.entries(form.value)) {
-    if (value.trim() !== '') {
-      params[key] = value.trim();
-    }
-  }
-  for (const param of operation.params) {
-    if (param.required && param.key !== 'confirm' && !params[param.key]) {
-      startError.value = t('common.requiredField');
-      return;
-    }
-  }
-  if (operation.danger) {
-    if (!confirmed.value) {
-      startError.value = t('management.dangerHint');
-      return;
-    }
-    params.confirm = 'true';
-  }
-  starting.value = true;
-  startError.value = '';
-  try {
-    await managementApi.start({ account_id: accountId.value, kind: operation.kind, params });
-    dialogOpen.value = false;
-    await loadRecent();
-    ensurePolling();
-  } catch (error) {
-    startError.value = messageOf(error);
-  } finally {
-    starting.value = false;
-  }
 }
 
 onMounted(async () => {
@@ -257,7 +191,7 @@ watch(accountId, () => {
             class="mt-auto self-start"
             size="sm"
             :disabled="!operation.supported"
-            @click="openDialog(operation)"
+            @click="openOperation(operation)"
           >
             <Play class="me-2 h-4 w-4" aria-hidden="true" />
             {{ t('management.run') }}
@@ -298,57 +232,6 @@ watch(accountId, () => {
       </div>
     </Card>
 
-    <Dialog
-      v-model:open="dialogOpen"
-      :title="activeOp ? kindTitle(activeOp.kind) : ''"
-      :close-label="t('common.close')"
-      size="md"
-    >
-      <div v-if="activeOp" class="space-y-4">
-        <Alert v-if="startError" tone="destructive" :message="startError" />
-
-        <div v-for="param in editableParams" :key="param.key" class="space-y-1.5">
-          <Label :for="`management-param-${param.key}`" :required="param.required">
-            {{ fieldLabel(param.key) }}
-          </Label>
-          <Select
-            v-if="param.key === 'action'"
-            :id="`management-param-${param.key}`"
-            v-model="form[param.key]"
-            :options="actionOptions"
-          />
-          <Input
-            v-else-if="param.key === 'max'"
-            :id="`management-param-${param.key}`"
-            v-model="form[param.key]"
-            type="number"
-            min="1"
-          />
-          <Input
-            v-else
-            :id="`management-param-${param.key}`"
-            v-model="form[param.key]"
-            :type="param.key.includes('email') ? 'email' : 'text'"
-          />
-        </div>
-
-        <div v-if="activeOp.danger" class="space-y-2 rounded-md border border-border p-3">
-          <p class="text-sm text-muted-foreground">{{ t('management.dangerHint') }}</p>
-          <div class="flex items-center gap-2">
-            <Switch id="management-confirm" v-model="confirmed" :label="t('management.confirmRun')" />
-            <Label for="management-confirm">{{ t('management.confirmRun') }}</Label>
-          </div>
-        </div>
-
-        <div class="flex justify-end gap-2">
-          <Button variant="outline" @click="dialogOpen = false">{{ t('common.cancel') }}</Button>
-          <Button :disabled="starting" @click="submit">
-            <Spinner v-if="starting" class="me-2" />
-            {{ t('management.run') }}
-          </Button>
-        </div>
-      </div>
-    </Dialog>
   </div>
 </template>
 

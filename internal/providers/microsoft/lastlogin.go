@@ -71,8 +71,11 @@ func (d *reportData) loadLastLogins() {
 	}
 	logins, err := d.provider.unifiedLastLogins(d.ctx, d.creds, d.tokens)
 	if err != nil {
+		// The report keeps its users and leaves the last-login cells empty; the
+		// reason is worth a line because it is the difference between a tenant
+		// without the activity-feed consent and a user who did not sign in.
 		d.lastLoginsErr = err
-		slog.Debug("the last-login fallback did not answer", "error", err)
+		slog.Warn("the last-login column is empty: the unified audit log did not answer", "error", err)
 		return
 	}
 	d.lastLogins = logins

@@ -617,6 +617,32 @@ export interface ManagementParam {
   required: boolean;
 }
 
+/** ManagementUser is one account an Admin operation form can name. */
+export interface ManagementUser {
+  email: string;
+  name: string;
+  guest: boolean;
+}
+
+/** ManagementGroup is one group an Admin operation form can target. */
+export interface ManagementGroup {
+  email: string;
+  name: string;
+}
+
+/** ManagementDelegate is one delegate of a mailbox. */
+export interface ManagementDelegate {
+  email: string;
+  status: string;
+}
+
+/** ManagementOptions are the selects the form of one operation reads. */
+export interface ManagementOptions {
+  users: ManagementUser[];
+  groups: ManagementGroup[];
+  drives: Drive[];
+}
+
 /** ManagementOperation is one entry of the catalogue, decorated per account. */
 export interface ManagementOperation {
   kind: string;
@@ -1154,6 +1180,18 @@ export const management = {
     request<{ operations: ManagementOperation[] }>({
       url: '/management/operations',
       params: { account_id: accountId },
+    }),
+  /** options reads the users, groups and drives one operation form offers. */
+  options: (accountId: number, kind: string) =>
+    request<ManagementOptions>({
+      url: '/management/options',
+      params: { account_id: accountId, kind },
+    }),
+  /** delegates lists the current delegates of one mailbox. */
+  delegates: (accountId: number, mailbox: string) =>
+    request<{ delegates: ManagementDelegate[] }>({
+      url: '/management/delegates',
+      params: { account_id: accountId, mailbox },
     }),
   list: (accountId?: number, limit = 50) =>
     request<{ tasks: ManagementTask[] }>({

@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/ivancarlosti/sync/internal/models"
+	"github.com/ivancarlosti/sync/internal/providers"
 	"github.com/ivancarlosti/sync/internal/services"
 )
 
@@ -66,6 +67,107 @@ func (s *Server) handleListManagementOperations(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"operations": operations})
+}
+
+// handleManagementOptions answers GET /api/management/options?account_id=&kind=:
+// the users, groups and drives the form of one operation can offer. The kind
+// decides which collections are read, so a Drive operation does not pay for the
+// directory listing and an archive form does not read the drives.
+func (s *Server) handleManagementOptions(c *gin.Context) {
+	accountID, ok := queryID(c, "account_id")
+	if !ok {
+		return
+	}
+	kind := c.Query("kind")
+	needsUsers, needsGroups, needsDrives := managementOptionNeeds(kind)
+	users := []providers.DirectoryUser{}
+	groups := []providers.DirectoryGroup{}
+	drives := []driveView{}
+
+	err := s.deps.Tokens.Use(c.Request.Context(), accountID, func(session services.ProviderSession) error {
+		provider := session.Provider
+		if needsUsers || needsGroups {
+			reader, ok := provider.(providers.DirectoryReader)
+			if !ok {
+				return nil
+			}
+			if needsUsers {
+				list, err := reader.ListDirectoryUsers(c.Request.Context(), session.Credentials, session.Tokens)
+				if err != nil {
+					return err
+				}
+				users = list
+			}
+			if needsGroups {
+				list, err := reader.ListDirectoryGroups(c.Request.Context(), session.Credentials, session.Tokens)
+				if err != nil {
+					return err
+				}
+				groups = list
+			}
+		}
+		if needsDrives {
+			list, err := provider.Drives(c.Request.Context(), session.Credentials, session.Tokens)
+			if err != nil {
+				return err
+			}
+			for _, drive := range list {
+				drives = append(drives, driveView{ID: drive.ID, Name: drive.Name, Kind: drive.Kind, Owner: drive.Owner})
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"users": users, "groups": groups, "drives": drives})
+}
+
+// managementOptionNeeds says which collections the form of an operation reads.
+func managementOptionNeeds(kind string) (users, groups, drives bool) {
+	switch kind {
+	case models.ManagementKindArchiveUserGroup:
+		return true, true, false
+	case models.ManagementKindGoogleCopyMailbox, models.ManagementKindMicrosoftCopyMailbox,
+		models.ManagementKindGoogleCalendars, models.ManagementKindMicrosoftCalendars,
+		models.ManagementKindGoogleDelegate:
+		return true, false, false
+	case models.ManagementKindDriveToNewSharedDrive, models.ManagementKindDriveToSharedDrive,
+		models.ManagementKindFolderSizes, models.ManagementKindOneDriveToSite:
+		return false, false, true
+	default:
+		return false, false, false
+	}
+}
+
+// handleManagementDelegates answers GET /api/management/delegates?account_id=&mailbox=:
+// the current delegates of one mailbox, so the form can show them before an add
+// or a remove instead of making the operator run a "list" task.
+func (s *Server) handleManagementDelegates(c *gin.Context) {
+	accountID, ok := queryID(c, "account_id")
+	if !ok {
+		return
+	}
+	mailbox := c.Query("mailbox")
+	delegates := []providers.MailboxDelegate{}
+	err := s.deps.Tokens.Use(c.Request.Context(), accountID, func(session services.ProviderSession) error {
+		delegator, ok := session.Provider.(providers.MailboxDelegator)
+		if !ok {
+			return nil
+		}
+		list, err := delegator.ListDelegates(c.Request.Context(), session.Credentials, session.Tokens, mailbox)
+		if err != nil {
+			return err
+		}
+		delegates = list
+		return nil
+	})
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"delegates": delegates})
 }
 
 // handleStartManagementTask answers POST /api/management/tasks. The task runs in

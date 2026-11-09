@@ -19,6 +19,14 @@ const tabs = computed(() => [
   { name: 'management-operations', label: t('management.operations'), icon: Wrench },
   { name: 'management-activity', label: t('management.activity'), icon: ScrollText },
 ]);
+
+/** isActive keeps the Operations tab lit while one operation form is open. */
+function isActive(name: string): boolean {
+  if (name === 'management-operations') {
+    return route.name === 'management-operations' || route.name === 'management-operation';
+  }
+  return route.name === name;
+}
 </script>
 
 <template>
@@ -30,11 +38,11 @@ const tabs = computed(() => [
         v-for="tab in tabs"
         :key="tab.name"
         :to="{ name: tab.name }"
-        :aria-current="route.name === tab.name ? 'page' : undefined"
+        :aria-current="isActive(tab.name) ? 'page' : undefined"
         :class="
           cn(
             'inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground',
-            route.name === tab.name && 'bg-background text-foreground shadow-sm',
+            isActive(tab.name) && 'bg-background text-foreground shadow-sm',
           )
         "
       >

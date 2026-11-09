@@ -21,6 +21,7 @@ export type RouteName =
   | 'audit-logs'
   | 'reports'
   | 'management-operations'
+  | 'management-operation'
   | 'management-activity'
   | 'billing'
   | 'notifications'
@@ -104,6 +105,11 @@ const routes: RouteRecordRaw[] = [
             path: 'operations',
             name: 'management-operations',
             component: () => import('@/views/management/OperationsView.vue'),
+          },
+          {
+            path: 'operations/:kind',
+            name: 'management-operation',
+            component: () => import('@/views/management/OperationView.vue'),
           },
           {
             path: 'activity',

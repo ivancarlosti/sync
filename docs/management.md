@@ -9,17 +9,25 @@ directory report or an audit run.
 
 The screen lives at **Admin operations** in the top navigation, with two tabs:
 
-- **Operations** — the catalogue of what a selected account can run right now,
-  and a start dialog built from the operation's parameters.
+- **Operations** — the catalogue of what a selected account can run right now.
+  Each entry opens a full **operation page** (not a small dialog) with the
+  account selector, the operation's fields, live users/groups/drives and the
+  explanation of what each value means.
 - **Activity** — the history of every task with its journal, cancel and CSV
   export.
+
+The operation page reads its selects from the account itself:
+`/api/management/options` lists the users and groups of the directory and the
+drives the account can see, so an operator picks an existing mailbox, group or
+drive instead of typing an address a typo can turn into a new object. Mailbox
+delegates get a live list with add/remove and a refresh after every change.
 
 ## Operations
 
 | Kind | Provider | Capability | Destructive | Parameters |
 | --- | --- | --- | --- | --- |
 | `google_drive_to_new_shared_drive` | Google | `files` | yes | `name`*, `source_drive_id`, `confirm`* |
-| `google_drive_to_shared_drive` | Google | `files` | yes | `target_drive_id`*, `source_drive_id`, `confirm`* |
+| `google_drive_to_shared_drive` | Google | `files` | yes | `target_drive_id`*, `source_drive_id`, `target_folder_id`, `target_folder_name`, `confirm`* |
 | `google_archive_user_group` | Google | `groups` | yes | `user_email`*, `group_email`*, `group_name`, `member_email`, `archive_email`, `confirm`* |
 | `google_copy_mailbox` | Google | `mail` | no | `source`, `target`*, `max` |
 | `google_transfer_calendars` | Google | `calendars` | yes | `source`, `target`*, `confirm`* |
@@ -39,13 +47,17 @@ mailbox, shared drive or account that receives the content.
 ## What each operation does
 
 - **Drive → new / existing Shared Drive** — enumerates the top level of the
-  source drive and re-parents every item into the target shared drive. A folder
-  moves with its whole subtree, so one pass moves everything; the source items
-  leave the source drive.
-- **Archive a user into a group** — optionally renames the departing mailbox to
-  free its address (`archive_email`), creates the group that keeps the address,
-  and adds the successor (`member_email`) as a member. A group or membership that
-  already exists is a `skipped` step, so a re-run converges.
+  source drive (My Drive or a Shared Drive) and re-parents every item into the
+  target shared drive. A folder moves with its whole subtree, so one pass moves
+  everything; the source items leave the source drive. On an existing target the
+  form can select a folder inside it (`target_folder_id`) or create a new
+  subfolder (`target_folder_name`) and move the items there.
+- **Archive a user into a group** — `user_email` is the departing user;
+  `archive_email` is the optional new address that frees the old one;
+  `group_email` is the destination group (pick an existing one or type a new
+  address); `group_name` is the display name used only when the group is
+  created; `member_email` is the successor added to the group. A group or
+  membership that already exists is a `skipped` step, so a re-run converges.
 - **Copy a mailbox** — reads each message of the source mailbox and recreates it
   in the target (Google replays the raw RFC 822 message; Microsoft re-creates the
   subject/body/recipients). Bounded by `max` (default 200, hard ceiling 5000).
@@ -53,6 +65,10 @@ mailbox, shared drive or account that receives the content.
   every calendar of the source (events stay on the calendar); Microsoft recreates
   each event in the target mailbox and deletes the source copy.
 - **Manage delegates** — lists, adds or removes a Gmail delegate of a mailbox.
+  The page keeps the current delegates on screen, refreshes them after every
+  change, and reads them from the same Gmail settings endpoint. The Google Cloud
+  project must have the **Gmail API** enabled and the account must hold
+  `gmail.settings.sharing`.
 - **Report folder sizes** — walks a Microsoft drive depth-first and reports the
   recursive size and file count of every folder. Bounded in depth and item count.
 
@@ -98,6 +114,8 @@ what the application may do, not what the signed-in user is allowed to do.
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/management/operations?account_id=` | The catalogue of an account, decorated with `supported` / `missing_capability`. |
+| `GET` | `/api/management/options?account_id=&kind=` | The users, groups and drives the form of one operation offers. |
+| `GET` | `/api/management/delegates?account_id=&mailbox=` | The current delegates of one mailbox. |
 | `GET` | `/api/management/tasks?account_id=&limit=` | The task history (all accounts when `account_id` is absent). |
 | `POST` | `/api/management/tasks` | Start a task: `{account_id, kind, params}`. `202` with the row; `409` while another task of the same account runs. |
 | `GET` | `/api/management/tasks/:id` | One task with its journal. |

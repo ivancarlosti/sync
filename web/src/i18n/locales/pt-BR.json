@@ -42,7 +42,8 @@
     "requiredField": "Este campo é obrigatório",
     "unexpectedError": "Algo deu errado. Veja o detalhe técnico abaixo.",
     "noResults": "Nenhum resultado",
-    "closeDialog": "Fechar a janela"
+    "closeDialog": "Fechar a janela",
+    "clear": "Limpar"
   },
   "nav": {
     "dashboard": "Painel",
@@ -990,11 +991,64 @@
       "site_name": "Nome do site",
       "site_display_name": "Nome de exibição do site",
       "target_folder_id": "Pasta de destino",
-      "drive_id": "Drive"
+      "drive_id": "Drive",
+      "target_folder_name": "Nome da pasta de destino"
     },
     "started": "Início",
     "bytes": "Bytes",
     "status": "Status",
-    "export": "Exportar CSV"
+    "export": "Exportar CSV",
+    "backToOperations": "Voltar às operações",
+    "operationFallback": "Operação",
+    "unknownOperation": "Esta operação não está disponível para a conta selecionada.",
+    "accountHint": "A operação usa as permissões desta conta.",
+    "form": "Detalhes da operação",
+    "selectDrive": "Selecione um drive",
+    "selectUser": "Selecione um usuário",
+    "selectMailbox": "Selecione uma caixa de correio",
+    "selectFolder": "Selecionar pasta",
+    "groupPlaceholder": "Escolha um grupo existente ou digite um novo endereço",
+    "guest": "convidado",
+    "delegates": "Delegados da caixa de correio",
+    "currentDelegates": "Delegados atuais",
+    "noDelegates": "Esta caixa de correio não tem delegados.",
+    "refresh": "Atualizar",
+    "addDelegate": "Adicionar delegado",
+    "archiveTitle": "O que o arquivamento faz",
+    "archiveHint": "A caixa do usuário que sai é renomeada para o endereço de arquivo; o grupo assume o endereço antigo e o sucessor (e-mail do membro) é adicionado. Deixe o nome do grupo vazio para usar o endereço; deixe o endereço de arquivo vazio para manter o endereço da caixa.",
+    "descriptions": {
+      "google_drive_to_new_shared_drive": "Cria um novo Drive compartilhado e move todos os itens de primeiro nível do drive de origem para ele.",
+      "google_drive_to_shared_drive": "Move todos os itens de primeiro nível do drive de origem para um Drive compartilhado existente, opcionalmente para uma pasta ou subpasta nova.",
+      "google_archive_user_group": "Arquiva um usuário que está saindo: renomeia a caixa, mantém o endereço em um grupo e adiciona o sucessor.",
+      "google_copy_mailbox": "Copia as mensagens de uma caixa para outra; a origem não é alterada.",
+      "google_transfer_calendars": "Transfere a propriedade das agendas da conta de origem para a conta de destino.",
+      "google_manage_delegate": "Lista, adiciona e remove delegados do Gmail de uma caixa de correio.",
+      "microsoft_copy_mailbox": "Copia as mensagens de uma caixa para outra; a origem não é alterada.",
+      "microsoft_onedrive_to_site": "Copia o OneDrive da conta para uma biblioteca de documentos do SharePoint.",
+      "microsoft_transfer_calendars": "Transfere a propriedade das agendas da conta de origem para a conta de destino.",
+      "microsoft_folder_sizes": "Percorre um drive e informa o tamanho de cada pasta."
+    },
+    "help": {
+      "name": "Nome do Drive compartilhado que será criado.",
+      "source_drive_id": "Meu Drive ou um Drive compartilhado. Todos os itens de primeiro nível são movidos.",
+      "target_drive_id": "O Drive compartilhado que receberá os itens.",
+      "target_folder_id": "Pasta opcional dentro do drive de destino. A raiz é usada quando vazio.",
+      "target_folder_name": "Opcional: cria esta pasta dentro da pasta de destino selecionada e move os itens para ela.",
+      "user_email": "O usuário que está saindo e cujo endereço será arquivado.",
+      "group_email": "Grupo existente que deve manter o endereço, ou um novo endereço a criar.",
+      "group_name": "Nome de exibição de um grupo criado por esta operação; usa o endereço por padrão.",
+      "member_email": "Sucessor adicionado ao grupo. Opcional.",
+      "archive_email": "Novo endereço da caixa do usuário que sai antes de o grupo assumir o antigo. Opcional; sem ele a caixa mantém o endereço.",
+      "source": "Caixa de onde as mensagens são lidas. Vazio usa a conta conectada.",
+      "target": "Caixa para onde as mensagens serão copiadas.",
+      "max": "Número máximo de mensagens a copiar. Vazio usa o padrão do provedor.",
+      "mailbox": "Caixa cujos delegados serão gerenciados.",
+      "delegate": "Conta a adicionar como delegado.",
+      "action": "Listar, adicionar ou remover um delegado.",
+      "site_name": "Nome de URL de um novo site do SharePoint. Deixe vazio para usar uma biblioteca existente.",
+      "site_display_name": "Nome de exibição do novo site.",
+      "drive_id": "Drive cujo tamanho das pastas será informado."
+    },
+    "sharedDriveOnly": "Selecione uma pasta no Drive compartilhado de destino."
   }
 }

@@ -155,12 +155,19 @@ func (p *Provider) CreateSharedDrive(ctx context.Context, _ providers.Credential
 // MoveIntoSharedDrive implements providers.SharedDriveManager. It enumerates the
 // top level of the source drive and re-parents every item into the target shared
 // drive; a folder carries its subtree with it, so one pass moves everything.
-func (p *Provider) MoveIntoSharedDrive(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, sourceDriveID, targetDriveID string, progress providers.ProgressFunc) (providers.ManagementResult, error) {
+func (p *Provider) MoveIntoSharedDrive(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, sourceDriveID, targetDriveID, targetFolderID string, progress providers.ProgressFunc) (providers.ManagementResult, error) {
 	if !identifierPattern.MatchString(targetDriveID) {
 		return providers.ManagementResult{}, invalidIdentifierError("shared drive id", targetDriveID)
 	}
 	if sourceDriveID != "" && !optionalIdentifierPattern.MatchString(sourceDriveID) {
 		return providers.ManagementResult{}, invalidIdentifierError("drive id", sourceDriveID)
+	}
+	targetParent := rootParent(targetDriveID, providers.DriveRoot)
+	if targetFolderID != "" {
+		if !identifierPattern.MatchString(targetFolderID) {
+			return providers.ManagementResult{}, invalidIdentifierError("target folder id", targetFolderID)
+		}
+		targetParent = targetFolderID
 	}
 	sourceRoot := rootParent(sourceDriveID, providers.DriveRoot)
 	if !identifierPattern.MatchString(sourceRoot) {
@@ -172,7 +179,10 @@ func (p *Provider) MoveIntoSharedDrive(ctx context.Context, _ providers.Credenti
 	base = withParam(base, "q", fmt.Sprintf("'%s' in parents and trashed = false", strings.ReplaceAll(sourceRoot, "'", "\\'")))
 	base = withParam(base, "pageSize", "1000")
 
-	result := providers.ManagementResult{Data: map[string]string{"target_drive_id": targetDriveID}}
+	result := providers.ManagementResult{Data: map[string]string{
+		"target_drive_id":  targetDriveID,
+		"target_folder_id": targetParent,
+	}}
 	pageToken := ""
 	for {
 		target := base
@@ -200,7 +210,7 @@ func (p *Provider) MoveIntoSharedDrive(ctx context.Context, _ providers.Credenti
 				parent = file.Parents[0]
 			}
 			patch := driveAPIBase + "/files/" + file.ID
-			patch = withParam(patch, "addParents", targetDriveID)
+			patch = withParam(patch, "addParents", targetParent)
 			patch = withParam(patch, "removeParents", parent)
 			patch = withParam(patch, "supportsAllDrives", "true")
 			patch = withParam(patch, "fields", "id,name")
@@ -283,7 +293,7 @@ func (p *Provider) ArchiveUserToGroup(ctx context.Context, _ providers.Credentia
 
 // ManageDelegates implements providers.MailboxDelegator: list, add or remove a
 // Gmail delegate of one mailbox (the connected account by default).
-func (p *Provider) ManageDelegates(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, input providers.DelegateInput, progress providers.ProgressFunc) (providers.ManagementResult, error) {
+func (p *Provider) ManageDelegates(ctx context.Context, creds providers.Credentials, tokens *providers.Tokens, input providers.DelegateInput, progress providers.ProgressFunc) (providers.ManagementResult, error) {
 	mailbox := strings.TrimSpace(input.Mailbox)
 	if mailbox == "" {
 		mailbox = "me"
@@ -294,17 +304,12 @@ func (p *Provider) ManageDelegates(ctx context.Context, _ providers.Credentials,
 
 	switch strings.ToLower(strings.TrimSpace(input.Action)) {
 	case "list", "":
-		var list struct {
-			Delegates []struct {
-				DelegateEmail      string `json:"delegateEmail"`
-				VerificationStatus string `json:"verificationStatus"`
-			} `json:"delegates"`
-		}
-		if err := p.doJSON(ctx, client, http.MethodGet, base, nil, &list); err != nil {
+		delegates, err := p.ListDelegates(ctx, creds, tokens, mailbox)
+		if err != nil {
 			return result, err
 		}
-		for _, delegate := range list.Delegates {
-			reportStep(progress, delegate.DelegateEmail, providers.StepSuccess, delegate.VerificationStatus, 1, 0)
+		for _, delegate := range delegates {
+			reportStep(progress, delegate.Email, providers.StepSuccess, delegate.Status, 1, 0)
 			result.Items++
 		}
 		result.Message = fmt.Sprintf("%d delegate(s)", result.Items)
@@ -342,6 +347,113 @@ func (p *Provider) ManageDelegates(ctx context.Context, _ providers.Credentials,
 		return result, nil
 	default:
 		return result, fmt.Errorf("%w: unknown delegate action %q", providers.ErrInvalidIdentifier, input.Action)
+	}
+}
+
+// ListDelegates answers the delegates of one mailbox, which the Admin operations
+// form shows before an add or a remove.
+func (p *Provider) ListDelegates(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, mailbox string) ([]providers.MailboxDelegate, error) {
+	mailbox = strings.TrimSpace(mailbox)
+	if mailbox == "" {
+		mailbox = "me"
+	}
+	base := gmailAPIBase + "/users/" + pathSegment(mailbox) + "/settings/delegates"
+	var list struct {
+		Delegates []struct {
+			DelegateEmail      string `json:"delegateEmail"`
+			VerificationStatus string `json:"verificationStatus"`
+		} `json:"delegates"`
+	}
+	if err := p.doJSON(ctx, p.client(tokens), http.MethodGet, base, nil, &list); err != nil {
+		return nil, err
+	}
+	delegates := make([]providers.MailboxDelegate, 0, len(list.Delegates))
+	for _, delegate := range list.Delegates {
+		delegates = append(delegates, providers.MailboxDelegate{
+			Email:  textCell(delegate.DelegateEmail),
+			Status: textCell(delegate.VerificationStatus),
+		})
+	}
+	return delegates, nil
+}
+
+// ListDirectoryUsers implements providers.DirectoryReader: every account of the
+// domain, which is the source/destination select of the Admin operations forms.
+func (p *Provider) ListDirectoryUsers(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens) ([]providers.DirectoryUser, error) {
+	client := p.client(tokens)
+	target := adminBase + "/users"
+	target = withParam(target, "customer", customerKey)
+	target = withParam(target, "maxResults", "500")
+	target = withParam(target, "projection", "basic")
+	users := make([]providers.DirectoryUser, 0, 256)
+	pageToken := ""
+	for {
+		request := target
+		if pageToken != "" {
+			request = withParam(request, "pageToken", pageToken)
+		}
+		var page struct {
+			NextPageToken string `json:"nextPageToken"`
+			Users         []struct {
+				PrimaryEmail string `json:"primaryEmail"`
+				Name         struct {
+					FullName string `json:"fullName"`
+				} `json:"name"`
+				Suspended bool `json:"suspended"`
+			} `json:"users"`
+		}
+		if err := p.doJSON(ctx, client, http.MethodGet, request, nil, &page); err != nil {
+			return nil, err
+		}
+		for _, user := range page.Users {
+			email := textCell(user.PrimaryEmail)
+			if email == "" || user.Suspended {
+				continue
+			}
+			users = append(users, providers.DirectoryUser{Email: email, Name: textCell(user.Name.FullName)})
+		}
+		pageToken = page.NextPageToken
+		if pageToken == "" {
+			return users, nil
+		}
+	}
+}
+
+// ListDirectoryGroups implements providers.DirectoryReader: every group of the
+// domain, which is the archive destination select.
+func (p *Provider) ListDirectoryGroups(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens) ([]providers.DirectoryGroup, error) {
+	client := p.client(tokens)
+	target := adminBase + "/groups"
+	target = withParam(target, "customer", customerKey)
+	target = withParam(target, "maxResults", "200")
+	groups := make([]providers.DirectoryGroup, 0, 128)
+	pageToken := ""
+	for {
+		request := target
+		if pageToken != "" {
+			request = withParam(request, "pageToken", pageToken)
+		}
+		var page struct {
+			NextPageToken string `json:"nextPageToken"`
+			Groups        []struct {
+				Email string `json:"email"`
+				Name  string `json:"name"`
+			} `json:"groups"`
+		}
+		if err := p.doJSON(ctx, client, http.MethodGet, request, nil, &page); err != nil {
+			return nil, err
+		}
+		for _, group := range page.Groups {
+			email := textCell(group.Email)
+			if email == "" {
+				continue
+			}
+			groups = append(groups, providers.DirectoryGroup{Email: email, Name: textCell(group.Name)})
+		}
+		pageToken = page.NextPageToken
+		if pageToken == "" {
+			return groups, nil
+		}
 	}
 }
 

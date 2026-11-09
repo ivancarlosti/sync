@@ -42,7 +42,8 @@
     "requiredField": "Ce champ est obligatoire",
     "unexpectedError": "Une erreur est survenue. Voir le détail technique ci-dessous.",
     "noResults": "Aucun résultat",
-    "closeDialog": "Fermer la fenêtre"
+    "closeDialog": "Fermer la fenêtre",
+    "clear": "Clear"
   },
   "nav": {
     "dashboard": "Tableau de bord",
@@ -990,11 +991,64 @@
       "site_name": "Nom du site",
       "site_display_name": "Nom affiché du site",
       "target_folder_id": "Dossier cible",
-      "drive_id": "Drive"
+      "drive_id": "Drive",
+      "target_folder_name": "Target folder name"
     },
     "started": "Début",
     "bytes": "Octets",
     "status": "Statut",
-    "export": "Exporter CSV"
+    "export": "Exporter CSV",
+    "backToOperations": "Back to operations",
+    "operationFallback": "Operation",
+    "unknownOperation": "This operation is not available for the selected account.",
+    "accountHint": "The operation runs with this account's permissions.",
+    "form": "Operation details",
+    "selectDrive": "Select a drive",
+    "selectUser": "Select a user",
+    "selectMailbox": "Select a mailbox",
+    "selectFolder": "Select folder",
+    "groupPlaceholder": "Pick an existing group or type a new address",
+    "guest": "guest",
+    "delegates": "Mailbox delegates",
+    "currentDelegates": "Current delegates",
+    "noDelegates": "This mailbox has no delegate.",
+    "refresh": "Refresh",
+    "addDelegate": "Add a delegate",
+    "archiveTitle": "What the archive does",
+    "archiveHint": "The departing mailbox is renamed to the archive address, then the group takes the old address and the successor (member email) is added to it. Leave the group name empty to use the group address; leave the archive address empty to keep the mailbox address.",
+    "descriptions": {
+      "google_drive_to_new_shared_drive": "Creates a new Shared Drive and moves every top-level item of the source drive into it.",
+      "google_drive_to_shared_drive": "Moves every top-level item of the source drive into an existing Shared Drive, optionally into a folder or a new subfolder.",
+      "google_archive_user_group": "Archives a departing user: renames the mailbox, keeps the address on a group and adds the successor.",
+      "google_copy_mailbox": "Copies the messages of one mailbox into another; the source is not changed.",
+      "google_transfer_calendars": "Gives the target account ownership of the source account's calendars.",
+      "google_manage_delegate": "Lists, adds and removes Gmail delegates of one mailbox.",
+      "microsoft_copy_mailbox": "Copies the messages of one mailbox into another; the source is not changed.",
+      "microsoft_onedrive_to_site": "Copies the account's OneDrive into a SharePoint document library.",
+      "microsoft_transfer_calendars": "Gives the target account ownership of the source account's calendars.",
+      "microsoft_folder_sizes": "Walks a drive and reports the size of every folder."
+    },
+    "help": {
+      "name": "Name of the Shared Drive that will be created.",
+      "source_drive_id": "My Drive or a Shared Drive. Every top-level item of it is moved.",
+      "target_drive_id": "The Shared Drive that will receive the items.",
+      "target_folder_id": "Optional folder inside the target drive. The drive root is used when empty.",
+      "target_folder_name": "Optional: create this folder inside the selected target folder and move the items into it.",
+      "user_email": "The departing user whose address will be archived.",
+      "group_email": "Existing group that should keep the address, or a new address to create.",
+      "group_name": "Display name of a group created by this operation; defaults to the address.",
+      "member_email": "Successor added to the group. Optional.",
+      "archive_email": "New address for the departing mailbox before the group takes the old one. Optional; without it the mailbox keeps its address.",
+      "source": "Mailbox the messages are read from. Empty means the connected account.",
+      "target": "Mailbox the messages are copied into.",
+      "max": "Maximum number of messages to copy. Empty uses the provider default.",
+      "mailbox": "Mailbox whose delegates are managed.",
+      "delegate": "Account to add as a delegate.",
+      "action": "List, add or remove a delegate.",
+      "site_name": "URL name of a new SharePoint site. Leave empty to use an existing library.",
+      "site_display_name": "Display name of the new site.",
+      "drive_id": "Drive whose folder sizes are reported."
+    },
+    "sharedDriveOnly": "Select a folder in the target Shared Drive."
   }
 }

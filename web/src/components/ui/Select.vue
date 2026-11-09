@@ -31,19 +31,17 @@ const model = defineModel<string | number>({ default: '' });
 </script>
 
 <template>
-  <div class="relative">
+  <!-- The width/positioning class belongs to the wrapper: the chevron is
+       positioned against it, so putting `max-w-sm` on the native select alone
+       left the chevron at the far edge of the card instead of inside the box. -->
+  <div :class="cn('relative', $props.class)">
     <select
       :id="id"
       v-model="model"
       :name="name"
       :required="required"
       :disabled="disabled"
-      :class="
-        cn(
-          'h-9 w-full appearance-none rounded-md border border-input bg-background ps-3 pe-9 text-sm shadow-sm disabled:cursor-not-allowed disabled:opacity-60',
-          $props.class,
-        )
-      "
+      class="h-9 w-full appearance-none rounded-md border border-input bg-background ps-3 pe-9 text-sm shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
     >
       <option v-if="placeholder" value="" disabled>{{ placeholder }}</option>
       <option

@@ -15,6 +15,8 @@ const props = withDefaults(
     name?: string;
     placeholder?: string;
     autocomplete?: string;
+    /** list names a <datalist> of suggestions (a select the operator can type into). */
+    list?: string;
     required?: boolean;
     disabled?: boolean;
     readonly?: boolean;
@@ -50,6 +52,7 @@ const value = computed<string | number>({
     :name="name"
     :placeholder="placeholder"
     :autocomplete="autocomplete"
+    :list="list"
     :required="required"
     :disabled="disabled"
     :readonly="readonly"

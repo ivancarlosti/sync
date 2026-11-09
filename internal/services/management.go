@@ -65,8 +65,11 @@ var managementOperations = []managementOperation{
 		Provider:   models.ProviderGoogle,
 		Capability: providers.CapabilityFiles,
 		Danger:     true,
-		Params:     []ManagementParam{{Key: "target_drive_id", Required: true}, {Key: "source_drive_id"}, {Key: "confirm", Required: true}},
-		provide:    isSharedDriveManager,
+		Params: []ManagementParam{
+			{Key: "source_drive_id"}, {Key: "target_drive_id", Required: true},
+			{Key: "target_folder_id"}, {Key: "target_folder_name"}, {Key: "confirm", Required: true},
+		},
+		provide: isSharedDriveManager,
 	},
 	{
 		Kind:       models.ManagementKindArchiveUserGroup,
@@ -548,7 +551,7 @@ func (s *ManagementService) run(ctx context.Context, session ProviderSession, op
 			return providers.ManagementResult{}, err
 		}
 		progress(providers.ManagementStep{Name: "create shared drive", Status: providers.StepSuccess, Detail: drive.Name, Items: 1})
-		result, err := manager.MoveIntoSharedDrive(ctx, creds, tokens, params["source_drive_id"], drive.ID, progress)
+		result, err := manager.MoveIntoSharedDrive(ctx, creds, tokens, params["source_drive_id"], drive.ID, "", progress)
 		if result.Data == nil {
 			result.Data = map[string]string{}
 		}
@@ -560,7 +563,27 @@ func (s *ManagementService) run(ctx context.Context, session ProviderSession, op
 		if !ok {
 			return providers.ManagementResult{}, providers.ErrUnsupported
 		}
-		return manager.MoveIntoSharedDrive(ctx, creds, tokens, params["source_drive_id"], params["target_drive_id"], progress)
+		targetFolderID := strings.TrimSpace(params["target_folder_id"])
+		if name := strings.TrimSpace(params["target_folder_name"]); name != "" {
+			parent := targetFolderID
+			if parent == "" {
+				parent = providers.DriveRoot
+			}
+			folder, err := session.Provider.CreateFolder(ctx, creds, tokens, params["target_drive_id"], parent, name)
+			if err != nil {
+				return providers.ManagementResult{}, fmt.Errorf("creating the target folder %q failed: %w", name, err)
+			}
+			targetFolderID = folder.ID
+			progress(providers.ManagementStep{
+				Name: "create target folder", Status: providers.StepSuccess, Detail: folder.Name, Items: 1,
+			})
+		}
+		result, err := manager.MoveIntoSharedDrive(ctx, creds, tokens, params["source_drive_id"], params["target_drive_id"], targetFolderID, progress)
+		if result.Data == nil {
+			result.Data = map[string]string{}
+		}
+		result.Data["target_folder_id"] = targetFolderID
+		return result, err
 	case models.ManagementKindArchiveUserGroup:
 		archiver, ok := session.Provider.(providers.DirectoryArchiver)
 		if !ok {

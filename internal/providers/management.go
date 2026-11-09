@@ -48,9 +48,40 @@ type SharedDriveManager interface {
 	// CreateSharedDrive creates a shared drive named name and answers it.
 	CreateSharedDrive(ctx context.Context, creds Credentials, tokens *Tokens, name string) (Drive, error)
 	// MoveIntoSharedDrive moves every top level item of sourceDriveID into
-	// targetDriveID, reporting each item through progress. A folder is moved
+	// targetFolderID of targetDriveID (empty targetFolderID means the root of
+	// the shared drive), reporting each item through progress. A folder is moved
 	// with its whole subtree, so only the top level has to be enumerated.
-	MoveIntoSharedDrive(ctx context.Context, creds Credentials, tokens *Tokens, sourceDriveID, targetDriveID string, progress ProgressFunc) (ManagementResult, error)
+	MoveIntoSharedDrive(ctx context.Context, creds Credentials, tokens *Tokens, sourceDriveID, targetDriveID, targetFolderID string, progress ProgressFunc) (ManagementResult, error)
+}
+
+// DirectoryUser is one account an administrative operation can name: the address
+// and display name the form offers, plus whether it is a guest.
+type DirectoryUser struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+	Guest bool   `json:"guest"`
+}
+
+// DirectoryGroup is one group an administrative operation can target.
+type DirectoryGroup struct {
+	Email string `json:"email"`
+	Name  string `json:"name"`
+}
+
+// DirectoryReader is implemented by providers that can list the users and groups
+// of the directory behind the connection. It feeds the selects of the Admin
+// operations forms, so an operator picks an existing account or group instead of
+// typing an address that a typo can turn into a new object.
+type DirectoryReader interface {
+	ListDirectoryUsers(ctx context.Context, creds Credentials, tokens *Tokens) ([]DirectoryUser, error)
+	ListDirectoryGroups(ctx context.Context, creds Credentials, tokens *Tokens) ([]DirectoryGroup, error)
+}
+
+// MailboxDelegate is one delegate of a mailbox: the address and the provider's
+// verification status.
+type MailboxDelegate struct {
+	Email  string `json:"email"`
+	Status string `json:"status"`
 }
 
 // ArchiveUserInput is the request of the user → group archive: the departing
@@ -82,6 +113,9 @@ type DelegateInput struct {
 // delegates (Google Gmail settings).
 type MailboxDelegator interface {
 	ManageDelegates(ctx context.Context, creds Credentials, tokens *Tokens, input DelegateInput, progress ProgressFunc) (ManagementResult, error)
+	// ListDelegates answers the current delegates of one mailbox, which is what
+	// the Admin operations form shows before an add or a remove.
+	ListDelegates(ctx context.Context, creds Credentials, tokens *Tokens, mailbox string) ([]MailboxDelegate, error)
 }
 
 // CopyMailboxInput is the request of the mailbox copy: copy the messages of the

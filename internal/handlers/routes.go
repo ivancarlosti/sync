@@ -88,6 +88,8 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		// start request, the auditable journal and its CSV export.
 		management := secured.Group("/management")
 		management.GET("/operations", s.handleListManagementOperations)
+		management.GET("/options", s.handleManagementOptions)
+		management.GET("/delegates", s.handleManagementDelegates)
 		management.GET("/tasks", s.handleListManagementTasks)
 		management.POST("/tasks", s.handleStartManagementTask)
 		management.GET("/tasks/:id", s.handleGetManagementTask)
