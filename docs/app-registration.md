@@ -28,7 +28,6 @@ need.
 |---|---|---|
 | `files` — browsing and transferring files | `drive`, `userinfo.email`, `userinfo.profile`, `openid` | `Files.ReadWrite.All`, `Sites.ReadWrite.All`, `User.Read`, `offline_access`, `openid`, `profile`, `email` |
 | `users` — user accounts | `admin.directory.user`, `admin.directory.user.alias` | `User.Read.All`, `User.ReadWrite.All` |
-| `mailbox_settings` — shared mailboxes and resource accounts | — | `MailboxSettings.Read` |
 | `groups` — groups and distribution lists | `admin.directory.group` | `Group.ReadWrite.All`, `Directory.ReadWrite.All` |
 | `members` — group membership | `admin.directory.group.member` | `GroupMember.ReadWrite.All` |
 | `teams` — Teams teams and their members ([reports.md](reports.md)) | — | `Team.ReadBasic.All`, `TeamMember.Read.All` |
@@ -318,6 +317,25 @@ things to fix), the directory stream keeps working, and nothing else in the
 product is affected. A second tenant needs its own step 3.
 
 
+
+### 3.5 Mailbox purpose (app-only permission)
+
+The Microsoft directory report classifies every user as member, guest, shared
+mailbox, room or equipment. The classification reads
+`mailboxSettings.userPurpose`, and Graph only answers another user's settings with
+the **application** permission `MailboxSettings.Read` — the delegated
+`MailboxSettings.Read` reads only the signed-in administrator's own mailbox.
+
+1. Entra > **App registrations** > your application > **API permissions**.
+2. **Add a permission** > **Microsoft Graph** > **Application permissions** >
+   `MailboxSettings.Read` (display text *Read all user mailbox settings*).
+3. **Grant admin consent** for the directory.
+
+Do **not** add `MailboxSettings.Read.All` to the delegated list: that scope does
+not exist on the Graph resource and Entra refuses the whole authorization request
+with `AADSTS650053`. The app-only grant is per tenant; without it the Users table
+still renders but shared mailboxes and resources appear as `User`, and the
+`shared_mailboxes` section reports the Graph refusal.
 
 ## 4. The in-app guide
 

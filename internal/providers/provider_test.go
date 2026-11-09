@@ -223,7 +223,7 @@ func TestApplicablePermissionsSplitsByAccountKind(t *testing.T) {
 	undeclared := []Capability{
 		CapabilityGroups, CapabilityMembers, CapabilityTeams, CapabilityPlanner,
 		CapabilityDomains, CapabilityOrgUnits, CapabilityRoles, CapabilityLicenses,
-		CapabilityLogs, CapabilityMailboxSettings, CapabilityMail, CapabilityCalendars,
+		CapabilityLogs, CapabilityMail, CapabilityCalendars,
 		CapabilitySitesAdmin,
 	}
 	if fmt.Sprint(report.Missing) != fmt.Sprint(undeclared) {

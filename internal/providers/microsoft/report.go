@@ -996,6 +996,16 @@ func (d *reportData) loadMailboxSettings() {
 	if d.usersErr != nil || len(d.users) == 0 {
 		return
 	}
+	tenant := d.provider.OrgIDOf(d.tokens)
+	if tenant == "" {
+		tenant = d.creds.TenantID
+	}
+	appToken, err := d.provider.graphAppOnlyToken(d.ctx, tenant, d.creds)
+	if err != nil {
+		d.mailboxSettingsErr = fmt.Errorf("microsoft graph: mailbox settings are required to classify shared mailboxes and resource accounts: %w", err)
+		slog.Warn("the mailbox purpose could not be read", "error", err)
+		return
+	}
 	for index := range d.users {
 		if err := d.ctx.Err(); err != nil {
 			d.mailboxSettingsErr = err
@@ -1009,9 +1019,9 @@ func (d *reportData) loadMailboxSettings() {
 		var settings struct {
 			UserPurpose string `json:"userPurpose"`
 		}
-		if err := d.provider.getJSON(d.ctx, target, d.token, &settings); err != nil {
+		if err := d.provider.getJSON(d.ctx, target, appToken, &settings); err != nil {
 			if isStatus(err, http.StatusUnauthorized) || isStatus(err, http.StatusForbidden) {
-				d.mailboxSettingsErr = fmt.Errorf("microsoft graph: mailbox settings are required to classify shared mailboxes and resource accounts: %w", err)
+				d.mailboxSettingsErr = fmt.Errorf("microsoft graph: mailbox settings are required to classify shared mailboxes and resource accounts (grant the Graph application permission MailboxSettings.Read): %w", err)
 				slog.Warn("the mailbox purpose could not be read", "error", err)
 				return
 			}

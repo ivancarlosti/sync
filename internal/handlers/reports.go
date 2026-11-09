@@ -123,24 +123,6 @@ func (s *Server) handleReportSections(c *gin.Context) {
 			return
 		}
 		sections = source.ReportSections()
-		// The shared mailboxes section needs MailboxSettings.Read. A grant
-		// made before that scope existed cannot fill it, so the start form
-		// leaves it out until the account is reconnected (Accounts shows the
-		// missing capability) instead of offering a section every report would
-		// mark unusable.
-		if catalog, ok := source.(providers.ScopeCatalog); ok {
-			permissions := catalog.Permissions()
-			granted := providers.SplitScopes(account.Scopes)
-			if !providers.HasCapability(permissions, granted, providers.CapabilityMailboxSettings) {
-				filtered := sections[:0]
-				for _, section := range sections {
-					if section != providers.ReportSectionSharedMailboxes {
-						filtered = append(filtered, section)
-					}
-				}
-				sections = filtered
-			}
-		}
 	}
 	names := make([]string, 0, len(sections))
 	for _, section := range sections {

@@ -57,12 +57,13 @@ func reportBodies() map[string]string {
 			`"createdDateTime":"2024-01-02T03:04:05Z","assignedLicenses":[{"skuId":"SKU-1"}],` +
 			`"signInActivity":{"lastSuccessfulSignInDateTime":"2026-11-08T09:00:00Z"}},` +
 			`{"id":"u2","displayName":"Guest User","userPrincipalName":"guest@contoso.com","userType":"Guest",` +
-			`"accountEnabled":true,"assignedLicenses":[]}],` +
+			`"accountEnabled":true,"assignedLicenses":[],"signInActivity":{"lastSuccessfulSignInDateTime":"2026-11-07T09:00:00Z"}}],` +
 			`"@odata.nextLink":"https://graph.microsoft.com/v1.0/users?page=2"}`,
-		"/v1.0/users?page=2":             `{"value":[{"id":"u3","displayName":"Grace Hopper","userPrincipalName":"grace@contoso.com","userType":"Member","accountEnabled":false}]}`,
+		"/v1.0/users?page=2":             `{"value":[{"id":"u3","displayName":"Grace Hopper","userPrincipalName":"grace@contoso.com","userType":"Member","accountEnabled":false,"signInActivity":{"lastSuccessfulSignInDateTime":"2026-11-06T09:00:00Z"}}]}`,
 		"/v1.0/users/u1/mailboxSettings": `{"userPurpose":"user"}`,
 		"/v1.0/users/u2/mailboxSettings": `{"userPurpose":"user"}`,
 		"/v1.0/users/u3/mailboxSettings": `{"userPurpose":"shared"}`,
+		"/tenant/oauth2/v2.0/token":      `{"access_token":"app-token"}`,
 		"/v1.0/groups": `{"value":[` +
 			`{"id":"g1","displayName":"Engineering","mail":"eng@contoso.com","mailEnabled":true,` +
 			`"securityEnabled":false,"groupTypes":["Unified"],"visibility":"Private",` +
@@ -99,7 +100,8 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 	provider, transport := newReportProvider(reportBodies(), nil)
 
 	var progress []providers.ReportProgress
-	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+	tables, err := provider.CollectReport(context.Background(),
+		providers.Credentials{ClientID: "client-id", ClientSecret: "client-secret", TenantID: "tenant"},
 		&providers.Tokens{AccessToken: "report-token"}, providers.ReportSections,
 		func(event providers.ReportProgress) { progress = append(progress, event) })
 	if err != nil {
@@ -256,8 +258,8 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 	// re-reading, and the plans walk reuses the groups page. The plans walk only
 	// opens the one Microsoft 365 group of the fixture (g2 is a distribution list
 	// and g3 a security group, so neither can own a plan).
-	if len(transport.urls) != 20 {
-		t.Errorf("issued %d requests (%v), want 20 (the users pages, the three mailbox settings and the shared collections)", len(transport.urls), transport.urls)
+	if len(transport.urls) != 21 {
+		t.Errorf("issued %d requests (%v), want 21 (the users pages, the app token, the three mailbox settings and the shared collections)", len(transport.urls), transport.urls)
 	}
 }
 
@@ -445,9 +447,10 @@ func TestCollectReportRetriesWithoutTheLicenceProperty(t *testing.T) {
 	}
 	// Both optional properties are tried first; the tenant refuses every
 	// projection that carries one, so the plain listing is the fourth attempt.
-	// The users section then reads the mailbox purpose of the one user.
-	if len(transport.urls) != 5 {
-		t.Errorf("issued %v, want each optional projection refused, the plain listing and the mailbox purpose", transport.urls)
+	// The test passes no application credentials, so the mailbox purpose read is
+	// skipped and adds no request.
+	if len(transport.urls) != 4 {
+		t.Errorf("issued %v, want each optional projection refused and the plain listing", transport.urls)
 	}
 }
 

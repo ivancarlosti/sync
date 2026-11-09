@@ -421,10 +421,6 @@ const (
 	// CapabilityLogs covers reading the organisation-wide activity feed behind
 	// the Audit Logs screen (see ActivityLogSource).
 	CapabilityLogs Capability = "logs"
-	// CapabilityMailboxSettings covers reading a user's mailbox settings
-	// (`mailboxSettings.userPurpose`), which classifies shared mailboxes and
-	// resource accounts in a directory report.
-	CapabilityMailboxSettings Capability = "mailbox_settings"
 	// CapabilityMail covers reading and copying mailbox content (the mailbox
 	// copy of the Admin operations screen).
 	CapabilityMail Capability = "mail"
@@ -457,7 +453,6 @@ var ProviderCapabilities = []Capability{
 	CapabilityRoles,
 	CapabilityLicenses,
 	CapabilityLogs,
-	CapabilityMailboxSettings,
 	CapabilityMail,
 	CapabilityCalendars,
 	CapabilitySitesAdmin,
@@ -472,14 +467,13 @@ var ProviderCapabilities = []Capability{
 // above all not as a missing permission a reconnection could add. A capability
 // absent from this map is part of every provider's vocabulary.
 var capabilityExclusive = map[Capability]models.ProviderName{
-	CapabilityTeams:           models.ProviderMicrosoft,
-	CapabilityPlanner:         models.ProviderMicrosoft,
-	CapabilityMailboxSettings: models.ProviderMicrosoft,
-	CapabilityMail:            models.ProviderMicrosoft,
-	CapabilityCalendars:       models.ProviderMicrosoft,
-	CapabilitySitesAdmin:      models.ProviderMicrosoft,
-	CapabilityAnalytics:       models.ProviderGoogle,
-	CapabilityYouTube:         models.ProviderGoogle,
+	CapabilityTeams:      models.ProviderMicrosoft,
+	CapabilityPlanner:    models.ProviderMicrosoft,
+	CapabilityMail:       models.ProviderMicrosoft,
+	CapabilityCalendars:  models.ProviderMicrosoft,
+	CapabilitySitesAdmin: models.ProviderMicrosoft,
+	CapabilityAnalytics:  models.ProviderGoogle,
+	CapabilityYouTube:    models.ProviderGoogle,
 }
 
 // CapabilitiesFor answers the capabilities in the vocabulary of one provider, in
