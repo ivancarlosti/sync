@@ -137,7 +137,6 @@ where the CSVs and `summary.txt` land. A section the tenant refused is written a
 users the API answered with none (`License count = 0`) and the users whose lookup
 never answered (both cells empty, the section `truncated`).
 
-
 ## 4. Tests
 
 ```bash
