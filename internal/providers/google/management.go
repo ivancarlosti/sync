@@ -293,18 +293,17 @@ func (p *Provider) ArchiveUserToGroup(ctx context.Context, _ providers.Credentia
 
 // ManageDelegates implements providers.MailboxDelegator: list, add or remove a
 // Gmail delegate of one mailbox (the connected account by default).
-func (p *Provider) ManageDelegates(ctx context.Context, creds providers.Credentials, tokens *providers.Tokens, input providers.DelegateInput, progress providers.ProgressFunc) (providers.ManagementResult, error) {
-	mailbox := strings.TrimSpace(input.Mailbox)
-	if mailbox == "" {
-		mailbox = "me"
+func (p *Provider) ManageDelegates(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, input providers.DelegateInput, progress providers.ProgressFunc) (providers.ManagementResult, error) {
+	client, mailbox, err := p.delegateClient(ctx, tokens, input.Mailbox)
+	if err != nil {
+		return providers.ManagementResult{}, err
 	}
-	client := p.client(tokens)
 	base := gmailAPIBase + "/users/" + pathSegment(mailbox) + "/settings/delegates"
 	result := providers.ManagementResult{Data: map[string]string{"mailbox": mailbox}}
 
 	switch strings.ToLower(strings.TrimSpace(input.Action)) {
 	case "list", "":
-		delegates, err := p.ListDelegates(ctx, creds, tokens, mailbox)
+		delegates, err := p.listDelegatesWithClient(ctx, client, mailbox)
 		if err != nil {
 			return result, err
 		}
@@ -351,12 +350,21 @@ func (p *Provider) ManageDelegates(ctx context.Context, creds providers.Credenti
 }
 
 // ListDelegates answers the delegates of one mailbox, which the Admin operations
-// form shows before an add or a remove.
+// form shows before an add or a remove. Gmail restricts this endpoint to a
+// service account with domain-wide delegation, so the call uses a token minted
+// for the mailbox (see serviceaccount.go) rather than the administrator's OAuth
+// token.
 func (p *Provider) ListDelegates(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, mailbox string) ([]providers.MailboxDelegate, error) {
-	mailbox = strings.TrimSpace(mailbox)
-	if mailbox == "" {
-		mailbox = "me"
+	client, address, err := p.delegateClient(ctx, tokens, mailbox)
+	if err != nil {
+		return nil, err
 	}
+	return p.listDelegatesWithClient(ctx, client, address)
+}
+
+// listDelegatesWithClient is the Gmail call shared by ListDelegates and the
+// "list" action of ManageDelegates, once the impersonated client is built.
+func (p *Provider) listDelegatesWithClient(ctx context.Context, client *http.Client, mailbox string) ([]providers.MailboxDelegate, error) {
 	base := gmailAPIBase + "/users/" + pathSegment(mailbox) + "/settings/delegates"
 	var list struct {
 		Delegates []struct {
@@ -364,7 +372,7 @@ func (p *Provider) ListDelegates(ctx context.Context, _ providers.Credentials, t
 			VerificationStatus string `json:"verificationStatus"`
 		} `json:"delegates"`
 	}
-	if err := p.doJSON(ctx, p.client(tokens), http.MethodGet, base, nil, &list); err != nil {
+	if err := p.doJSON(ctx, client, http.MethodGet, base, nil, &list); err != nil {
 		return nil, err
 	}
 	delegates := make([]providers.MailboxDelegate, 0, len(list.Delegates))

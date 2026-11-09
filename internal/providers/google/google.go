@@ -18,6 +18,17 @@ import (
 // Provider talks to Google Drive with a stored OAuth token set.
 type Provider struct {
 	httpClient *http.Client
+	// serviceAccountFile is the JSON key of a service account with domain-wide
+	// delegation, used only by the per-mailbox calls Google restricts to a
+	// delegated service account (Gmail mailbox delegates). See serviceaccount.go.
+	serviceAccountFile string
+}
+
+// SetServiceAccountFile points the provider at the JSON key of a service account
+// with domain-wide delegation. An empty path leaves the feature off, which is the
+// shape of an installation that does not use Gmail delegates.
+func (p *Provider) SetServiceAccountFile(path string) {
+	p.serviceAccountFile = strings.TrimSpace(path)
 }
 
 // New builds the provider. The transport is shared by every call, which is what
