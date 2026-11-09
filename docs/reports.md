@@ -47,7 +47,7 @@ the list for the account, which is what the start form offers.
 | `org_units` | `GET /customer/my_customer/orgunits?type=all` | 1 |
 | `roles` | `GET /customer/my_customer/roles` (paged, 100 — the endpoint refuses more) | `ceil(roles / 100)` |
 | `role_assignments` | `GET /customer/my_customer/roleassignments` (paged, 200) | `ceil(assignments / 200)` |
-| `licenses` | `GET licensing/v1/product/{id}/users` per product of the catalogue, scoped to the primary domain (then the customer id, then `my_customer`); when every value is refused, `POST licensing/v1/batch` of `product/{product}/sku/{sku}/user/{email}` per user of the directory (one batch of the whole SKU catalogue per user) | 11 (+1), or `+1` per user when the catalogue is refused |
+| `licenses` | `GET licensing/v1/product/{id}/users` per unique product of the SKU catalogue (20 today, Cloud Identity Free and Premium included), scoped to the primary domain (then the customer id, then `my_customer`); when every value is refused, `POST licensing/v1/batch` of `product/{product}/sku/{sku}/user/{email}` per user of the directory (one batch of the whole SKU catalogue per user) | 20 (+1), or `+1` per user when the catalogue is refused |
 | `shared_drives` | `GET drive/v3/drives` (the listing the folder picker uses) | `ceil(drives / 100)` |
 | `shared_drive_members` | `GET /files/{id}/permissions` per shared drive (`useDomainAdminAccess`, paged, 100) | one walk per shared drive |
 | `analytics` | `GET analyticsadmin/v1beta/accounts` (paged, 200), then `GET analyticsadmin/v1beta/properties?filter=parent:{account}` per account (paged, 200) | `1 + accounts` walks |
@@ -152,6 +152,11 @@ A report that asks for `users` also walks the licence catalogue (one call per
 product, eleven of them), because `users.list` carries no licence: that is the
 one place where a section pays for a column it does not own. A grant without
 `apps.licensing` leaves the column empty instead of failing the table.
+
+The product list is derived from the SKU catalogue of `licenseskus.go` rather
+than written out beside it: a licence the per-user fallback can see — Cloud
+Identity Free (`101001`) and Premium (`101005`) included — is also asked for by
+the domain-wide listing. The two walks cannot drift apart again.
 
 The catalogue is scoped with `customerId`, tried in order of likelihood: the
 **primary domain** (`agencia.pub`), the Admin-console id (`C045l8wpy`) and the

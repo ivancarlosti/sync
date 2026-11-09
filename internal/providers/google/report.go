@@ -115,23 +115,38 @@ const (
 // reportLicenseProducts is the catalogue of Enterprise License Manager product
 // ids the licences section walks.
 //
-// The API only lists the assignments of a product it is asked about, so the
-// catalogue has to be carried here (it is the list GAM carries for the same
-// reason). An id Google retired answers 400 and is skipped, and a product with
-// no assignment answers an empty page: a stale entry therefore costs one cheap
-// call, never the section.
-var reportLicenseProducts = []string{
-	"Google-Apps",
-	"Google-Apps-Unlimited",
-	"Google-Apps-For-Business",
-	"Google-Apps-For-Postini",
-	"Google-Apps-Lite",
-	"Google-Apps-For-Nonprofits",
-	"Google-Drive-storage",
-	"Google-Vault",
-	"Google-Vault-Former-Employee",
-	"Google-Coordinate",
-	"Google-CustomerIQ",
+// It is derived from reportLicenseSkus instead of being written out a second
+// time: the domain-wide listing and the per-user fallback must cover the same
+// products. A SKU added to the fallback catalogue without its product here would
+// be visible on a domain whose catalogue is refused and invisible on one whose
+// catalogue answers — Cloud Identity Free (101001) was exactly that gap: the
+// per-user read returned it, the catalogue walk never asked for it.
+//
+// The API only lists the assignments of a product it is asked about. An id
+// Google retired answers 400 and is skipped, and a product with no assignment
+// answers an empty page: a stale entry costs one cheap call, never the section.
+var reportLicenseProducts = licenseProducts()
+
+// licenseProducts answers the unique product ids of the SKU catalogue, in the
+// catalogue's order, plus the legacy products that have no SKU in it.
+func licenseProducts() []string {
+	seen := make(map[string]bool, len(reportLicenseSkus)+1)
+	products := make([]string, 0, len(reportLicenseSkus)+1)
+	add := func(product string) {
+		if product == "" || seen[product] {
+			return
+		}
+		seen[product] = true
+		products = append(products, product)
+	}
+	for _, sku := range reportLicenseSkus {
+		add(sku.Product)
+	}
+	// Google Coordinate has no SKU in the probe catalogue, but a legacy domain
+	// can still hold its assignments; the listing answers an empty page when it
+	// does not.
+	add("Google-Coordinate")
+	return products
 }
 
 var (

@@ -916,6 +916,70 @@ func TestLicensesFallBackToTheCustomerAlias(t *testing.T) {
 	}
 }
 
+// TestLicenseProductsCoverTheSkuCatalogue pins the two licence walks to the same
+// product set. The per-user fallback reads every SKU of reportLicenseSkus, so a
+// product the catalogue walk forgets is visible only on a domain whose catalogue
+// is refused. Cloud Identity Free (101001) was exactly that: the fallback showed
+// it, the domain catalogue did not, because the product list was written out by
+// hand without it.
+func TestLicenseProductsCoverTheSkuCatalogue(t *testing.T) {
+	products := make(map[string]bool, len(reportLicenseProducts))
+	for _, product := range reportLicenseProducts {
+		products[product] = true
+	}
+	for _, sku := range reportLicenseSkus {
+		if !products[sku.Product] {
+			t.Errorf("product %q of SKU %s is missing from reportLicenseProducts", sku.Product, sku.Sku)
+		}
+	}
+	for _, product := range []string{"101001", "101005"} {
+		if !products[product] {
+			t.Errorf("Cloud Identity product %q is missing from reportLicenseProducts", product)
+		}
+	}
+}
+
+// TestLicensesListCloudIdentityFree pins the licence the hand-written product
+// list dropped: Cloud Identity Free is a licence, it is listed by the
+// domain-wide catalogue as product 101001, and it must appear in both the
+// licenses section and the users licence column next to the paid edition.
+func TestLicensesListCloudIdentityFree(t *testing.T) {
+	bodies := reportBodies()
+	bodies[licensePath("101001")] = []string{`{"items":[` +
+		`{"productId":"101001","skuId":"1010010001","skuName":"Cloud Identity Free",` +
+		`"userId":"Ada@Contoso.com"}` +
+		`]}`}
+	provider, transport := newReportProvider(bodies, nil)
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionUsers, providers.ReportSectionLicenses}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	bySection := reportSections(t, tables)
+	users := bySection[providers.ReportSectionUsers]
+	if got := reportCell(users, users.Rows[0], "licenses"); got != "Google Workspace Business Standard; Cloud Identity Free" {
+		t.Errorf("licenses cell = %q, want both the paid edition and Cloud Identity Free", got)
+	}
+	if got := reportCell(users, users.Rows[0], "license_count"); got != "2" {
+		t.Errorf("license_count = %q, want 2", got)
+	}
+	licenses := bySection[providers.ReportSectionLicenses]
+	found := false
+	for _, row := range licenses.Rows {
+		if reportCell(licenses, row, "sku_name") == "Cloud Identity Free" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("licenses section = %+v, want the Cloud Identity Free assignment", licenses.Rows)
+	}
+	if count := requestsTo(transport.urls, licensePath("101001")); count != 1 {
+		t.Errorf("Cloud Identity catalogue calls = %d, want 1", count)
+	}
+}
+
 // TestLicensesUseTheDomainWhenTheCustomerIDIsRefused reproduces the resold
 // tenant the per-user fallback was written for: the catalogue answers its
 // **primary domain** and refuses its Admin-console id with
