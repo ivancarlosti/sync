@@ -1092,6 +1092,35 @@ func (s *Store) ListAuditLogEvents(ctx context.Context, filter AuditLogFilter) (
 	return rows, total, nil
 }
 
+// LastAuditLogin is the newest stored login event of one actor. The value comes
+// from Sync's own event history, not from a fresh vendor call, so it is not
+// limited to the vendor's current retention window: an event Sync collected
+// months ago stays answerable until the retention pass erases it.
+type LastAuditLogin struct {
+	Email     string    `json:"email"`
+	LastLogin time.Time `json:"last_login"`
+}
+
+// LastAuditLogins answers the newest `login` event per actor for one provider
+// and organisation. The collector stores the events it reads; this query is what
+// the n8n export uses to fill a Last Login column without walking every event.
+func (s *Store) LastAuditLogins(ctx context.Context, provider, orgID string) ([]LastAuditLogin, error) {
+	query := s.db.WithContext(ctx).Model(&models.AuditLogEvent{}).
+		Select("actor_email AS email, MAX(occurred_at) AS last_login").
+		Where("action = ? AND actor_email <> ''", string(models.AuditLogLogin))
+	if provider != "" {
+		query = query.Where("provider = ?", provider)
+	}
+	if orgID != "" {
+		query = query.Where("org_id = ?", orgID)
+	}
+	var rows []LastAuditLogin
+	if err := query.Group("actor_email").Order("actor_email ASC").Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("services: reading the last logins: %w", err)
+	}
+	return rows, nil
+}
+
 // AuditLogCursorFor returns the stored cursor of one feed, or a zero cursor when
 // the feed was never read (a fresh organisation starts from the provider's
 // default window).

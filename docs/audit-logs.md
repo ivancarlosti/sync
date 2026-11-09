@@ -305,7 +305,29 @@ instead, never declared there: it can neither be requested by an authorization
 URL nor proven by the `scope` of a token response, so declaring it would mark
 every existing account as missing a permission a reconnect cannot add.
 
-## 7. Troubleshooting
+## 7. Last login for a machine consumer
+
+`GET /api/audit-logs/last-login?provider=&org_id=&account_id=` answers the newest
+stored `login` event per actor, which is the small table an n8n workflow needs to
+fill a **Last Login** column. It is behind the normal API-token auth (`read`
+scope), so n8n uses a revocable `Authorization: Bearer sync_…` token instead of
+the account's OAuth refresh token.
+
+The **seven-day window is the vendor feed's window per pass, not Sync's API
+retention**. The Office 365 management activity API serves only the last seven
+days of content in one read; Sync stores every event it reads, and the local
+table keeps it for the configured retention period. A login collected in
+September is still answerable in November. What Sync cannot do is backfill an
+event older than the vendor's current window that it never collected: the limit
+is the first collection, not the API query.
+
+For Microsoft, `UserLoggedIn` comes from `Audit.AzureActiveDirectory`, one of the
+unified content types. It therefore needs the app-only `ActivityFeed.Read`
+permission consented in that tenant (the same one the Audit Logs screen needs).
+Without it the endpoint answers an empty `users` list. Google's login feed is
+already collected by its `login` stream.
+
+## 8. Troubleshooting
 
 The health of every feed is in `GET /api/audit-logs/cursors`: `healthy`,
 `needs_consent`, `last_error`, `last_run_at`, `last_event_at`. The three failures

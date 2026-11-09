@@ -52,9 +52,11 @@ const (
 
 // unifiedContentTypes are the subscriptions this collector reads. SharePoint is
 // where file activity lives; General carries the rest of the workloads (Teams,
-// Power BI, …), which is what makes the feed complete rather than just
-// file-shaped.
-var unifiedContentTypes = []string{"Audit.SharePoint", "Audit.General"}
+// Power BI, …); AzureActiveDirectory carries UserLoggedIn, which is the sign-in
+// history the last-login API aggregates. The activity API only serves the last
+// seven days per pass, but Sync stores every event it reads, so the Sync API can
+// answer a last login older than that window once the collector has seen it.
+var unifiedContentTypes = []string{"Audit.SharePoint", "Audit.General", "Audit.AzureActiveDirectory"}
 
 // unifiedAuditLogs reads the management activity feed for the tenant behind
 // tokens: it subscribes (idempotently) to each content type, lists the content
@@ -456,6 +458,8 @@ func classifyUnifiedOperation(record unifiedRecord) (models.AuditLogAction, mode
 	operation := strings.ToLower(strings.TrimSpace(record.Operation))
 	target := unifiedTarget(record, operation)
 	switch {
+	case strings.Contains(operation, "userloggedin"), strings.Contains(operation, "login"):
+		return models.AuditLogLogin, models.AuditLogTargetUser
 	case strings.Contains(operation, "deleted"), strings.Contains(operation, "recycled"),
 		strings.Contains(operation, "removed"):
 		return models.AuditLogDelete, target

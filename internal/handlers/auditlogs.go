@@ -234,6 +234,56 @@ func (s *Server) handleAuditLogCursors(c *gin.Context) {
 	})
 }
 
+// handleLastLogins answers GET /api/audit-logs/last-login?account_id=&provider=&org_id=:
+// the newest stored `login` event per actor, in one small answer n8n can join to
+// its own user rows. It reads Sync's event history, so an event older than the
+// vendor's current retention window is still answerable once the collector has
+// stored it.
+func (s *Server) handleLastLogins(c *gin.Context) {
+	accountID, ok := queryID(c, "account_id")
+	if !ok {
+		return
+	}
+	provider := strings.ToLower(strings.TrimSpace(c.Query("provider")))
+	orgID := strings.ToLower(strings.TrimSpace(c.Query("org_id")))
+	ctx := c.Request.Context()
+	if accountID > 0 {
+		account, err := s.deps.Store.GetAccount(ctx, accountID)
+		if err != nil {
+			fail(c, err)
+			return
+		}
+		provider = strings.ToLower(strings.TrimSpace(account.Provider))
+		orgID = strings.ToLower(strings.TrimSpace(account.OrgID))
+	}
+	if provider != string(models.ProviderGoogle) && provider != string(models.ProviderMicrosoft) {
+		abort(c, http.StatusBadRequest, "provider must be google or microsoft (or pass account_id)")
+		return
+	}
+	if orgID == "" {
+		abort(c, http.StatusBadRequest, "org_id is required when account_id is not given")
+		return
+	}
+	rows, err := s.deps.Store.LastAuditLogins(ctx, provider, orgID)
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	users := make([]gin.H, 0, len(rows))
+	for _, row := range rows {
+		users = append(users, gin.H{
+			"email":      row.Email,
+			"last_login": row.LastLogin.UTC().Format(time.RFC3339),
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"provider": provider,
+		"org_id":   orgID,
+		"as_of":    time.Now().UTC().Format(time.RFC3339),
+		"users":    users,
+	})
+}
+
 // handleExportAuditLogs answers GET /api/audit-logs/export: it streams the
 // filtered events as a CSV download, capped at the export limit so one request
 // cannot pull an unbounded history into memory.

@@ -305,6 +305,7 @@ the retention of the vendors.
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/audit-logs` | `{events:[auditLogView], total, limit, offset, cursors:[auditLogCursor], schedule:auditLogSchedule}` |
+| `GET` | `/api/audit-logs/last-login?account_id=&provider=&org_id=` | `{provider, org_id, as_of, users:[{email,last_login}]}` — the newest stored `login` event per actor, for a machine consumer such as n8n. `account_id` resolves provider/org; otherwise both `provider` and `org_id` are required |
 | `GET` | `/api/audit-logs/export` | `text/csv; charset=utf-8` download, same filters, capped at 5000 rows (`X-Total-Count` carries the filtered total) |
 | `GET` | `/api/audit-logs/cursors` | `{cursors:[auditLogCursor], schedule:auditLogSchedule}` — the position and health of every feed |
 

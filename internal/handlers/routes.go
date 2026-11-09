@@ -99,6 +99,7 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		// export and the status of every feed.
 		auditLogs := secured.Group("/audit-logs")
 		auditLogs.GET("", s.handleListAuditLogs)
+		auditLogs.GET("/last-login", s.handleLastLogins)
 		auditLogs.GET("/export", s.handleExportAuditLogs)
 		auditLogs.GET("/cursors", s.handleAuditLogCursors)
 
