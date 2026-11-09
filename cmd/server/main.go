@@ -163,11 +163,7 @@ func build(cfg *config.Config, settings *database.Settings) handlers.Deps {
 	// The box is the only holder of the encryption key: everything that touches
 	// a stored token or secret goes through it.
 	box := services.NewSecretBox(cfg.EncryptionKeyBytes())
-	googleProvider := google.New()
-	// Gmail mailbox delegates are restricted to a service account with
-	// domain-wide delegation; the key is optional (see docs/management.md).
-	googleProvider.SetServiceAccountFile(cfg.GoogleServiceAccountFile)
-	registry := providers.NewRegistry(googleProvider, microsoft.New())
+	registry := providers.NewRegistry(google.New(), microsoft.New())
 	credentials := services.NewProviderSettings(cfg, settings, box)
 	tokens := services.NewTokenManager(store, registry, credentials, box)
 	notifier := services.NewNotifier(store, notify.NewDispatcher(notifyTimeout, notify.Options{

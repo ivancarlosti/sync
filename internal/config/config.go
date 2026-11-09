@@ -118,11 +118,6 @@ type Config struct {
 
 	Google    ProviderCredentials
 	Microsoft ProviderCredentials
-	// GoogleServiceAccountFile is the JSON key of a service account with
-	// domain-wide delegation. It is only needed by the per-mailbox operations
-	// Google restricts to delegated service accounts (Gmail mailbox delegates);
-	// every other Google feature uses the OAuth connection.
-	GoogleServiceAccountFile string
 	// MicrosoftTenant is "common", "organizations", "consumers" or a tenant UUID.
 	MicrosoftTenant string
 
@@ -184,7 +179,6 @@ func Load() (*Config, error) {
 			ClientSecret: envString("GOOGLE_CLIENT_SECRET", ""),
 			RedirectURI:  envString("GOOGLE_REDIRECT_URI", ""),
 		},
-		GoogleServiceAccountFile: envString("GOOGLE_SERVICE_ACCOUNT_FILE", ""),
 		Microsoft: ProviderCredentials{
 			ClientID:     envString("MICROSOFT_CLIENT_ID", ""),
 			ClientSecret: envString("MICROSOFT_CLIENT_SECRET", ""),

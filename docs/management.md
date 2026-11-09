@@ -65,13 +65,10 @@ mailbox, shared drive or account that receives the content.
   every calendar of the source (events stay on the calendar); Microsoft recreates
   each event in the target mailbox and deletes the source copy.
 - **Manage delegates** — lists, adds or removes a Gmail delegate of a mailbox.
-  The page keeps the current delegates on screen and refreshes them after every
-  change. Gmail restricts `users.settings.delegates` to a **service account with
-  domain-wide delegation**; a normal OAuth token answers `403 Access restricted
-  to service accounts that have been delegated domain-wide authority`, even for
-  the administrator's own mailbox. Configure the delegation grant described
-  below, mount the key and set `GOOGLE_SERVICE_ACCOUNT_FILE`; the form then
-  impersonates the selected mailbox for the Gmail call.
+  The page keeps the current delegates on screen, refreshes them after every
+  change, and reads them from the same Gmail settings endpoint. The Google Cloud
+  project must have the **Gmail API** enabled and the account must hold
+  `gmail.settings.sharing`.
 - **Report folder sizes** — walks a Microsoft drive depth-first and reports the
   recursive size and file count of every folder. Bounded in depth and item count.
 
@@ -103,39 +100,6 @@ client id, impersonating the target user. Without it Google answers `401/403` an
 the task fails with that message. The copy code issues the correct Gmail calls and
 works today for the connected account's own mailbox; cross-user copy is a
 deployment decision documented here rather than a hidden behaviour.
-
-### Google Gmail delegates (domain-wide delegation)
-
-Gmail delegate management is the one operation that cannot use the OAuth
-connection: Google requires a **service account with domain-wide delegation**.
-The setup is one-time per Google Workspace domain:
-
-1. In the Google Cloud project that owns the OAuth client (the project shown in
-   the Gmail API error), create a **service account** and a JSON key.
-2. Enable **domain-wide delegation** on that service account and copy its
-   numeric **client ID**.
-3. In the Google Workspace Admin console go to **Security → Access and data
-   control → API controls → Manage Domain Wide Delegation** and add the client
-   ID with the scope:
-   ```text
-   https://www.googleapis.com/auth/gmail.settings.sharing
-   ```
-4. Put the JSON key on the server, mount it into the container and set:
-   ```text
-   GOOGLE_SERVICE_ACCOUNT_FILE=/app/google-service-account.json
-   ```
-   For the compose file that is a read-only volume:
-   ```yaml
-   volumes:
-     - ./google-service-account.json:/app/google-service-account.json:ro
-   ```
-5. Restart Sync. The delegate form now impersonates the selected mailbox for
-   the Gmail settings call; `gmail.settings.sharing` must also remain in the
-   connected account's OAuth grant for the capability to be offered.
-
-The key is a credential with powerful delegation. Keep it out of the repository
-and the image, mount it read-only, and restrict the DWD grant to the one scope
-above. The app never logs or returns the key.
 
 ### Microsoft consent
 
