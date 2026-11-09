@@ -28,6 +28,7 @@ need.
 |---|---|---|
 | `files` — browsing and transferring files | `drive`, `userinfo.email`, `userinfo.profile`, `openid` | `Files.ReadWrite.All`, `Sites.ReadWrite.All`, `User.Read`, `offline_access`, `openid`, `profile`, `email` |
 | `users` — user accounts | `admin.directory.user`, `admin.directory.user.alias` | `User.Read.All`, `User.ReadWrite.All` |
+| `mailbox_settings` — shared mailboxes and resource accounts | — | `MailboxSettings.Read.All` |
 | `groups` — groups and distribution lists | `admin.directory.group` | `Group.ReadWrite.All`, `Directory.ReadWrite.All` |
 | `members` — group membership | `admin.directory.group.member` | `GroupMember.ReadWrite.All` |
 | `teams` — Teams teams and their members ([reports.md](reports.md)) | — | `Team.ReadBasic.All`, `TeamMember.Read.All` |

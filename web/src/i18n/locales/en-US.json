@@ -512,7 +512,8 @@
       "delegation": "Mailbox delegation",
       "sitesadmin": "Site administration",
       "analytics": "Google Analytics",
-      "youtube": "YouTube"
+      "youtube": "YouTube",
+      "mailbox_settings": "Mailbox settings"
     },
     "guide": {
       "title": "Setup guide",
@@ -759,7 +760,8 @@
     "error_rate_limited": "The provider is throttling this account. Try again later.",
     "error_internal": "The server could not build the report. Check its logs.",
     "error_network": "The server is unreachable.",
-    "error_unknown": "The request failed."
+    "error_unknown": "The request failed.",
+    "section_shared_mailboxes": "Shared mailboxes"
   },
   "billing": {
     "title": "Billing",

@@ -23,8 +23,9 @@ the list for the account, which is what the start form offers.
 | Section | Source | Calls |
 |---|---|---|
 | `organization` | `GET /organization` | 1 |
-| `users` | `GET /users` (paged), with optional `signInActivity`; last login falls back to the unified audit log (`UserLoggedIn`, 7 days) when the tenant has no Entra ID P1/P2 | `ceil(users / 999)` |
-| `guests` | derived from the users pages (`userType == Guest` or `#EXT#` principal name); members are not repeated in `users` | 0 |
+| `users` | `GET /users` (paged), with optional `signInActivity`; `account_type` classifies member, guest, shared mailbox, room and equipment from `mailboxSettings.userPurpose`. Last login falls back to the unified audit log (`UserLoggedIn`, 7 days) when the tenant has no Entra ID P1/P2 | `ceil(users / 999)` + one `GET /users/{id}/mailboxSettings` per user |
+| `shared_mailboxes` | derived from the users page (`mailboxSettings.userPurpose == shared`) | 0 (the purpose read is shared with `users`) |
+| `guests` | legacy section, hidden from new reports: guests are classified by `account_type` in `users`; old reports keep their guests tab | 0 |
 | `groups` | `GET /groups` (paged) | `ceil(groups / 999)` |
 | `distribution_lists` | derived from the groups pages (mail-enabled, not security, no Teams) | 0 |
 | `sites` | `GET /sites?search=*` (paged) | `ceil(sites / 200)` |
@@ -60,14 +61,19 @@ both `users` and `guests`/`suspended_users`, the groups page feeds both `groups`
 and the walk of `group_members`, and the licence names of the users section come
 from the catalogue the `licenses` section already reads.
 
-`users` and `guests` are complementary halves of the same listing: a member
-account belongs to `users`, a guest account to `guests`, so the Users tab is the
-tenant's workforce without the external identities that already have their own
-tab. Both keep the `user_type` column so a row read on its own still says what it
-is. `groups` keeps every group (the `kind`/`direct_members` column classifies it),
-so a report that skips the derived section still lists them.
+`users` now keeps every account and classifies it in the `account_type` column:
+`User`, `Guest`, `Shared mailbox`, `Room` or `Equipment` (and `Mailbox` for a
+purpose Graph reports but the list above does not name). The classification comes
+from `userType` and `mailboxSettings.userPurpose`; the purpose is one
+`/users/{id}/mailboxSettings` call per user and needs `MailboxSettings.Read.All`.
+A grant without it still renders the users table, but shared mailboxes and
+resources show as `User` and the `shared_mailboxes` section reports the missing
+scope. The old `guests` section is hidden from new reports; guests are part of
+`users` now, and a report collected before the merge keeps its guests tab.
+`groups` keeps every group (the `kind`/`direct_members` column classifies it), so
+a report that skips the derived section still lists them.
 
-**Last login.** The `users` and `guests` tables carry a `last_login` column.
+**Last login.** The `users`, `shared_mailboxes` and legacy `guests` tables carry a `last_login` column.
 Graph's `signInActivity.lastSuccessfulSignInDateTime` is the precise source, but it
 requires Microsoft Entra ID P1/P2: Microsoft 365 Business Standard (Entra ID Free)
 refuses the property, and the report drops it without losing the users table. On
@@ -261,8 +267,9 @@ licence columns in `summary.txt`.
 
 **Microsoft 365** is served by the scopes the account grants at connection time
 (`User.Read.All`, `Group.ReadWrite.All`, `Directory.ReadWrite.All`,
-`Domain.Read.All`, `Organization.Read.All`, `Sites.ReadWrite.All` — see
-[app-registration.md](app-registration.md)), with two product additions this
+`Domain.Read.All`, `Organization.Read.All`, `Sites.ReadWrite.All`,
+`MailboxSettings.Read.All` — see [app-registration.md](app-registration.md)),
+with two product additions this
 release introduced: `Team.ReadBasic.All` + `TeamMember.Read.All` for the `teams`
 and `team_members` sections, and `Tasks.Read` for `planner_plans`
 (`internal/providers/microsoft/permissions.go`). All three are directory scopes,

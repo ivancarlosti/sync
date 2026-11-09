@@ -55,6 +55,11 @@ func (p *Provider) Permissions() []providers.Permission {
 		{Capability: providers.CapabilityUsers, Title: "users", Scope: graphScope("User.Read.All"), AdminConsent: true, Kinds: workAccounts},
 		{Capability: providers.CapabilityUsers, Title: "users", Scope: graphScope("User.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
 
+		// mailboxSettings.userPurpose is what tells a shared mailbox from a room,
+		// an equipment mailbox and a person. Graph exposes it per user, not on the
+		// users collection, so the directory report reads it one user at a time.
+		{Capability: providers.CapabilityMailboxSettings, Title: "mailbox_settings", Scope: graphScope("MailboxSettings.Read.All"), AdminConsent: true, Kinds: workAccounts},
+
 		// Distribution lists are Microsoft 365 groups, so creating and renaming
 		// them is a group write; Directory.ReadWrite.All is what allows creating
 		// the object and reading the tenant-wide catalogue it lives in.

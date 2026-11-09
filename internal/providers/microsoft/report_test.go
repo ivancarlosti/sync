@@ -59,7 +59,10 @@ func reportBodies() map[string]string {
 			`{"id":"u2","displayName":"Guest User","userPrincipalName":"guest@contoso.com","userType":"Guest",` +
 			`"accountEnabled":true,"assignedLicenses":[]}],` +
 			`"@odata.nextLink":"https://graph.microsoft.com/v1.0/users?page=2"}`,
-		"/v1.0/users?page=2": `{"value":[{"id":"u3","displayName":"Grace Hopper","userType":"Member","accountEnabled":false}]}`,
+		"/v1.0/users?page=2":             `{"value":[{"id":"u3","displayName":"Grace Hopper","userPrincipalName":"grace@contoso.com","userType":"Member","accountEnabled":false}]}`,
+		"/v1.0/users/u1/mailboxSettings": `{"userPurpose":"user"}`,
+		"/v1.0/users/u2/mailboxSettings": `{"userPurpose":"user"}`,
+		"/v1.0/users/u3/mailboxSettings": `{"userPurpose":"shared"}`,
 		"/v1.0/groups": `{"value":[` +
 			`{"id":"g1","displayName":"Engineering","mail":"eng@contoso.com","mailEnabled":true,` +
 			`"securityEnabled":false,"groupTypes":["Unified"],"visibility":"Private",` +
@@ -105,8 +108,8 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 	bySection := sectionsOf(t, tables)
 
 	users := bySection[providers.ReportSectionUsers]
-	if len(users.Rows) != 2 {
-		t.Fatalf("users rows = %d, want 2 members (the guest belongs to the guests section)", len(users.Rows))
+	if len(users.Rows) != 3 {
+		t.Fatalf("users rows = %d, want every account classified", len(users.Rows))
 	}
 	if users.Truncated || users.Failed() {
 		t.Fatalf("users section = %+v, want a complete table", users)
@@ -131,13 +134,24 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 			t.Errorf("%s cell = %q, want %q", key, got, want)
 		}
 	}
-	if got := cell(users, users.Rows[1], "account_enabled"); got != "false" {
+	for index, want := range map[int]string{0: "User", 1: "Guest", 2: "Shared mailbox"} {
+		if got := cell(users, users.Rows[index], "account_type"); got != want {
+			t.Errorf("account_type of row %d = %q, want %q", index, got, want)
+		}
+	}
+	if got := cell(users, users.Rows[2], "account_enabled"); got != "false" {
 		t.Errorf("account_enabled cell = %q, want false", got)
 	}
-	for _, row := range users.Rows {
-		if cell(users, row, "user_type") == "Guest" {
-			t.Error("the users section still lists a guest; guests have their own section")
-		}
+
+	sharedMailboxes := bySection[providers.ReportSectionSharedMailboxes]
+	if len(sharedMailboxes.Rows) != 1 {
+		t.Fatalf("shared mailboxes rows = %d, want the one shared mailbox", len(sharedMailboxes.Rows))
+	}
+	if got := cell(sharedMailboxes, sharedMailboxes.Rows[0], "user_principal_name"); got != "grace@contoso.com" {
+		t.Errorf("shared mailbox principal = %q, want grace@contoso.com", got)
+	}
+	if got := cell(sharedMailboxes, sharedMailboxes.Rows[0], "account_type"); got != "Shared mailbox" {
+		t.Errorf("shared mailbox type = %q, want Shared mailbox", got)
 	}
 
 	guests := bySection[providers.ReportSectionGuests]
@@ -242,8 +256,8 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 	// re-reading, and the plans walk reuses the groups page. The plans walk only
 	// opens the one Microsoft 365 group of the fixture (g2 is a distribution list
 	// and g3 a security group, so neither can own a plan).
-	if len(transport.urls) != 17 {
-		t.Errorf("issued %d requests (%v), want 17", len(transport.urls), transport.urls)
+	if len(transport.urls) != 20 {
+		t.Errorf("issued %d requests (%v), want 20 (the users pages, the three mailbox settings and the shared collections)", len(transport.urls), transport.urls)
 	}
 }
 
@@ -431,8 +445,9 @@ func TestCollectReportRetriesWithoutTheLicenceProperty(t *testing.T) {
 	}
 	// Both optional properties are tried first; the tenant refuses every
 	// projection that carries one, so the plain listing is the fourth attempt.
-	if len(transport.urls) != 4 {
-		t.Errorf("issued %v, want each optional projection refused and the plain listing", transport.urls)
+	// The users section then reads the mailbox purpose of the one user.
+	if len(transport.urls) != 5 {
+		t.Errorf("issued %v, want each optional projection refused, the plain listing and the mailbox purpose", transport.urls)
 	}
 }
 

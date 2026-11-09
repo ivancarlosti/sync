@@ -512,7 +512,8 @@
       "delegation": "Délégation de boîte",
       "sitesadmin": "Administration de sites",
       "analytics": "Google Analytics",
-      "youtube": "YouTube"
+      "youtube": "YouTube",
+      "mailbox_settings": "Mailbox settings"
     },
     "guide": {
       "title": "Guide de configuration",
@@ -759,7 +760,8 @@
     "error_rate_limited": "Le fournisseur limite ce compte. Réessayez plus tard.",
     "error_internal": "Le serveur n'a pas pu produire le rapport. Consultez ses journaux.",
     "error_network": "Le serveur est injoignable.",
-    "error_unknown": "La requête a échoué."
+    "error_unknown": "La requête a échoué.",
+    "section_shared_mailboxes": "Shared mailboxes"
   },
   "billing": {
     "title": "Facturation",

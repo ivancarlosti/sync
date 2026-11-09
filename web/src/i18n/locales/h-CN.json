@@ -512,7 +512,8 @@
       "delegation": "邮箱委派",
       "sitesadmin": "网站管理",
       "analytics": "Google Analytics",
-      "youtube": "YouTube"
+      "youtube": "YouTube",
+      "mailbox_settings": "Mailbox settings"
     },
     "guide": {
       "title": "设置指南",
@@ -759,7 +760,8 @@
     "error_rate_limited": "提供方正在限制该账号，请稍后再试。",
     "error_internal": "服务器无法生成报表，请查看日志。",
     "error_network": "无法连接服务器。",
-    "error_unknown": "请求失败。"
+    "error_unknown": "请求失败。",
+    "section_shared_mailboxes": "Shared mailboxes"
   },
   "billing": {
     "title": "计费",

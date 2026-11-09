@@ -512,7 +512,8 @@
       "delegation": "मेलबॉक्स प्रतिनिधित्व",
       "sitesadmin": "साइट प्रशासन",
       "analytics": "Google Analytics",
-      "youtube": "YouTube"
+      "youtube": "YouTube",
+      "mailbox_settings": "Mailbox settings"
     },
     "guide": {
       "title": "सेटअप गाइड",
@@ -759,7 +760,8 @@
     "error_rate_limited": "प्रदाता इस खाते को सीमित कर रहा है। बाद में प्रयास करें।",
     "error_internal": "सर्वर रिपोर्ट नहीं बना सका। इसके लॉग देखें।",
     "error_network": "सर्वर उपलब्ध नहीं है।",
-    "error_unknown": "अनुरोध विफल रहा।"
+    "error_unknown": "अनुरोध विफल रहा।",
+    "section_shared_mailboxes": "Shared mailboxes"
   },
   "billing": {
     "title": "बिलिंग",

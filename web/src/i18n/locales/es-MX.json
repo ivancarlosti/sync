@@ -512,7 +512,8 @@
       "delegation": "Delegación de buzón",
       "sitesadmin": "Administración de sitios",
       "analytics": "Google Analytics",
-      "youtube": "YouTube"
+      "youtube": "YouTube",
+      "mailbox_settings": "Mailbox settings"
     },
     "guide": {
       "title": "Guía de configuración",
@@ -759,7 +760,8 @@
     "error_rate_limited": "El proveedor está limitando esta cuenta. Inténtalo más tarde.",
     "error_internal": "El servidor no pudo generar el informe. Revisa sus registros.",
     "error_network": "No se puede alcanzar el servidor.",
-    "error_unknown": "La solicitud falló."
+    "error_unknown": "La solicitud falló.",
+    "section_shared_mailboxes": "Shared mailboxes"
   },
   "billing": {
     "title": "Facturación",

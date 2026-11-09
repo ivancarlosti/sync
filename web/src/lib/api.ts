@@ -509,6 +509,7 @@ export interface AuditPayload {
 export type ReportSection =
   | 'organization'
   | 'users'
+  | 'shared_mailboxes'
   | 'guests'
   | 'groups'
   | 'distribution_lists'

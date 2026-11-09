@@ -512,7 +512,8 @@
       "delegation": "Delegação de caixa",
       "sitesadmin": "Administração de sites",
       "analytics": "Google Analytics",
-      "youtube": "YouTube"
+      "youtube": "YouTube",
+      "mailbox_settings": "Configurações da caixa de correio"
     },
     "guide": {
       "title": "Guia de configuração",
@@ -759,7 +760,8 @@
     "error_rate_limited": "O provedor está limitando esta conta. Tente novamente mais tarde.",
     "error_internal": "O servidor não conseguiu gerar o relatório. Verifique os logs.",
     "error_network": "O servidor está inacessível.",
-    "error_unknown": "A requisição falhou."
+    "error_unknown": "A requisição falhou.",
+    "section_shared_mailboxes": "Caixas compartilhadas"
   },
   "billing": {
     "title": "Faturamento",

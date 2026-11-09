@@ -67,6 +67,14 @@ func TestReportSectionsForSplitsTheVocabulary(t *testing.T) {
 	if containsSection(google, ReportSectionSites) || containsSection(google, ReportSectionGuests) {
 		t.Fatal("a Google account must not be offered a Microsoft-only section")
 	}
+	// Guests are classified inside users now; the old section is readable in a
+	// stored report but is not offered to a new one.
+	if containsSection(microsoft, ReportSectionGuests) {
+		t.Fatal("a Microsoft account must not be offered the legacy guests section")
+	}
+	if !containsSection(microsoft, ReportSectionSharedMailboxes) {
+		t.Fatal("a Microsoft account is not offered the shared mailboxes section")
+	}
 	// Teams and Planner are Microsoft 365 products; a Workspace domain has
 	// neither, so the start form never offers them there — and Shared Drive
 	// membership is the Workspace answer to "who reaches this drive".
@@ -88,6 +96,11 @@ func TestReportSectionsForSplitsTheVocabulary(t *testing.T) {
 		covered[section] = true
 	}
 	for _, section := range ReportSections {
+		// A hidden section is the legacy half of a merge (guests now live in
+		// users): it stays readable in an old report but is offered to nobody.
+		if _, hidden := reportSectionHidden[section]; hidden {
+			continue
+		}
 		if !covered[section] {
 			t.Fatalf("section %q is offered to no provider", section)
 		}

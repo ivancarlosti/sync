@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -82,6 +83,10 @@ type reportUser struct {
 	// (Entra ID Free) refuses the property, which is why the collector retries
 	// without it and falls back to the unified audit log (see lastlogin.go).
 	SignInActivity *reportSignInActivity `json:"signInActivity"`
+	// MailboxPurpose is `mailboxSettings.userPurpose`: user, shared, room or
+	// equipment. It is read per user (the property cannot be selected on the
+	// users collection) and is empty when the grant lacks MailboxSettings.Read.All.
+	MailboxPurpose string `json:"-"`
 }
 
 // reportSignInActivity is the `signInActivity` property of a user.
@@ -259,6 +264,12 @@ type reportData struct {
 	usersLoaded bool
 	usersCut    bool
 	usersErr    error
+	// mailboxSettings says the per-user mailbox purpose was read, and
+	// mailboxSettingsErr is the reason it could not be (the grant does not cover
+	// MailboxSettings.Read.All). The users table still renders; the shared
+	// mailboxes section reports the reason.
+	mailboxSettingsLoaded bool
+	mailboxSettingsErr    error
 
 	// lastLogins is the last successful UserLoggedIn event per address, read from
 	// the unified audit log when Graph would not answer signInActivity (a tenant
@@ -295,6 +306,8 @@ func (d *reportData) table(section providers.ReportSection) providers.ReportTabl
 		out = d.organizationTable()
 	case providers.ReportSectionUsers:
 		out = d.usersTable(false)
+	case providers.ReportSectionSharedMailboxes:
+		out = d.sharedMailboxesTable()
 	case providers.ReportSectionGuests:
 		out = d.usersTable(true)
 	case providers.ReportSectionGroups:
@@ -603,6 +616,7 @@ func userColumns() []providers.ReportColumn {
 		column("other_mails", "Other mails"),
 		column("proxy_addresses", "Proxy addresses"),
 		column("user_type", "User type"),
+		column("account_type", "Account type"),
 		column("account_enabled", "Account enabled"),
 		column("job_title", "Job title"),
 		column("department", "Department"),
@@ -851,12 +865,10 @@ func hasAssignedLicences(users []reportUser) bool {
 	return false
 }
 
-// usersTable builds the users section, or the guests section when guests is
-// true. The two are complementary halves of the same listing, which is why they
-// cost no extra call: a member account belongs to `users`, a guest to `guests`,
-// and the separate guests report is the only place a guest is listed. The user
-// type column stays on both tables so a row read on its own still says what it
-// is.
+// usersTable builds the users section, or the legacy guests section when guests
+// is true. `users` now keeps every account and classifies it in the account type
+// column; the guests section is hidden from new reports but still answers a
+// report collected before the two were merged.
 func (d *reportData) usersTable(guests bool) providers.ReportTable {
 	table := providers.ReportTable{Columns: userColumns()}
 	d.loadUsers()
@@ -864,50 +876,150 @@ func (d *reportData) usersTable(guests bool) providers.ReportTable {
 		table.Error = d.usersErr.Error()
 		return table
 	}
-	// The licence names come from the catalogue, so the call is only made when
-	// a user actually carries a licence: a tenant that refused the property
-	// must not pay for a mapping nobody reads.
-	names := map[string]string{}
-	if hasAssignedLicences(d.users) {
-		names = d.skuNames()
+	if !guests {
+		d.loadMailboxSettings()
 	}
+	names := d.licenceNames()
 	d.loadLastLogins()
 	for _, user := range d.users {
-		if isGuestUser(user) != guests {
+		if guests && !isGuestUser(user) {
 			continue
 		}
-		licenses := make([]string, 0, len(user.AssignedLicenses))
-		for _, license := range user.AssignedLicenses {
-			name := names[strings.ToLower(license.SkuID)]
-			if name == "" {
-				name = license.SkuID
-			}
-			if name != "" {
-				licenses = append(licenses, name)
-			}
-		}
-		table.Rows = append(table.Rows, providers.ReportRow{
-			textCell(user.DisplayName),
-			textCell(user.GivenName),
-			textCell(user.Surname),
-			textCell(user.UserPrincipalName),
-			textCell(user.Mail),
-			textCell(user.MailNickname),
-			strings.Join(user.OtherMails, "; "),
-			strings.Join(user.ProxyAddresses, "; "),
-			textCell(user.UserType),
-			flagCell(user.AccountEnabled),
-			textCell(user.JobTitle),
-			textCell(user.Department),
-			textCell(user.OfficeLocation),
-			textCell(user.CreatedDateTime),
-			textCell(d.lastLoginOf(user)),
-			strings.Join(licenses, "; "),
-			strconv.Itoa(len(licenses)),
-		})
+		table.Rows = append(table.Rows, d.userRow(user, names))
 	}
 	table.Truncated = d.usersCut
 	return table
+}
+
+// sharedMailboxesTable builds the shared mailboxes section: the users whose
+// mailbox purpose is `shared`. It is derived from the same users page, so the
+// only extra cost is the per-user purpose read the users section already pays.
+func (d *reportData) sharedMailboxesTable() providers.ReportTable {
+	table := providers.ReportTable{Columns: userColumns()}
+	d.loadUsers()
+	if d.usersErr != nil {
+		table.Error = d.usersErr.Error()
+		return table
+	}
+	d.loadMailboxSettings()
+	if d.mailboxSettingsErr != nil {
+		table.Error = d.mailboxSettingsErr.Error()
+		return table
+	}
+	names := d.licenceNames()
+	d.loadLastLogins()
+	for _, user := range d.users {
+		if user.MailboxPurpose != "shared" {
+			continue
+		}
+		table.Rows = append(table.Rows, d.userRow(user, names))
+	}
+	table.Truncated = d.usersCut
+	return table
+}
+
+// licenceNames reads the SKU names only when a user carries a licence, so a
+// tenant that refused the property does not pay for a mapping nobody reads.
+func (d *reportData) licenceNames() map[string]string {
+	if !hasAssignedLicences(d.users) {
+		return map[string]string{}
+	}
+	return d.skuNames()
+}
+
+// userRow renders one user in the columns of the users and shared mailboxes
+// sections.
+func (d *reportData) userRow(user reportUser, names map[string]string) providers.ReportRow {
+	licenses := make([]string, 0, len(user.AssignedLicenses))
+	for _, license := range user.AssignedLicenses {
+		name := names[strings.ToLower(license.SkuID)]
+		if name == "" {
+			name = license.SkuID
+		}
+		if name != "" {
+			licenses = append(licenses, name)
+		}
+	}
+	return providers.ReportRow{
+		textCell(user.DisplayName),
+		textCell(user.GivenName),
+		textCell(user.Surname),
+		textCell(user.UserPrincipalName),
+		textCell(user.Mail),
+		textCell(user.MailNickname),
+		strings.Join(user.OtherMails, "; "),
+		strings.Join(user.ProxyAddresses, "; "),
+		textCell(user.UserType),
+		textCell(accountType(user)),
+		flagCell(user.AccountEnabled),
+		textCell(user.JobTitle),
+		textCell(user.Department),
+		textCell(user.OfficeLocation),
+		textCell(user.CreatedDateTime),
+		textCell(d.lastLoginOf(user)),
+		strings.Join(licenses, "; "),
+		strconv.Itoa(len(licenses)),
+	}
+}
+
+// accountType classifies one account the way an operator reads the directory.
+// `userType` tells a guest; the mailbox purpose tells a shared mailbox, a room
+// or a piece of equipment. A tenant that cannot read the purpose keeps `User`
+// for an ordinary member rather than guessing from a licence or a name.
+func accountType(user reportUser) string {
+	switch {
+	case isGuestUser(user):
+		return "Guest"
+	case user.MailboxPurpose == "shared":
+		return "Shared mailbox"
+	case user.MailboxPurpose == "room":
+		return "Room"
+	case user.MailboxPurpose == "equipment":
+		return "Equipment"
+	case user.MailboxPurpose == "", user.MailboxPurpose == "user":
+		return "User"
+	default:
+		return "Mailbox"
+	}
+}
+
+// loadMailboxSettings reads mailboxSettings.userPurpose for every user. Graph
+// does not expose the property on the users collection, so this is one call per
+// user; a grant without MailboxSettings.Read.All answers 403 on the first one
+// and the rest are skipped, leaving the purpose empty and the reason in
+// mailboxSettingsErr for the shared mailboxes section.
+func (d *reportData) loadMailboxSettings() {
+	if d.mailboxSettingsLoaded {
+		return
+	}
+	d.mailboxSettingsLoaded = true
+	if d.usersErr != nil || len(d.users) == 0 {
+		return
+	}
+	for index := range d.users {
+		if err := d.ctx.Err(); err != nil {
+			d.mailboxSettingsErr = err
+			return
+		}
+		user := &d.users[index]
+		if strings.TrimSpace(user.ID) == "" {
+			continue
+		}
+		target := baseURL + "/users/" + url.PathEscape(user.ID) + "/mailboxSettings"
+		var settings struct {
+			UserPurpose string `json:"userPurpose"`
+		}
+		if err := d.provider.getJSON(d.ctx, target, d.token, &settings); err != nil {
+			if isStatus(err, http.StatusUnauthorized) || isStatus(err, http.StatusForbidden) {
+				d.mailboxSettingsErr = fmt.Errorf("microsoft graph: mailbox settings are required to classify shared mailboxes and resource accounts: %w", err)
+				slog.Warn("the mailbox purpose could not be read", "error", err)
+				return
+			}
+			// One unreadable user must not lose the rest of the directory.
+			continue
+		}
+		user.MailboxPurpose = strings.ToLower(strings.TrimSpace(settings.UserPurpose))
+	}
 }
 
 // groupKind classifies a group the way an operator reads it: a Microsoft 365

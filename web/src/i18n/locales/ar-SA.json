@@ -512,7 +512,8 @@
       "delegation": "تفويض صندوق البريد",
       "sitesadmin": "إدارة المواقع",
       "analytics": "Google Analytics",
-      "youtube": "YouTube"
+      "youtube": "YouTube",
+      "mailbox_settings": "Mailbox settings"
     },
     "guide": {
       "title": "دليل الإعداد",
@@ -759,7 +760,8 @@
     "error_rate_limited": "مزوّد الخدمة يحدّ من هذا الحساب. حاول لاحقًا.",
     "error_internal": "تعذّر على الخادم إنشاء التقرير. راجع سجلاته.",
     "error_network": "الخادم غير متاح.",
-    "error_unknown": "فشل الطلب."
+    "error_unknown": "فشل الطلب.",
+    "section_shared_mailboxes": "Shared mailboxes"
   },
   "billing": {
     "title": "الفوترة",

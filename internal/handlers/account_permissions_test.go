@@ -44,6 +44,7 @@ var directoryCapabilities = []providers.Capability{
 	providers.CapabilityRoles,
 	providers.CapabilityLicenses,
 	providers.CapabilityLogs,
+	providers.CapabilityMailboxSettings,
 	providers.CapabilityMail,
 	providers.CapabilityCalendars,
 	providers.CapabilitySitesAdmin,

@@ -22,8 +22,14 @@ const (
 	// ReportSectionOrganization is the tenant itself: id, name, country,
 	// creation date, default domain.
 	ReportSectionOrganization ReportSection = "organization"
-	// ReportSectionUsers is every user account of the directory.
+	// ReportSectionUsers is every user account of the directory, with the
+	// account type column telling members, guests, shared mailboxes and
+	// resource accounts apart.
 	ReportSectionUsers ReportSection = "users"
+	// ReportSectionSharedMailboxes is the subset of Microsoft 365 users whose
+	// mailbox purpose is `shared`. It is derived from the users page plus the
+	// mailbox settings read, not from a second directory listing.
+	ReportSectionSharedMailboxes ReportSection = "shared_mailboxes"
 	// ReportSectionGuests is the subset of users whose user type is Guest. It is
 	// derived from the users page instead of a second listing call.
 	ReportSectionGuests ReportSection = "guests"
@@ -98,6 +104,7 @@ const (
 var ReportSections = []ReportSection{
 	ReportSectionOrganization,
 	ReportSectionUsers,
+	ReportSectionSharedMailboxes,
 	ReportSectionGuests,
 	ReportSectionGroups,
 	ReportSectionDistributionLists,
@@ -126,6 +133,7 @@ var ReportSections = []ReportSection{
 // domain, and a Google account is never offered the SharePoint sites it does not
 // have.
 var reportSectionExclusive = map[ReportSection]models.ProviderName{
+	ReportSectionSharedMailboxes:   models.ProviderMicrosoft,
 	ReportSectionGuests:            models.ProviderMicrosoft,
 	ReportSectionDistributionLists: models.ProviderMicrosoft,
 	ReportSectionSites:             models.ProviderMicrosoft,
@@ -143,6 +151,14 @@ var reportSectionExclusive = map[ReportSection]models.ProviderName{
 	ReportSectionYouTube:            models.ProviderGoogle,
 }
 
+// reportSectionHidden keeps a section readable in a stored report without
+// offering it in the start form of a provider. Guests is the case: the Users
+// section now classifies every account, so a new report must not list the same
+// guests twice, while a report collected before the change keeps its guests tab.
+var reportSectionHidden = map[ReportSection]models.ProviderName{
+	ReportSectionGuests: models.ProviderMicrosoft,
+}
+
 // ReportSectionsFor answers the sections a provider can collect: the shared ones
 // plus the ones it owns, in the canonical order of ReportSections. A provider
 // with no collector of its own answers an empty list, which is what makes the
@@ -150,6 +166,9 @@ var reportSectionExclusive = map[ReportSection]models.ProviderName{
 func ReportSectionsFor(name models.ProviderName) []ReportSection {
 	sections := make([]ReportSection, 0, len(ReportSections))
 	for _, section := range ReportSections {
+		if owner, hidden := reportSectionHidden[section]; hidden && owner == name {
+			continue
+		}
 		if owner, exclusive := reportSectionExclusive[section]; exclusive && owner != name {
 			continue
 		}
