@@ -6,7 +6,7 @@
 // mode (with reCAPTCHA when configured), and the realm button in `keycloak` mode.
 // Failures arriving as query parameters (`auth_error`/`auth_detail` from the OIDC
 // callback) and failures of the form itself go through the same translation.
-import { LogIn, ShieldCheck } from '@lucide/vue';
+import { LogIn, LogOut, ShieldCheck } from '@lucide/vue';
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
@@ -105,6 +105,30 @@ async function signInWithRealm(): Promise<void> {
   }
 }
 
+/**
+ * switchAccount ends the realm session before the next attempt. While the realm
+ * still holds its single sign-on cookie, "Sign in" silently returns the same
+ * account — which the allow-list may have just refused, leaving no way forward.
+ * The local session is already gone here, so a realm that cannot answer still
+ * leaves the operator on a clean login page.
+ */
+async function switchAccount(): Promise<void> {
+  failure.value = null;
+  busy.value = true;
+  try {
+    const leaving = await auth.signOut();
+    if (!leaving) {
+      // Drop the auth_error of the query: it describes an attempt that the
+      // operator just abandoned.
+      await router.replace({ name: 'login' });
+    }
+  } catch (error) {
+    failure.value = { code: codeOf(error), detail: messageOf(error) };
+  } finally {
+    busy.value = false;
+  }
+}
+
 /** enter leaves the open instance for the dashboard. */
 async function enter(): Promise<void> {
   await router.replace(redirectTarget.value ?? { name: 'dashboard' });
@@ -146,6 +170,18 @@ async function enter(): Promise<void> {
             <Button class="w-full" :loading="busy" @click="signInWithRealm">
               <ShieldCheck class="h-4 w-4" aria-hidden="true" />
               {{ t('auth.keycloakSignIn') }}
+            </Button>
+            <!-- A refused account is still signed in at the realm: without this
+                 way out every attempt returns the same account. -->
+            <Button
+              v-if="problem"
+              variant="outline"
+              class="w-full"
+              :disabled="busy"
+              @click="switchAccount"
+            >
+              <LogOut class="h-4 w-4" aria-hidden="true" />
+              {{ t('auth.keycloakSwitchAccount') }}
             </Button>
           </div>
 

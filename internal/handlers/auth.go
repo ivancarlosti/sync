@@ -122,6 +122,31 @@ func (s *Server) handleKeycloakStart(c *gin.Context) {
 	c.JSON(http.StatusOK, authorization)
 }
 
+// keycloakLogoutView is the answer of GET /api/auth/keycloak/logout: where the
+// browser must navigate to end the realm session.
+type keycloakLogoutView struct {
+	URL string `json:"url"`
+}
+
+// handleKeycloakLogout answers GET /api/auth/keycloak/logout with the realm
+// end-session URL (RP-initiated logout). The endpoint is public on purpose: an
+// operator the allow-list refused has no Sync session, yet still needs the realm
+// logout to be offered another account. The SPA expires its own cookie first and
+// only then follows the URL, so a realm that cannot answer leaves nobody signed
+// in instead of trapping them.
+func (s *Server) handleKeycloakLogout(c *gin.Context) {
+	if !s.deps.Auth.KeycloakConfigured() {
+		fail(c, services.ErrNotConfigured)
+		return
+	}
+	address, err := s.deps.Auth.KeycloakLogout(c.Request.Context())
+	if err != nil {
+		fail(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, keycloakLogoutView{URL: address})
+}
+
 // handleKeycloakCallback answers GET /api/auth/callback, the redirect URI of the
 // realm. It exchanges the code, stores the session cookie and sends the browser
 // back to the SPA. Failures are reported as query parameters of the login page

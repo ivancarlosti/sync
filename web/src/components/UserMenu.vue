@@ -47,9 +47,13 @@ async function select(value: string): Promise<void> {
     return;
   }
   // signOut clears the cookie and the local session even when the request fails
-  // (the operator asked to leave), so the navigation below always runs.
-  await run(() => auth.signOut(), { failure: t('auth.logoutFailed') });
-  await router.push({ name: 'login' });
+  // (the operator asked to leave). It answers true when the browser was sent to
+  // the realm to end the single sign-on session too: navigating now would race
+  // that redirect and bring the operator back into the app.
+  const leaving = await run(() => auth.signOut(), { failure: t('auth.logoutFailed') });
+  if (!leaving) {
+    await router.push({ name: 'login' });
+  }
 }
 </script>
 

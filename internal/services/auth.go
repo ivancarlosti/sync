@@ -492,6 +492,38 @@ func (a *AuthService) KeycloakBegin(ctx context.Context, redirectTo string) (Aut
 	return Authorization{URL: address, State: state}, nil
 }
 
+// KeycloakLogout returns the realm URL that ends the single sign-on session and
+// hands the browser back to Sync — the RP-initiated logout of the realm.
+//
+// It names the client and the post-logout redirect instead of an id_token_hint:
+// Sync stores no token (the session cookie carries claims only) and an operator
+// the allow-list refused never had a session to hint with, so client_id is the
+// only handle available. Keycloak accepts that pair, answers with its own
+// confirmation screen and then redirects to APP_URL, which must be listed in the
+// client "Valid post logout redirect URIs" (docs/authentication.md).
+func (a *AuthService) KeycloakLogout(ctx context.Context) (string, error) {
+	if !a.KeycloakConfigured() {
+		return "", fmt.Errorf("%w: Keycloak is not configured", ErrNotConfigured)
+	}
+	target := strings.TrimRight(a.cfg.AppURL, "/")
+	if target == "" {
+		return "", fmt.Errorf("%w: APP_URL is required to build the Keycloak logout URL", ErrValidation)
+	}
+	// The discovery document is authoritative, but the well-known path is the
+	// fallback: a session that cannot be ended during a realm outage is worse
+	// than a path that is only a convention.
+	address := a.cfg.Keycloak.Issuer() + "/protocol/openid-connect/logout"
+	if endpoints, err := a.discovery(ctx); err == nil && endpoints.EndSessionEndpoint != "" {
+		address = endpoints.EndSessionEndpoint
+	} else if err != nil {
+		slog.Warn("keycloak logout falls back to the well-known path", "error", err)
+	}
+	query := url.Values{}
+	query.Set("client_id", a.cfg.Keycloak.ClientID)
+	query.Set("post_logout_redirect_uri", target)
+	return address + "?" + query.Encode(), nil
+}
+
 // keycloakClaims is the userinfo answer Sync reads after the code exchange.
 type keycloakClaims struct {
 	Subject           string `json:"sub"`

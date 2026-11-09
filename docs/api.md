@@ -62,6 +62,7 @@ and protected by the signed `state` parameter instead.
 | `POST` | `/api/auth/login` | `{login, password, captcha_token?, redirect_to?}` → session view + `Set-Cookie: sync_session=…` |
 | `POST` | `/api/auth/logout` | `204`, expires the cookie |
 | `GET` | `/api/auth/keycloak?redirect_to=` | `{url, state}` — where the SPA must navigate |
+| `GET` | `/api/auth/keycloak/logout` | `{url}` — the realm end-session URL (RP-initiated logout); `424 not_configured` outside `keycloak` mode |
 | `GET` | `/api/auth/callback?code=&state=` | `302 /` (success) or `302 /login?auth_error=…&auth_detail=…` |
 | `GET` | `/api/oauth/:provider/callback?code=&state=` | `302 /accounts?connected=<provider>&detail=…` — or `302 /accounts?connect_error=<code>&provider=<provider>&detail=…`; a tenant-wide consent comes back here too (`admin_consent=True` → `302 /admin/guide/<provider>?consent=granted`) |
 

@@ -81,6 +81,13 @@ connections, one hour lifetime, ten minutes idle timeout.
 | `KEYCLOAK_ACCOUNTS` | — | Allow-list, space or comma separated: `*` (everyone), `you@example.com`, `example.com` or `@example.com` (whole domain). An empty list denies every login. |
 | `NOTIFY_ALLOW_PRIVATE_TARGETS` | `false` | Lets a `webhook` notification channel point at an address that is not publicly routable. A channel is stored in the database and delivered by the worker inside this container, so with the default the destination has to be a public address: `http://127.0.0.1:3000/…`, `http://db:3306/…`, `http://169.254.169.254/…` and a name that resolves to a loopback, private (RFC 1918 / `fc00::/7`), link-local, carrier-grade NAT (`100.64.0.0/10`, Tailscale) or otherwise reserved address are all refused. Set `true` to deliver to your own network (Gotify, ntfy, Home Assistant, another container, a Tailscale address). See [notifications.md](notifications.md). |
 
+The Keycloak client needs a second URI besides the redirect one: **Valid post
+logout redirect URIs** must contain `APP_URL` (or `+`, which reuses the valid
+redirect URIs). It is what `GET /api/auth/keycloak/logout` sends as
+`post_logout_redirect_uri`; without it the realm answers `400 invalid redirect
+uri` and the operator stays signed in at the realm. See
+[authentication.md](authentication.md) §4, *Logout*.
+
 ## 6. OAuth providers
 
 | Variable | Default | Notes |

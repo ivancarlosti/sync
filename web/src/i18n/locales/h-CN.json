@@ -77,6 +77,7 @@
     "openModeHint": "身份验证已禁用，所有访问者都是管理员。",
     "enter": "打开仪表板",
     "keycloakSignIn": "使用 Keycloak 登录",
+    "keycloakSwitchAccount": "使用其他账户登录",
     "passwordRequired": "请输入用户名和密码。",
     "captchaLabel": "验证码验证",
     "captchaHint": "服务器要求验证码。请完成验证后重试。",

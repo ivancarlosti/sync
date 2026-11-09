@@ -85,17 +85,55 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * signOut clears the cookie through the API. The request is idempotent, so a
-   * failure (expired session, server restart) still ends with a clean local
-   * state: the operator asked to leave.
+   * realmLogout is the end-session URL of the realm, or '' when this instance is
+   * not in keycloak mode or the realm cannot answer. A logout must never depend
+   * on the identity provider being reachable: the local session always ends.
    */
-  async function signOut(): Promise<void> {
+  async function realmLogout(): Promise<string> {
+    if (!keycloak.value) {
+      return '';
+    }
+    try {
+      const { url } = await auth.keycloakLogout();
+      return url;
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * signOut clears the cookie through the API and, in keycloak mode, navigates to
+   * the realm end-session URL. Without that second step the realm keeps its
+   * single sign-on cookie, so the next login silently returns the same account —
+   * the dead end of an operator the allow-list refused.
+   *
+   * It resolves true when the browser is already on its way to the realm (the
+   * caller must not navigate: it would race the redirect) and false when the
+   * operator is left on the SPA. The request is idempotent, so a failure (expired
+   * session, server restart) still ends with a clean local state: the operator
+   * asked to leave.
+   */
+  async function signOut(): Promise<boolean> {
+    const realm = await realmLogout();
+    let failed: unknown = null;
     try {
       await auth.logout();
+    } catch (failure) {
+      failed = failure;
     } finally {
       session.value = null;
-      await load();
     }
+    if (realm) {
+      // The realm ends the SSO session and comes back to APP_URL, where the
+      // router guard sends the operator to /login.
+      window.location.assign(realm);
+      return true;
+    }
+    await load();
+    if (failed) {
+      throw failed;
+    }
+    return false;
   }
 
   /** invalidate is what the API client calls when a request answers 401. */

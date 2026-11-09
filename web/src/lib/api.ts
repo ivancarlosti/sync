@@ -636,6 +636,13 @@ export const auth = {
       url: '/auth/keycloak',
       params: { redirect_to: redirectTo },
     }),
+  /**
+   * keycloakLogout asks the server for the realm end-session URL. Following it is
+   * what ends the *single sign-on* session: without it the realm hands the same
+   * account back on the next attempt, which traps an operator the allow-list
+   * refused. The client id and APP_URL stay server side; the SPA only navigates.
+   */
+  keycloakLogout: () => request<{ url: string }>({ url: '/auth/keycloak/logout', method: 'GET' }),
 };
 
 // oauth lists the providers of this build with the state of their OAuth client

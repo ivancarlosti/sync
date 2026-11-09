@@ -77,6 +77,7 @@
     "openModeHint": "La autenticación está deshabilitada, por lo que todo visitante es administrador.",
     "enter": "Abrir el panel",
     "keycloakSignIn": "Iniciar sesión con Keycloak",
+    "keycloakSwitchAccount": "Iniciar sesión con otra cuenta",
     "passwordRequired": "Escriba el usuario y la contraseña.",
     "captchaLabel": "Verificación de captcha",
     "captchaHint": "El servidor pidió un captcha. Resuélvalo e intente de nuevo.",

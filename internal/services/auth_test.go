@@ -3,6 +3,10 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -317,5 +321,88 @@ func TestKeycloakGuardsAndDiscoveryFailure(t *testing.T) {
 	}
 	if _, err := auth.discovery(ctx); err == nil {
 		t.Fatal("discovery() must fail when the realm is unreachable")
+	}
+}
+
+// TestKeycloakLogoutURL checks the RP-initiated logout URL: it must come from the
+// realm discovery document, name the client and send the browser back to APP_URL.
+// Keycloak accepts that pair without an id_token_hint, which is exactly what Sync
+// has (no stored token, and a refused account has no session at all).
+func TestKeycloakLogoutURL(t *testing.T) {
+	ctx := context.Background()
+	realm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/realms/sync/.well-known/openid-configuration" {
+			http.NotFound(w, r)
+			return
+		}
+		base := "http://" + r.Host + "/realms/sync/protocol/openid-connect"
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{
+			"issuer": "http://%s/realms/sync",
+			"authorization_endpoint": %q,
+			"token_endpoint": %q,
+			"userinfo_endpoint": %q,
+			"end_session_endpoint": %q
+		}`, r.Host, base+"/auth", base+"/token", base+"/userinfo", base+"/logout")
+	}))
+	defer realm.Close()
+
+	cfg := testConfig(t)
+	cfg.AuthMethod = models.AuthModeKeycloak
+	cfg.Keycloak = config.Keycloak{
+		BaseURL:      realm.URL,
+		Realm:        "sync",
+		ClientID:     "sync-web",
+		ClientSecret: "secret",
+		RedirectURI:  "https://sync.example.com/api/auth/callback",
+		Accounts:     []string{"*"},
+	}
+	auth := NewAuthService(cfg, nil)
+
+	address, err := auth.KeycloakLogout(ctx)
+	if err != nil {
+		t.Fatalf("KeycloakLogout() error = %v", err)
+	}
+	parsed, err := url.Parse(address)
+	if err != nil {
+		t.Fatalf("KeycloakLogout() = %q, which does not parse: %v", address, err)
+	}
+	if got, want := parsed.Scheme+"://"+parsed.Host+parsed.Path, realm.URL+"/realms/sync/protocol/openid-connect/logout"; got != want {
+		t.Fatalf("logout endpoint = %q, want %q (the discovery document is authoritative)", got, want)
+	}
+	if got := parsed.Query().Get("client_id"); got != "sync-web" {
+		t.Errorf("client_id = %q, want %q", got, "sync-web")
+	}
+	if got := parsed.Query().Get("post_logout_redirect_uri"); got != "https://sync.example.com" {
+		t.Errorf("post_logout_redirect_uri = %q, want APP_URL", got)
+	}
+	if hint := parsed.Query().Get("id_token_hint"); hint != "" {
+		t.Errorf("id_token_hint = %q, want it omitted (Sync stores no token)", hint)
+	}
+
+	// An unreachable realm must not block the logout: the well-known path is
+	// handed out, because a session that cannot end is worse than a convention.
+	stranded := testConfig(t)
+	stranded.AuthMethod = models.AuthModeKeycloak
+	stranded.Keycloak = config.Keycloak{
+		BaseURL:      "http://127.0.0.1:1",
+		Realm:        "sync",
+		ClientID:     "sync-web",
+		ClientSecret: "secret",
+		RedirectURI:  "https://sync.example.com/api/auth/callback",
+		Accounts:     []string{"*"},
+	}
+	fallback, err := NewAuthService(stranded, nil).KeycloakLogout(ctx)
+	if err != nil {
+		t.Fatalf("KeycloakLogout() must survive a realm outage, got %v", err)
+	}
+	if want := "http://127.0.0.1:1/realms/sync/protocol/openid-connect/logout?client_id=sync-web&post_logout_redirect_uri=https%3A%2F%2Fsync.example.com"; fallback != want {
+		t.Fatalf("logout url = %q, want %q", fallback, want)
+	}
+
+	// Nothing configured (account mode): the endpoint must say so instead of
+	// inventing a URL.
+	if _, err := NewAuthService(testConfig(t), nil).KeycloakLogout(ctx); !errors.Is(err, ErrNotConfigured) {
+		t.Fatalf("KeycloakLogout() = %v, want ErrNotConfigured", err)
 	}
 }

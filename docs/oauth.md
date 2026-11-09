@@ -6,7 +6,7 @@ Sync runs two authorization-code flows with PKCE (RFC 7636, `S256`):
 |---|---|---|---|
 | `oauth` | connect a Google Drive / Microsoft Graph account | `POST /api/oauth/:provider/start`, `GET /api/oauth/:provider/callback` | this file |
 | `admin_consent` | grant the provider's permissions for a whole tenant (Microsoft) | `POST /api/oauth/:provider/admin-consent`, same callback | this file |
-| `keycloak` | log an operator in against a realm | `GET /api/auth/keycloak`, `GET /api/auth/callback` | [authentication.md](authentication.md) |
+| `keycloak` | log an operator in against a realm | `GET /api/auth/keycloak`, `GET /api/auth/callback`, `GET /api/auth/keycloak/logout` (RP-initiated logout) | [authentication.md](authentication.md) |
 
 Both use the same building blocks: a `state` value signed with
 `crypto.DeriveKey(ENCRYPTION_KEY, "state")`, a PKCE verifier that never leaves the

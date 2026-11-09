@@ -77,6 +77,7 @@
     "openModeHint": "المصادقة معطَّلة، لذا كل زائر مسؤول.",
     "enter": "فتح لوحة التحكم",
     "keycloakSignIn": "تسجيل الدخول عبر Keycloak",
+    "keycloakSwitchAccount": "تسجيل الدخول بحساب آخر",
     "passwordRequired": "أدخل اسم المستخدم وكلمة المرور.",
     "captchaLabel": "تحقق CAPTCHA",
     "captchaHint": "يطلب الخادم تحقق CAPTCHA. أكمله ثم أعد المحاولة.",

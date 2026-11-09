@@ -27,7 +27,9 @@ Sessions are **stateless**: nothing about a login is stored in the database.
   `captcha`, `keycloak`, `operator`, `defaults` and the build `version` — the SPA
   needs that before it can render anything.
 * `POST /api/auth/logout` expires the cookie, is idempotent and always answers
-  `204`, so the SPA can clear its state unconditionally.
+  `204`, so the SPA can clear its state unconditionally. In `keycloak` mode that
+  is only half of a sign out: the realm owns the single sign-on session, so the
+  SPA follows `GET /api/auth/keycloak/logout` right after (§4, *Logout*).
 
 The SPA stores nothing about the session itself: `api.ts` sends the cookie
 (`withCredentials`), the auth store caches the session view for the page load and
@@ -103,6 +105,49 @@ Failures on the callback are **not** error pages: the API redirects to
 | `unauthorized` | the login link was already used or expired | `auth.error_unauthorized` |
 | `internal` | unexpected server error (also logged with full detail) | `auth.error_internal` |
 
+### Logout (RP-initiated)
+
+Signing out has two halves, because two sessions exist:
+
+```text
+SPA ──POST /api/auth/logout───────────────► API   (204, expires sync_session)
+SPA ──GET /api/auth/keycloak/logout───────► API   (JSON: {url})
+SPA ──navigate to url─────────────────────► realm (ends the SSO session)
+realm ──302 APP_URL──────────────────────► SPA   (router guard → /login)
+```
+
+The URL is the realm's `end_session_endpoint` (read from the discovery document,
+falling back to `<issuer>/protocol/openid-connect/logout` when the realm is
+unreachable) plus:
+
+```text
+?client_id={{KEYCLOAK_CLIENT_ID}}
+&post_logout_redirect_uri={{APP_URL}}
+```
+
+Sync does not send an `id_token_hint`: the session cookie carries claims, never a
+token, and an account the allow-list refused has no Sync session at all. Keycloak
+accepts the `client_id`/`post_logout_redirect_uri` pair in that case (it answers
+`400` only when both `id_token_hint` **and** `client_id` are missing) and shows its
+own *"Do you want to log out?"* screen before redirecting. That extra click is the
+price of a token-free session; storing the ID token only to skip it would put a
+bearer credential in the browser for no functional gain.
+
+Two consequences worth knowing:
+
+* `APP_URL` must be registered in the client (**Valid post logout redirect URIs**),
+  or the realm rejects the redirect. §5 covers it.
+* The SPA asks for the URL **first** and only then navigates, so an unreachable
+  realm (or an instance that is not in `keycloak` mode) still ends the local
+  session — logging out never traps an operator inside the app.
+
+The login page offers *Sign in with another account* whenever the callback
+reported an `auth_error`: a refused account is still signed in at the realm, so
+without that realm logout every new attempt would silently return the same
+account. `GET /api/auth/keycloak/logout` is public for exactly that case (no
+session, but a realm session to end); it changes no server state and reveals only
+the client id and `APP_URL`, which the browser already shows.
+
 ### Allow-list matching (`KEYCLOAK_ACCOUNTS`)
 
 The e-mail returned by the realm's `userinfo` is lower-cased, trimmed and matched
@@ -126,11 +171,14 @@ Identity mapping: `sub` → `subject`, `email` → `email`,
 
 1. Create a confidential client in the realm, standard flow enabled.
 2. Valid redirect URI: `APP_URL/api/auth/callback` (or your `KEYCLOAK_REDIRECT_URI`).
-3. Copy the client id/secret into `KEYCLOAK_CLIENT_ID`/`KEYCLOAK_CLIENT_SECRET`.
-4. Set `KEYCLOAK_BASE_URL` + `KEYCLOAK_REALM`; the issuer becomes
+3. **Valid post logout redirect URIs**: `APP_URL` (or `+`, which reuses the valid
+   redirect URIs). Needed by the RP-initiated logout: without it the realm answers
+   `400 invalid redirect uri` instead of ending the session and returning to Sync.
+4. Copy the client id/secret into `KEYCLOAK_CLIENT_ID`/`KEYCLOAK_CLIENT_SECRET`.
+5. Set `KEYCLOAK_BASE_URL` + `KEYCLOAK_REALM`; the issuer becomes
    `<base>/realms/<realm>` and the discovery document is read from it.
-5. Fill `KEYCLOAK_ACCOUNTS` (use `*` deliberately, never by default).
-6. `AUTH_METHOD=keycloak`, restart, and check `GET /api/auth/session` reports
+6. Fill `KEYCLOAK_ACCOUNTS` (use `*` deliberately, never by default).
+7. `AUTH_METHOD=keycloak`, restart, and check `GET /api/auth/session` reports
    `keycloak.enabled: true`.
 
 ## 6. API tokens
@@ -196,5 +244,7 @@ curl -s -H 'Authorization: Bearer sync_1a2b3c4d.…' \
   retired (the row keeps its history).
 * No endpoint of the API is reachable without the session **or an API token**,
   except `health`, `version`, `auth/session`, `auth/login`, `auth/keycloak`,
-  `auth/callback` and the two provider callbacks (which are protected by the
-  signed `state`).
+  `auth/keycloak/logout`, `auth/callback` and the two provider callbacks (which
+  are protected by the signed `state`). The logout URL endpoint is public because
+  the operator it exists for has no session: the allow-list refused them, yet the
+  realm still holds their SSO cookie and only the realm can end it.

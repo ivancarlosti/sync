@@ -541,7 +541,41 @@ func TestKeycloakDisabledWithoutRealm(t *testing.T) {
 	requireErrorCode(t, recorder, codeNotConfigured)
 }
 
-// TestLoginFlowAndGuard walks the account mode end to end: the guard rejects an
+// TestKeycloakLogoutEndpoint checks the URL the SPA follows to end the realm
+// session. It answers 424 when no realm is configured (like the login start) and
+// it keeps working when the realm cannot be reached, because a logout that fails
+// would leave the single sign-on cookie behind — the exact dead end the endpoint
+// exists to remove.
+func TestKeycloakLogoutEndpoint(t *testing.T) {
+	server, _ := newTestServer(t, models.AuthModeKeycloak)
+
+	recorder := call(t, server, http.MethodGet, "/api/auth/keycloak/logout", nil)
+	requireStatus(t, recorder, http.StatusFailedDependency)
+	requireErrorCode(t, recorder, codeNotConfigured)
+
+	server, _ = newTestServerWith(t, models.AuthModeKeycloak, testOptions{
+		configure: func(cfg *config.Config) {
+			cfg.Keycloak = config.Keycloak{
+				BaseURL:      "http://127.0.0.1:1",
+				Realm:        "sync",
+				ClientID:     "sync-web",
+				ClientSecret: "correct-horse-battery",
+				RedirectURI:  cfg.AppURL + "/api/auth/callback",
+				Accounts:     []string{"*"},
+			}
+		},
+	})
+
+	recorder = call(t, server, http.MethodGet, "/api/auth/keycloak/logout", nil)
+	requireStatus(t, recorder, http.StatusOK)
+	view := decodeJSON[keycloakLogoutView](t, recorder)
+	want := "http://127.0.0.1:1/realms/sync/protocol/openid-connect/logout" +
+		"?client_id=sync-web&post_logout_redirect_uri=https%3A%2F%2Fsync.example.com"
+	if view.URL != want {
+		t.Fatalf("url = %q, want %q", view.URL, want)
+	}
+}
+
 // anonymous request, a wrong password counts as a failure, a good one issues the
 // HttpOnly session cookie, and logout expires it.
 func TestLoginFlowAndGuard(t *testing.T) {

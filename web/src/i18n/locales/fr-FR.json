@@ -77,6 +77,7 @@
     "openModeHint": "L'authentification est désactivée : tout visiteur est administrateur.",
     "enter": "Ouvrir le tableau de bord",
     "keycloakSignIn": "Se connecter avec Keycloak",
+    "keycloakSwitchAccount": "Se connecter avec un autre compte",
     "passwordRequired": "Saisissez l'utilisateur et le mot de passe.",
     "captchaLabel": "Vérification captcha",
     "captchaHint": "Le serveur demande un captcha. Validez-le et réessayez.",

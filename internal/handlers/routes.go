@@ -23,6 +23,9 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 	auth.POST("/login", s.handleLogin)
 	auth.POST("/logout", s.handleLogout)
 	auth.GET("/keycloak", s.handleKeycloakStart)
+	// The way out of the realm: without it the single sign-on session outlives
+	// the Sync cookie and the next login silently reuses the same account.
+	auth.GET("/keycloak/logout", s.handleKeycloakLogout)
 	auth.GET("/callback", s.handleKeycloakCallback)
 
 	// The start request is authenticated, the two callbacks are not.
