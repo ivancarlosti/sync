@@ -107,8 +107,8 @@ const (
 	// customerKey is the alias every call of a report is scoped to: the API
 	// resolves it to the customer of the authorised administrator, which is what
 	// makes a report follow the token instead of a stored id. The licence
-	// catalogue is the one exception — it prefers the id of the customer record,
-	// see licenseCustomer — and this alias is its fallback.
+	// catalogue is the one exception — it prefers the primary domain and the id of
+	// the customer record, see licenseCustomers — and this alias is its fallback.
 	customerKey = "my_customer"
 )
 
@@ -670,22 +670,49 @@ func (d *reportData) loadCustomer() {
 	d.customer = customer
 }
 
-// licenseCustomer answers the customer the licence catalogue is scoped to.
+// licenseCustomers answers the customer values the licence catalogue is tried
+// with, most likely first.
 //
-// The License Manager API documents `customerId` as "the customer's unique ID as
-// defined in the Admin console" (C00000000) and, unlike the Directory API, never
-// mentions the `my_customer` alias the rest of a report uses — a domain that
-// answers `403 Unauthorized operation for the given domain` is the shape of an
-// alias the endpoint could not resolve. The record of the domain is therefore read
-// first and its id used, and the alias stays the fallback of a grant that cannot
-// read the record (one made before admin.directory.customer.readonly was
-// requested), because half a catalogue is better than none.
-func (d *reportData) licenseCustomer() string {
+// The Enterprise License Manager API documents `customerId` as the customer's
+// **primary domain** (the guide's own examples pass `example.com`), and that is
+// the value a tenant with a reseller-managed subscription answers: its Admin
+// console id (`C045l8wpy`) is refused with `403 Unauthorized operation for the
+// given domain`, while the domain answers the whole catalogue.
+//
+// The Admin-console id is the second candidate because some domains accept it
+// and the reference described it that way for years; `my_customer` is the alias
+// the rest of a report uses and the last candidate, for a grant that cannot read
+// the customer record at all (one made before
+// admin.directory.customer.readonly was requested).
+//
+// Trying the next value costs one call. It is what keeps a tenant whose catalogue
+// answers the domain from being read one batch per user instead — 77 licensing
+// queries per user is enough to exhaust the "Queries per minute per user" quota
+// after a handful of users, which is the shape that left 19 of 23 users without a
+// licence.
+func (d *reportData) licenseCustomers() []string {
 	d.loadCustomer()
-	if id := strings.TrimSpace(d.customer.CustomerID); id != "" {
-		return id
+	candidates := make([]string, 0, 3)
+	for _, value := range []string{d.customer.CustomerDomain, d.customer.CustomerID, customerKey} {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		seen := false
+		for _, existing := range candidates {
+			if strings.EqualFold(existing, value) {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			candidates = append(candidates, value)
+		}
 	}
-	return customerKey
+	if len(candidates) == 0 {
+		return []string{customerKey}
+	}
+	return candidates
 }
 
 // accountEmail answers the address of the account the connection was made with.
@@ -790,25 +817,68 @@ func (d *reportData) loadDomains() {
 // retired) answers 400 and is skipped, because a stale catalogue entry must never
 // cost a section; only when *no* product answers does the section fail.
 //
-// A 403 is a different animal: the Enterprise License Manager API refuses a whole
-// domain ("Unauthorized operation for the given domain") when the subscription is
-// not a paid edition an administrator manages directly, or when the grant was made
-// before the apps.licensing scope was requested. That decision does not depend on
-// the product, so the walk stops at the first refusal instead of repeating the same
-// 403 for every product of the catalogue, and the section falls back to the
-// per-user read (see probeLicenses) before it gives up.
+// A 403 is a different animal: the Enterprise License Manager API refuses the
+// *value* it was asked with ("Unauthorized operation for the given domain") when
+// that value is not the customer the caller may read — a resold tenant answers its
+// Admin-console id that way and its primary domain with the catalogue. The walk
+// therefore stops at the first refusal and tries the next value of
+// licenseCustomers; only when every value is refused does it fall back to the
+// per-user read (see probeLicenses). Repeating the same 403 for every product of
+// a refused value would pay ten calls for one answer.
 func (d *reportData) loadLicenses() {
 	if d.licensesLoaded {
 		return
 	}
 	d.licensesLoaded = true
 	d.licenses = make(map[string][]reportLicense, 256)
-	// The catalogue is scoped to the id of the domain (see licenseCustomer)
-	// rather than to the alias the rest of the report uses.
-	customer := d.licenseCustomer()
-	answered := 0
 	var refusal, firstErr error
-	for _, product := range reportLicenseProducts {
+	for _, customer := range d.licenseCustomers() {
+		answered := 0
+		var candidateRefusal error
+		for _, product := range reportLicenseProducts {
+			if err := d.ctx.Err(); err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				break
+			}
+			if d.licenseRows >= reportRowLimit {
+				d.licenseCut = true
+				break
+			}
+			count, err := d.scanLicenses(product, customer)
+			if err == nil {
+				answered++
+				d.licenseRows += count
+				continue
+			}
+			status := apiStatus(err)
+			if status == http.StatusBadRequest {
+				// A product id Google retired: the catalogue is stale, the
+				// assignment simply does not exist.
+				continue
+			}
+			if status == http.StatusUnauthorized || status == http.StatusForbidden {
+				// This customer value, not the product, refused the catalogue:
+				// no other product will answer for it either.
+				candidateRefusal = err
+				break
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+		if answered > 0 {
+			// A value answered: the section is the assignments of the products
+			// this domain has, and the ones that did not answer are simply
+			// absent. The next value cannot add anything the domain itself does
+			// not expose.
+			d.licensesErr = nil
+			return
+		}
+		if candidateRefusal != nil && refusal == nil {
+			refusal = candidateRefusal
+		}
 		if err := d.ctx.Err(); err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -819,32 +889,8 @@ func (d *reportData) loadLicenses() {
 			d.licenseCut = true
 			break
 		}
-		count, err := d.scanLicenses(product, customer)
-		if err == nil {
-			answered++
-			d.licenseRows += count
-			continue
-		}
-		status := apiStatus(err)
-		if status == http.StatusBadRequest {
-			// A product id Google retired: the catalogue is stale, the
-			// assignment simply does not exist.
-			continue
-		}
-		if status == http.StatusUnauthorized || status == http.StatusForbidden {
-			// The domain, not the product, refused the catalogue: no other
-			// product will answer either.
-			refusal = err
-			break
-		}
-		if firstErr == nil {
-			firstErr = err
-		}
 	}
 	switch {
-	case answered > 0:
-		// One product answered: the section is the assignments of the products
-		// this domain has, and the ones that did not answer are simply absent.
 	case refusal != nil:
 		d.licensesErr = d.explainRefusal(refusal)
 	default:
@@ -1271,8 +1317,9 @@ func (d *reportData) addLicense(license reportLicense, address string) bool {
 }
 
 // scanLicenses reads one product of the catalogue, adding every assignment to the
-// per-user index. The customer is the id the caller resolved (licenseCustomer), not
-// the alias: the License Manager API documents an Admin console id.
+// per-user index. The customer is one value of licenseCustomers — the primary
+// domain first, then the Admin-console id, then the alias — because the API accepts
+// different values for different domains.
 func (d *reportData) scanLicenses(product, customer string) (int, error) {
 	if !licenseProductPattern.MatchString(product) {
 		return 0, invalidIdentifierError("license product", product)

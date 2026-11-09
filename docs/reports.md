@@ -47,7 +47,7 @@ the list for the account, which is what the start form offers.
 | `org_units` | `GET /customer/my_customer/orgunits?type=all` | 1 |
 | `roles` | `GET /customer/my_customer/roles` (paged, 100 — the endpoint refuses more) | `ceil(roles / 100)` |
 | `role_assignments` | `GET /customer/my_customer/roleassignments` (paged, 200) | `ceil(assignments / 200)` |
-| `licenses` | `GET licensing/v1/product/{id}/users` per product of the catalogue, scoped to the id of the customer record; a `403` of the whole domain falls back to `POST licensing/v1/batch` of `product/{product}/sku/{sku}/user/{email}` per user of the directory (one batch of the whole SKU catalogue per user) | 11 (+1), or `+1` per user when the catalogue is refused |
+| `licenses` | `GET licensing/v1/product/{id}/users` per product of the catalogue, scoped to the primary domain (then the customer id, then `my_customer`); when every value is refused, `POST licensing/v1/batch` of `product/{product}/sku/{sku}/user/{email}` per user of the directory (one batch of the whole SKU catalogue per user) | 11 (+1), or `+1` per user when the catalogue is refused |
 | `shared_drives` | `GET drive/v3/drives` (the listing the folder picker uses) | `ceil(drives / 100)` |
 | `shared_drive_members` | `GET /files/{id}/permissions` per shared drive (`useDomainAdminAccess`, paged, 100) | one walk per shared drive |
 | `analytics` | `GET analyticsadmin/v1beta/accounts` (paged, 200), then `GET analyticsadmin/v1beta/properties?filter=parent:{account}` per account (paged, 200) | `1 + accounts` walks |
@@ -153,23 +153,28 @@ product, eleven of them), because `users.list` carries no licence: that is the
 one place where a section pays for a column it does not own. A grant without
 `apps.licensing` leaves the column empty instead of failing the table.
 
-The catalogue is scoped to the **id** of the domain (`C01abc`), read from the
-customer record, and not to the `my_customer` alias the rest of a report uses:
-the License Manager API documents `customerId` as "the customer's unique ID as
-defined in the Admin console" and never mentions the alias — which is why a
-domain asked through it can answer `403 Unauthorized operation for the given
-domain`. A grant that cannot read the customer record (one made before
-`admin.directory.customer.readonly`) falls back to the alias, and the call it
-costs the section is the one the `organization` section already pays for when it
-is part of the same report.
+The catalogue is scoped with `customerId`, tried in order of likelihood: the
+**primary domain** (`agencia.pub`), the Admin-console id (`C045l8wpy`) and the
+`my_customer` alias the rest of a report uses. The License Manager API guide
+documents the primary domain; the id is accepted by some domains and refused by
+others — a resold tenant answered the id with `403 Unauthorized operation for the
+given domain` and the domain with its whole catalogue. Trying the next value costs
+one call, and it is what keeps a tenant whose catalogue answers from being read one
+batch per user instead (below); 77 licensing queries per user is enough to exhaust
+the "Queries per minute per user" quota after a handful of users. The
+`my_customer` alias is the last candidate — and the only one a grant that cannot
+read the customer record has (one made before
+`admin.directory.customer.readonly`); the call it costs the section is the one the
+`organization` section already pays for when it is part of the same report.
 
-A `403` from the catalogue is a decision about the *domain*, not about the
-product — the subscription is not a paid edition an administrator manages
-directly (a reseller-managed or free domain), or the grant predates the scope — so
-the walk stops at the first one and, before the section gives up, it falls back to
-the **per-user** read of the same API (below). When that read finds nothing either,
-the `licenses` section carries the reason while the `users` table keeps its rows
-with an empty `licenses` column.
+A `403` from the catalogue is a decision about the *value* it was asked with, not
+about the product — that value is not a customer the caller may read (a resold
+tenant's Admin-console id is the live example), or the grant predates the scope.
+The walk therefore stops at the first refusal instead of repeating the same 403
+for every product, tries the next customer value, and only when every value is
+refused falls back to the **per-user** read of the same API (below). When that read
+finds nothing either, the `licenses` section carries the reason while the `users`
+table keeps its rows with an empty `licenses` column.
 
 **The per-user fallback (`probeLicenses`).** The `get` of the Enterprise License
 Manager API takes no customer id at all, so it answers for a licence the caller can

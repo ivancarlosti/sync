@@ -497,10 +497,12 @@ func TestCollectReportBuildsEverySection(t *testing.T) {
 	if count := requestsTo(transport.urls, licensePath("Google-Apps")); count != 1 {
 		t.Errorf("licence calls of Google-Apps = %d, want 1", count)
 	}
-	// The catalogue is scoped to the id of the domain, which is the value the
-	// License Manager API documents (an Admin console id), not to the alias.
-	if !containsURL(transport.urls, "customerId=C01abc") {
-		t.Error("the licence listing was not scoped to the customer record")
+	// The catalogue is scoped to the primary domain first: it is the value the
+	// License Manager API guide documents, and the value a resold tenant answers
+	// (its Admin-console id is refused with 403, see
+	// TestLicensesUseTheDomainWhenTheCustomerIDIsRefused).
+	if !containsURL(transport.urls, "customerId=contoso.com") {
+		t.Error("the licence listing was not scoped to the primary domain")
 	}
 }
 
@@ -914,6 +916,76 @@ func TestLicensesFallBackToTheCustomerAlias(t *testing.T) {
 	}
 }
 
+// TestLicensesUseTheDomainWhenTheCustomerIDIsRefused reproduces the resold
+// tenant the per-user fallback was written for: the catalogue answers its
+// **primary domain** and refuses its Admin-console id with
+// `403 Unauthorized operation for the given domain`. The section must use the
+// domain instead of falling back to one batch per user — 77 licensing queries per
+// user is what exhausted the "Queries per minute per user" quota and left 19 of
+// the 23 users without a licence.
+func TestLicensesUseTheDomainWhenTheCustomerIDIsRefused(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	transport.statusFor = func(request *http.Request) int {
+		if strings.HasPrefix(request.URL.Path, "/apps/licensing/") &&
+			request.URL.Query().Get("customerId") == "C01abc" {
+			return http.StatusForbidden
+		}
+		return http.StatusOK
+	}
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionLicenses}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	licenses := tables[0]
+	if licenses.Failed() || len(licenses.Rows) != 2 {
+		t.Fatalf("licenses section = %+v, want the 2 assignments of the domain", licenses)
+	}
+	if !containsURL(transport.urls, "customerId=contoso.com") {
+		t.Error("the licence listing did not use the primary domain")
+	}
+	if containsURL(transport.urls, "customerId=C01abc") {
+		t.Error("the customer id was tried although the domain answered")
+	}
+	if count := requestsTo(transport.urls, pathLicensingBatch); count != 0 {
+		t.Errorf("per-user lookups = %d, want 0 (the domain answered the catalogue)", count)
+	}
+}
+
+// TestLicensesFallBackToTheCustomerIDWhenTheDomainIsRefused pins the other
+// candidate order: a domain whose licence catalogue answers the Admin-console id
+// but not the domain (the shape older deployments have) still gets the
+// catalogue, not the per-user walk.
+func TestLicensesFallBackToTheCustomerIDWhenTheDomainIsRefused(t *testing.T) {
+	provider, transport := newReportProvider(reportBodies(), nil)
+	transport.statusFor = func(request *http.Request) int {
+		if strings.HasPrefix(request.URL.Path, "/apps/licensing/") &&
+			request.URL.Query().Get("customerId") == "contoso.com" {
+			return http.StatusForbidden
+		}
+		return http.StatusOK
+	}
+
+	tables, err := provider.CollectReport(context.Background(), providers.Credentials{},
+		&providers.Tokens{AccessToken: "report-token"},
+		[]providers.ReportSection{providers.ReportSectionLicenses}, nil)
+	if err != nil {
+		t.Fatalf("CollectReport = %v", err)
+	}
+	licenses := tables[0]
+	if licenses.Failed() || len(licenses.Rows) != 2 {
+		t.Fatalf("licenses section = %+v, want the 2 assignments of the customer id", licenses)
+	}
+	if !containsURL(transport.urls, "customerId=C01abc") {
+		t.Error("the licence listing did not fall back to the customer id")
+	}
+	if count := requestsTo(transport.urls, pathLicensingBatch); count != 0 {
+		t.Errorf("per-user lookups = %d, want 0 (the customer id answered)", count)
+	}
+}
+
 // TestCollectReportKeepsTheUsersWhenLicencesAreRefused pins the trade of the
 // licence column: a grant without apps.licensing leaves it empty and fails only
 // the licences section, because the users of the domain are the point of the
@@ -952,8 +1024,11 @@ func TestCollectReportKeepsTheUsersWhenLicencesAreRefused(t *testing.T) {
 	if !strings.Contains(licenses.Error, "403") {
 		t.Errorf("licenses error = %q, want the reason the API gave", licenses.Error)
 	}
-	if count := requestsTo(transport.urls, "/apps/licensing/"); count != 1 {
-		t.Errorf("licence calls = %d, want 1 (the walk stops at the refusal)", count)
+	// The domain, the Admin-console id and the alias are the three values the
+	// catalogue is tried with (licenseCustomers). Each is refused once, and the
+	// same 403 is not repeated for the ten products of a refused value.
+	if count := requestsTo(transport.urls, "/apps/licensing/"); count != 3 {
+		t.Errorf("licence calls = %d, want 3 (one refusal per customer value)", count)
 	}
 	// The refusal is only half the answer: the per-user read takes no customer id,
 	// so it is tried (once — the batch answers nothing this transport can read, so
