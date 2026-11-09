@@ -11,11 +11,10 @@ const (
 	// Google Drive (files).
 	ManagementKindDriveToNewSharedDrive = "google_drive_to_new_shared_drive"
 	ManagementKindDriveToSharedDrive    = "google_drive_to_shared_drive"
-	// Google Workspace directory, mail and calendar.
-	ManagementKindArchiveUserGroup  = "google_archive_user_group"
-	ManagementKindGoogleCopyMailbox = "google_copy_mailbox"
-	ManagementKindGoogleCalendars   = "google_transfer_calendars"
-	ManagementKindGoogleDelegate    = "google_manage_delegate"
+	// Google Workspace directory. Mailbox copy, calendar transfer and Gmail
+	// delegates are deliberately not offered: Google restricts them to a service
+	// account with domain-wide delegation, which the OAuth connection cannot do.
+	ManagementKindArchiveUserGroup = "google_archive_user_group"
 	// Microsoft 365 mailbox, sites, calendar and storage.
 	ManagementKindMicrosoftCopyMailbox = "microsoft_copy_mailbox"
 	ManagementKindOneDriveToSite       = "microsoft_onedrive_to_site"

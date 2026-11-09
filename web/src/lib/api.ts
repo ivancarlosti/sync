@@ -630,12 +630,6 @@ export interface ManagementGroup {
   name: string;
 }
 
-/** ManagementDelegate is one delegate of a mailbox. */
-export interface ManagementDelegate {
-  email: string;
-  status: string;
-}
-
 /** ManagementOptions are the selects the form of one operation reads. */
 export interface ManagementOptions {
   users: ManagementUser[];
@@ -1186,12 +1180,6 @@ export const management = {
     request<ManagementOptions>({
       url: '/management/options',
       params: { account_id: accountId, kind },
-    }),
-  /** delegates lists the current delegates of one mailbox. */
-  delegates: (accountId: number, mailbox: string) =>
-    request<{ delegates: ManagementDelegate[] }>({
-      url: '/management/delegates',
-      params: { account_id: accountId, mailbox },
     }),
   list: (accountId?: number, limit = 50) =>
     request<{ tasks: ManagementTask[] }>({

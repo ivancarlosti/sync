@@ -427,8 +427,7 @@ const (
 	// CapabilityCalendars covers reading and transferring calendars (the
 	// calendar transfer of the Admin operations screen).
 	CapabilityCalendars Capability = "calendars"
-	// CapabilityDelegation covers managing mailbox delegates.
-	CapabilityDelegation Capability = "delegation"
+
 	// CapabilitySitesAdmin covers creating sites and copying content into them
 	// (the OneDrive → SharePoint operation).
 	CapabilitySitesAdmin Capability = "sitesadmin"
@@ -456,7 +455,6 @@ var ProviderCapabilities = []Capability{
 	CapabilityLogs,
 	CapabilityMail,
 	CapabilityCalendars,
-	CapabilityDelegation,
 	CapabilitySitesAdmin,
 	CapabilityAnalytics,
 	CapabilityYouTube,
@@ -471,7 +469,8 @@ var ProviderCapabilities = []Capability{
 var capabilityExclusive = map[Capability]models.ProviderName{
 	CapabilityTeams:      models.ProviderMicrosoft,
 	CapabilityPlanner:    models.ProviderMicrosoft,
-	CapabilityDelegation: models.ProviderGoogle,
+	CapabilityMail:       models.ProviderMicrosoft,
+	CapabilityCalendars:  models.ProviderMicrosoft,
 	CapabilitySitesAdmin: models.ProviderMicrosoft,
 	CapabilityAnalytics:  models.ProviderGoogle,
 	CapabilityYouTube:    models.ProviderGoogle,

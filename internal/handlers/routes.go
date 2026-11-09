@@ -89,7 +89,6 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		management := secured.Group("/management")
 		management.GET("/operations", s.handleListManagementOperations)
 		management.GET("/options", s.handleManagementOptions)
-		management.GET("/delegates", s.handleManagementDelegates)
 		management.GET("/tasks", s.handleListManagementTasks)
 		management.POST("/tasks", s.handleStartManagementTask)
 		management.GET("/tasks/:id", s.handleGetManagementTask)

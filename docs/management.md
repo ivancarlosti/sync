@@ -19,8 +19,7 @@ The screen lives at **Admin operations** in the top navigation, with two tabs:
 The operation page reads its selects from the account itself:
 `/api/management/options` lists the users and groups of the directory and the
 drives the account can see, so an operator picks an existing mailbox, group or
-drive instead of typing an address a typo can turn into a new object. Mailbox
-delegates get a live list with add/remove and a refresh after every change.
+drive instead of typing an address a typo can turn into a new object.
 
 ## Operations
 
@@ -29,9 +28,6 @@ delegates get a live list with add/remove and a refresh after every change.
 | `google_drive_to_new_shared_drive` | Google | `files` | yes | `name`*, `source_drive_id`, `confirm`* |
 | `google_drive_to_shared_drive` | Google | `files` | yes | `target_drive_id`*, `source_drive_id`, `target_folder_id`, `target_folder_name`, `confirm`* |
 | `google_archive_user_group` | Google | `groups` | yes | `user_email`*, `group_email`*, `group_name`, `member_email`, `archive_email`, `confirm`* |
-| `google_copy_mailbox` | Google | `mail` | no | `source`, `target`*, `max` |
-| `google_transfer_calendars` | Google | `calendars` | yes | `source`, `target`*, `confirm`* |
-| `google_manage_delegate` | Google | `delegation` | conditional | `mailbox`, `delegate`, `action`* (`add`/`remove`/`list`), `confirm`* |
 | `microsoft_copy_mailbox` | Microsoft | `mail` | no | `source`, `target`*, `max` |
 | `microsoft_onedrive_to_site` | Microsoft | `sitesadmin` | yes | `site_name`, `site_display_name`, `target_drive_id`, `target_folder_id`, `confirm`* |
 | `microsoft_transfer_calendars` | Microsoft | `calendars` | yes | `source`, `target`*, `confirm`* |
@@ -58,31 +54,23 @@ mailbox, shared drive or account that receives the content.
   address); `group_name` is the display name used only when the group is
   created; `member_email` is the successor added to the group. A group or
   membership that already exists is a `skipped` step, so a re-run converges.
-- **Copy a mailbox** — reads each message of the source mailbox and recreates it
-  in the target (Google replays the raw RFC 822 message; Microsoft re-creates the
-  subject/body/recipients). Bounded by `max` (default 200, hard ceiling 5000).
-- **Transfer calendars** — Google inserts an owner ACL entry for the target on
-  every calendar of the source (events stay on the calendar); Microsoft recreates
-  each event in the target mailbox and deletes the source copy.
-- **Manage delegates** — lists, adds or removes a Gmail delegate of a mailbox.
-  The page keeps the current delegates on screen, refreshes them after every
-  change, and reads them from the same Gmail settings endpoint. The Google Cloud
-  project must have the **Gmail API** enabled and the account must hold
-  `gmail.settings.sharing`.
+- **Copy a mailbox (Microsoft)** — reads each message of the source mailbox and
+  recreates it in the target with the delegated Graph grant. Bounded by `max`
+  (default 200, hard ceiling 5000). The Google variant is not offered; see below.
+- **Transfer calendars (Microsoft)** — recreates each event in the target mailbox
+  and deletes the source copy, with the delegated Graph grant.
 - **Report folder sizes** — walks a Microsoft drive depth-first and reports the
   recursive size and file count of every folder. Bounded in depth and item count.
 
 ## Scopes and prerequisites
 
-Two new capability groups were added to the permission table of each provider;
-the setup guide renders them and the Accounts screen derives the reconnect hints
-from the stored grant.
+The Microsoft operations need these delegated Graph permissions; the setup guide
+renders them and the Accounts screen derives the reconnect hints from the stored
+grant. The surviving Google operations use the scopes the connection already
+holds (Drive, directory users and groups) and need no extra grant.
 
 | Provider | Capability | Scope |
 | --- | --- | --- |
-| Google | `mail` | `https://www.googleapis.com/auth/gmail.modify` |
-| Google | `calendars` | `https://www.googleapis.com/auth/calendar` |
-| Google | `delegation` | `https://www.googleapis.com/auth/gmail.settings.sharing` |
 | Microsoft | `mail` | `Mail.ReadWrite` |
 | Microsoft | `calendars` | `Calendars.ReadWrite` |
 | Microsoft | `sitesadmin` | `Sites.Manage.All` |
@@ -91,15 +79,25 @@ An account connected before these scopes existed reports them as missing until i
 is reconnected; the catalogue then disables the operation that needs them and
 offers the reconnect hint instead of a start button.
 
-### Google mailbox copy and domain-wide delegation
+### Google operations that are not offered
 
-A Google OAuth **delegated** token can only act as its own user. Reading another
-user's mailbox (`users/{other}/messages`) requires **domain-wide delegation**: a
-service account, authorised in the Workspace admin console for the OAuth client's
-client id, impersonating the target user. Without it Google answers `401/403` and
-the task fails with that message. The copy code issues the correct Gmail calls and
-works today for the connected account's own mailbox; cross-user copy is a
-deployment decision documented here rather than a hidden behaviour.
+Three Google operations are deliberately absent from the catalogue because Google
+refuses the cross-mailbox calls to a normal OAuth token:
+
+- **Copy a mailbox** — reading or writing another user's mailbox needs
+  domain-wide delegation.
+- **Transfer calendars** — handing another user's calendars to a successor needs
+  domain-wide delegation.
+- **Manage Gmail delegates** — `users.settings.delegates` is restricted to a
+  service account with domain-wide delegation, even for the administrator's own
+  mailbox.
+
+Domain-wide delegation is a service-account arrangement authorised separately in
+each Workspace domain. Rather than make every connected domain configure it, the
+screen offers only the operations the OAuth connection can complete. Use GAM or a
+dedicated delegated service account for these three tasks. The surviving Google
+operations (Drive moves and the user → group archive) use the normal delegated
+grant and need no delegation setup.
 
 ### Microsoft consent
 
@@ -115,7 +113,6 @@ what the application may do, not what the signed-in user is allowed to do.
 | --- | --- | --- |
 | `GET` | `/api/management/operations?account_id=` | The catalogue of an account, decorated with `supported` / `missing_capability`. |
 | `GET` | `/api/management/options?account_id=&kind=` | The users, groups and drives the form of one operation offers. |
-| `GET` | `/api/management/delegates?account_id=&mailbox=` | The current delegates of one mailbox. |
 | `GET` | `/api/management/tasks?account_id=&limit=` | The task history (all accounts when `account_id` is absent). |
 | `POST` | `/api/management/tasks` | Start a task: `{account_id, kind, params}`. `202` with the row; `409` while another task of the same account runs. |
 | `GET` | `/api/management/tasks/:id` | One task with its journal. |

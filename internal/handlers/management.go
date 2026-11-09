@@ -137,9 +137,7 @@ func managementOptionNeeds(kind string) (users, groups, drives bool) {
 	switch kind {
 	case models.ManagementKindArchiveUserGroup:
 		return true, true, false
-	case models.ManagementKindGoogleCopyMailbox, models.ManagementKindMicrosoftCopyMailbox,
-		models.ManagementKindGoogleCalendars, models.ManagementKindMicrosoftCalendars,
-		models.ManagementKindGoogleDelegate:
+	case models.ManagementKindMicrosoftCopyMailbox, models.ManagementKindMicrosoftCalendars:
 		return true, false, false
 	case models.ManagementKindDriveToNewSharedDrive, models.ManagementKindDriveToSharedDrive,
 		models.ManagementKindFolderSizes, models.ManagementKindOneDriveToSite:
@@ -147,35 +145,6 @@ func managementOptionNeeds(kind string) (users, groups, drives bool) {
 	default:
 		return false, false, false
 	}
-}
-
-// handleManagementDelegates answers GET /api/management/delegates?account_id=&mailbox=:
-// the current delegates of one mailbox, so the form can show them before an add
-// or a remove instead of making the operator run a "list" task.
-func (s *Server) handleManagementDelegates(c *gin.Context) {
-	accountID, ok := queryID(c, "account_id")
-	if !ok {
-		return
-	}
-	mailbox := c.Query("mailbox")
-	delegates := []providers.MailboxDelegate{}
-	err := s.deps.Tokens.Use(c.Request.Context(), accountID, func(session services.ProviderSession) error {
-		delegator, ok := session.Provider.(providers.MailboxDelegator)
-		if !ok {
-			return nil
-		}
-		list, err := delegator.ListDelegates(c.Request.Context(), session.Credentials, session.Tokens, mailbox)
-		if err != nil {
-			return err
-		}
-		delegates = list
-		return nil
-	})
-	if err != nil {
-		managementProviderFailure(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, gin.H{"delegates": delegates})
 }
 
 // handleStartManagementTask answers POST /api/management/tasks. The task runs in

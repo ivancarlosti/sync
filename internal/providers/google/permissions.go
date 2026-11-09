@@ -110,32 +110,11 @@ func (p *Provider) Permissions() []providers.Permission {
 			Scope:        reportsScope,
 			AdminConsent: true,
 		},
-		{
-			// Gmail: read a mailbox and insert into another one (the mailbox
-			// copy of the Admin operations screen). Copying across mailboxes
-			// needs domain-wide delegation on the OAuth client, which a
-			// Workspace administrator grants in the console.
-			Capability:   providers.CapabilityMail,
-			Title:        "mail",
-			Scope:        "https://www.googleapis.com/auth/gmail.modify",
-			AdminConsent: true,
-		},
-		{
-			// Calendar: read the calendars of a user and grant owner access to
-			// another user (the calendar transfer of the Admin operations
-			// screen).
-			Capability:   providers.CapabilityCalendars,
-			Title:        "calendars",
-			Scope:        "https://www.googleapis.com/auth/calendar",
-			AdminConsent: true,
-		},
-		{
-			// Gmail settings sharing: add and remove delegates of a mailbox.
-			Capability:   providers.CapabilityDelegation,
-			Title:        "delegation",
-			Scope:        "https://www.googleapis.com/auth/gmail.settings.sharing",
-			AdminConsent: true,
-		},
+		// Gmail mailbox copy, Google calendar transfer and Gmail delegates are
+		// deliberately absent: Google restricts the three cross-mailbox calls to
+		// a service account with domain-wide delegation, and the screen offers
+		// only the operations the OAuth connection can complete. See
+		// docs/management.md.
 		{
 			// Analytics Admin API: the `analytics` section of a report (the
 			// accounts and properties the granted identity can reach, with the

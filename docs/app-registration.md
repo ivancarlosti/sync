@@ -59,11 +59,15 @@ Teams and Planner sections — both directory scopes, granted tenant-wide with t
 same admin consent as the rest. A grant made before the customer scope existed
 still reports: the section is then derived from the domain list (see
 [reports.md §2](reports.md#2-permissions)), and Accounts → *Check the
-token* offers the upgrade. The collections that need a scope Sync does not
-request at all (Gmail delegates, Chrome management, per-user sign-in activity on
-the Microsoft side, Teams channels) are not offered until that row exists, and the
-YouTube **CMS** (content-owner reports) stays out even though the `youtube` row
-does: the two are different identities (a partner account vs. the connected one,
+token* offers the upgrade. Collections that need a scope Sync does not request
+at all (Chrome management, per-user sign-in activity on the Microsoft side, Teams
+channels) are not offered until that row exists. Gmail delegates, Google
+cross-mailbox copy and Google calendar transfer are not offered even with the
+scope: Google restricts them to a service account with domain-wide delegation,
+which an OAuth connection cannot provide (see [management.md](management.md)).
+The YouTube **CMS** (content-owner reports) stays out even though the `youtube`
+row does: the two are different identities (a partner account vs. the connected
+one,
 [reports.md §1](reports.md#1-what-a-report-contains)).
 
 Every Graph scope in that column is a **delegated** permission, because the table

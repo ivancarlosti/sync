@@ -43,7 +43,6 @@ const (
 var (
 	_ providers.SharedDriveManager  = (*Provider)(nil)
 	_ providers.DirectoryArchiver   = (*Provider)(nil)
-	_ providers.MailboxDelegator    = (*Provider)(nil)
 	_ providers.MailboxCopier       = (*Provider)(nil)
 	_ providers.CalendarTransferrer = (*Provider)(nil)
 )
@@ -289,92 +288,6 @@ func (p *Provider) ArchiveUserToGroup(ctx context.Context, _ providers.Credentia
 	}
 	result.Message = "the address was archived into the group"
 	return result, nil
-}
-
-// ManageDelegates implements providers.MailboxDelegator: list, add or remove a
-// Gmail delegate of one mailbox (the connected account by default).
-func (p *Provider) ManageDelegates(ctx context.Context, creds providers.Credentials, tokens *providers.Tokens, input providers.DelegateInput, progress providers.ProgressFunc) (providers.ManagementResult, error) {
-	mailbox := strings.TrimSpace(input.Mailbox)
-	if mailbox == "" {
-		mailbox = "me"
-	}
-	client := p.client(tokens)
-	base := gmailAPIBase + "/users/" + pathSegment(mailbox) + "/settings/delegates"
-	result := providers.ManagementResult{Data: map[string]string{"mailbox": mailbox}}
-
-	switch strings.ToLower(strings.TrimSpace(input.Action)) {
-	case "list", "":
-		delegates, err := p.ListDelegates(ctx, creds, tokens, mailbox)
-		if err != nil {
-			return result, err
-		}
-		for _, delegate := range delegates {
-			reportStep(progress, delegate.Email, providers.StepSuccess, delegate.Status, 1, 0)
-			result.Items++
-		}
-		result.Message = fmt.Sprintf("%d delegate(s)", result.Items)
-		return result, nil
-	case "add":
-		delegate := strings.TrimSpace(input.Delegate)
-		if delegate == "" {
-			return result, fmt.Errorf("%w: a delegate email is required", providers.ErrInvalidIdentifier)
-		}
-		body := map[string]string{"delegateEmail": delegate}
-		if err := p.doJSON(ctx, client, http.MethodPost, base, body, nil); err != nil {
-			return result, err
-		}
-		reportStep(progress, "add delegate", providers.StepSuccess, delegate, 1, 0)
-		result.Items = 1
-		result.Message = "the delegate was added"
-		return result, nil
-	case "remove":
-		delegate := strings.TrimSpace(input.Delegate)
-		if delegate == "" {
-			return result, fmt.Errorf("%w: a delegate email is required", providers.ErrInvalidIdentifier)
-		}
-		target := base + "/" + pathSegment(delegate)
-		if err := p.doJSON(ctx, client, http.MethodDelete, target, nil, nil); err != nil {
-			if isAPIStatus(err, http.StatusNotFound) {
-				reportStep(progress, "remove delegate", providers.StepSkipped, "the delegate does not exist", 0, 0)
-				result.Message = "the delegate was not present"
-				return result, nil
-			}
-			return result, err
-		}
-		reportStep(progress, "remove delegate", providers.StepSuccess, delegate, 1, 0)
-		result.Items = 1
-		result.Message = "the delegate was removed"
-		return result, nil
-	default:
-		return result, fmt.Errorf("%w: unknown delegate action %q", providers.ErrInvalidIdentifier, input.Action)
-	}
-}
-
-// ListDelegates answers the delegates of one mailbox, which the Admin operations
-// form shows before an add or a remove.
-func (p *Provider) ListDelegates(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens, mailbox string) ([]providers.MailboxDelegate, error) {
-	mailbox = strings.TrimSpace(mailbox)
-	if mailbox == "" {
-		mailbox = "me"
-	}
-	base := gmailAPIBase + "/users/" + pathSegment(mailbox) + "/settings/delegates"
-	var list struct {
-		Delegates []struct {
-			DelegateEmail      string `json:"delegateEmail"`
-			VerificationStatus string `json:"verificationStatus"`
-		} `json:"delegates"`
-	}
-	if err := p.doJSON(ctx, p.client(tokens), http.MethodGet, base, nil, &list); err != nil {
-		return nil, err
-	}
-	delegates := make([]providers.MailboxDelegate, 0, len(list.Delegates))
-	for _, delegate := range list.Delegates {
-		delegates = append(delegates, providers.MailboxDelegate{
-			Email:  textCell(delegate.DelegateEmail),
-			Status: textCell(delegate.VerificationStatus),
-		})
-	}
-	return delegates, nil
 }
 
 // ListDirectoryUsers implements providers.DirectoryReader: every account of the

@@ -7,8 +7,8 @@
 // data-driven from the operation's params, with the live users/groups/drives of
 // the account fetched from /api/management/options so an operator selects an
 // existing object instead of typing an address a typo can turn into a new one.
-import { ArrowLeft, FolderOpen, RefreshCw, Trash2 } from '@lucide/vue';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { ArrowLeft, FolderOpen } from '@lucide/vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 
@@ -17,7 +17,6 @@ import Alert from '@/components/ui/Alert.vue';
 import Badge from '@/components/ui/Badge.vue';
 import Button from '@/components/ui/Button.vue';
 import Card from '@/components/ui/Card.vue';
-import EmptyState from '@/components/ui/EmptyState.vue';
 import Input from '@/components/ui/Input.vue';
 import Label from '@/components/ui/Label.vue';
 import Select, { type SelectOption } from '@/components/ui/Select.vue';
@@ -29,14 +28,10 @@ import {
   management as managementApi,
   messageOf,
   type ConnectedAccount,
-  type ManagementDelegate,
   type ManagementOperation,
   type ManagementOptions,
 } from '@/lib/api';
 import type { FolderSelection } from '@/lib/folders';
-
-/** DELEGATE_KIND is the one operation with a live list instead of a plain form. */
-const DELEGATE_KIND = 'google_manage_delegate';
 
 const { t } = useI18n();
 const route = useRoute();
@@ -56,20 +51,10 @@ const saveError = ref('');
 const folderOpen = ref(false);
 const folderPath = ref('');
 
-const delegates = ref<ManagementDelegate[]>([]);
-const delegatesLoading = ref(false);
-const delegatesError = ref('');
-const delegateChoice = ref('');
-const delegateSaving = ref(false);
-const delegateRemoving = ref('');
-
-let timer: ReturnType<typeof setInterval> | undefined;
-
 const selectedAccount = computed(
   () => accounts.value.find((account) => account.id === accountId.value) ?? null,
 );
 const provider = computed(() => selectedAccount.value?.provider ?? '');
-const isDelegate = computed(() => kind.value === DELEGATE_KIND);
 
 const accountOptions = computed(() => [
   { value: 0, label: t('management.selectAccount'), disabled: true },
@@ -193,56 +178,11 @@ async function load(): Promise<void> {
     }
     options.value = await managementApi.options(accountId.value, kind.value);
     resetForm();
-    if (isDelegate.value) {
-      await loadDelegates();
-    }
   } catch (error) {
     failure.value = messageOf(error);
   } finally {
     loading.value = false;
   }
-}
-
-/** loadDelegates refreshes the live list of the selected mailbox. */
-async function loadDelegates(): Promise<void> {
-  const mailbox = form.value.mailbox?.trim() ?? '';
-  if (!isDelegate.value || mailbox === '' || accountId.value === 0) {
-    delegates.value = [];
-    return;
-  }
-  delegatesLoading.value = true;
-  delegatesError.value = '';
-  try {
-    delegates.value = (await managementApi.delegates(accountId.value, mailbox)).delegates;
-  } catch (error) {
-    delegatesError.value = messageOf(error);
-  } finally {
-    delegatesLoading.value = false;
-  }
-}
-
-/** waitForTask polls one task until it leaves `running`, then answers it. */
-async function waitForTask(id: number): Promise<void> {
-  if (timer) {
-    clearInterval(timer);
-    timer = undefined;
-  }
-  await new Promise<void>((resolve) => {
-    timer = setInterval(async () => {
-      try {
-        const answer = await managementApi.get(id);
-        if (!answer.task.running) {
-          clearInterval(timer);
-          timer = undefined;
-          resolve();
-        }
-      } catch {
-        clearInterval(timer);
-        timer = undefined;
-        resolve();
-      }
-    }, 1500);
-  });
 }
 
 /** submit starts the generic form operation. */
@@ -286,39 +226,6 @@ async function submit(): Promise<void> {
   }
 }
 
-/** submitDelegate starts one add/remove and refreshes the list when it ends. */
-async function submitDelegate(action: 'add' | 'remove', delegate: string): Promise<void> {
-  if (!isDelegate.value || accountId.value === 0) {
-    return;
-  }
-  const mailbox = form.value.mailbox?.trim() ?? '';
-  if (mailbox === '' || delegate === '') {
-    delegatesError.value = t('common.requiredField');
-    return;
-  }
-  if (action === 'add') {
-    delegateSaving.value = true;
-  } else {
-    delegateRemoving.value = delegate;
-  }
-  delegatesError.value = '';
-  try {
-    const answer = await managementApi.start({
-      account_id: accountId.value,
-      kind: DELEGATE_KIND,
-      params: { mailbox, delegate, action, confirm: 'true' },
-    });
-    await waitForTask(answer.task.id);
-    await loadDelegates();
-    delegateChoice.value = '';
-  } catch (error) {
-    delegatesError.value = messageOf(error);
-  } finally {
-    delegateSaving.value = false;
-    delegateRemoving.value = '';
-  }
-}
-
 /** onFolder keeps the root of a drive as an empty folder id. */
 function onFolder(selection: FolderSelection): void {
   if (kind.value === 'google_drive_to_shared_drive' && selection.drive.kind !== 'shared') {
@@ -350,21 +257,6 @@ watch(accountId, () => {
   void load();
 });
 
-watch(
-  () => form.value.mailbox,
-  () => {
-    if (isDelegate.value) {
-      void loadDelegates();
-    }
-  },
-);
-
-onBeforeUnmount(() => {
-  if (timer) {
-    clearInterval(timer);
-    timer = undefined;
-  }
-});
 </script>
 
 <template>
@@ -418,79 +310,7 @@ onBeforeUnmount(() => {
         :message="t('management.archiveHint')"
       />
 
-      <!-- Mailbox delegates: live list plus add/remove, no generic action field. -->
-      <template v-if="isDelegate">
-        <Card :title="t('management.delegates')">
-          <div class="space-y-4 p-5 pt-4">
-            <div class="max-w-md space-y-1.5">
-              <Label for="delegate-mailbox" required>{{ fieldLabel('mailbox') }}</Label>
-              <Select
-                id="delegate-mailbox"
-                v-model="form.mailbox"
-                :options="userOptions"
-                :placeholder="t('management.selectMailbox')"
-              />
-            </div>
-
-            <Alert v-if="delegatesError" tone="destructive" :message="delegatesError" />
-
-            <div class="flex items-center justify-between gap-2">
-              <p class="text-sm font-medium">{{ t('management.currentDelegates') }}</p>
-              <Button variant="ghost" size="sm" :disabled="delegatesLoading" @click="loadDelegates">
-                <RefreshCw class="me-2 h-4 w-4" :class="{ 'animate-spin': delegatesLoading }" />
-                {{ t('management.refresh') }}
-              </Button>
-            </div>
-            <EmptyState
-              v-if="!delegatesLoading && delegates.length === 0"
-              :title="t('management.noDelegates')"
-            />
-            <div v-else-if="delegatesLoading" class="flex justify-center py-4"><Spinner /></div>
-            <ul v-else class="divide-y divide-border rounded-md border border-border">
-              <li
-                v-for="delegate in delegates"
-                :key="delegate.email"
-                class="flex flex-wrap items-center justify-between gap-2 px-3 py-2"
-              >
-                <div class="space-y-0.5">
-                  <p class="text-sm font-medium">{{ delegate.email }}</p>
-                  <p class="text-xs text-muted-foreground">{{ delegate.status }}</p>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  :disabled="delegateRemoving === delegate.email"
-                  @click="submitDelegate('remove', delegate.email)"
-                >
-                  <Trash2 class="me-2 h-4 w-4" />
-                  {{ t('management.actions.remove') }}
-                </Button>
-              </li>
-            </ul>
-
-            <div class="grid gap-3 rounded-md border border-border p-3 sm:grid-cols-[1fr_auto]">
-              <div class="space-y-1.5">
-                <Label for="delegate-add">{{ t('management.addDelegate') }}</Label>
-                <Select
-                  id="delegate-add"
-                  v-model="delegateChoice"
-                  :options="userOptions"
-                  :placeholder="t('management.selectUser')"
-                />
-              </div>
-              <div class="flex items-end">
-                <Button :disabled="delegateSaving || delegateChoice === ''" @click="submitDelegate('add', delegateChoice)">
-                  <Spinner v-if="delegateSaving" class="me-2" />
-                  {{ t('management.actions.add') }}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </Card>
-      </template>
-
-      <!-- Generic form: every other operation. -->
-      <Card v-else :title="t('management.form')">
+      <Card :title="t('management.form')">
         <div class="space-y-5 p-5 pt-4">
           <Alert v-if="saveError" tone="destructive" :message="saveError" />
 

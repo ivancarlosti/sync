@@ -245,8 +245,7 @@ func TestApplicablePermissionsSplitsByAccountKind(t *testing.T) {
 	wantGoogleMissing := []Capability{
 		CapabilityFiles, CapabilityGroups, CapabilityMembers,
 		CapabilityDomains, CapabilityOrgUnits, CapabilityRoles, CapabilityLicenses,
-		CapabilityLogs, CapabilityMail, CapabilityCalendars, CapabilityDelegation,
-		CapabilityAnalytics, CapabilityYouTube,
+		CapabilityLogs, CapabilityAnalytics, CapabilityYouTube,
 	}
 	if fmt.Sprint(google.Missing) != fmt.Sprint(wantGoogleMissing) {
 		t.Fatalf("missing = %v, want %v", google.Missing, wantGoogleMissing)

@@ -77,13 +77,6 @@ type DirectoryReader interface {
 	ListDirectoryGroups(ctx context.Context, creds Credentials, tokens *Tokens) ([]DirectoryGroup, error)
 }
 
-// MailboxDelegate is one delegate of a mailbox: the address and the provider's
-// verification status.
-type MailboxDelegate struct {
-	Email  string `json:"email"`
-	Status string `json:"status"`
-}
-
 // ArchiveUserInput is the request of the user → group archive: the departing
 // user, the group that should take over their address and an optional alias the
 // user's own mailbox is renamed to (freeing the address for the group).
@@ -100,22 +93,6 @@ type ArchiveUserInput struct {
 // that keeps it and add the successor as a member.
 type DirectoryArchiver interface {
 	ArchiveUserToGroup(ctx context.Context, creds Credentials, tokens *Tokens, input ArchiveUserInput, progress ProgressFunc) (ManagementResult, error)
-}
-
-// DelegateInput is one delegate operation. Action is add, remove or list.
-type DelegateInput struct {
-	Mailbox  string
-	Delegate string
-	Action   string
-}
-
-// MailboxDelegator is implemented by providers whose mailboxes can carry
-// delegates (Google Gmail settings).
-type MailboxDelegator interface {
-	ManageDelegates(ctx context.Context, creds Credentials, tokens *Tokens, input DelegateInput, progress ProgressFunc) (ManagementResult, error)
-	// ListDelegates answers the current delegates of one mailbox, which is what
-	// the Admin operations form shows before an add or a remove.
-	ListDelegates(ctx context.Context, creds Credentials, tokens *Tokens, mailbox string) ([]MailboxDelegate, error)
 }
 
 // CopyMailboxInput is the request of the mailbox copy: copy the messages of the

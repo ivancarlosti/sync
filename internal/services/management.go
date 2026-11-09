@@ -83,30 +83,6 @@ var managementOperations = []managementOperation{
 		provide: isDirectoryArchiver,
 	},
 	{
-		Kind:       models.ManagementKindGoogleCopyMailbox,
-		Provider:   models.ProviderGoogle,
-		Capability: providers.CapabilityMail,
-		Params:     []ManagementParam{{Key: "source"}, {Key: "target", Required: true}, {Key: "max"}},
-		provide:    isMailboxCopier,
-	},
-	{
-		Kind:       models.ManagementKindGoogleCalendars,
-		Provider:   models.ProviderGoogle,
-		Capability: providers.CapabilityCalendars,
-		Danger:     true,
-		Params:     []ManagementParam{{Key: "source"}, {Key: "target", Required: true}, {Key: "confirm", Required: true}},
-		provide:    isCalendarTransferrer,
-	},
-	{
-		Kind:       models.ManagementKindGoogleDelegate,
-		Provider:   models.ProviderGoogle,
-		Capability: providers.CapabilityDelegation,
-		Params: []ManagementParam{
-			{Key: "mailbox"}, {Key: "delegate"}, {Key: "action", Required: true}, {Key: "confirm", Required: true},
-		},
-		provide: isMailboxDelegator,
-	},
-	{
 		Kind:       models.ManagementKindMicrosoftCopyMailbox,
 		Provider:   models.ProviderMicrosoft,
 		Capability: providers.CapabilityMail,
@@ -151,11 +127,6 @@ func isSharedDriveManager(provider providers.Provider) bool {
 
 func isDirectoryArchiver(provider providers.Provider) bool {
 	_, ok := provider.(providers.DirectoryArchiver)
-	return ok
-}
-
-func isMailboxDelegator(provider providers.Provider) bool {
-	_, ok := provider.(providers.MailboxDelegator)
 	return ok
 }
 
@@ -596,7 +567,7 @@ func (s *ManagementService) run(ctx context.Context, session ProviderSession, op
 			MemberEmail:  params["member_email"],
 			ArchiveEmail: params["archive_email"],
 		}, progress)
-	case models.ManagementKindGoogleCopyMailbox, models.ManagementKindMicrosoftCopyMailbox:
+	case models.ManagementKindMicrosoftCopyMailbox:
 		copier, ok := session.Provider.(providers.MailboxCopier)
 		if !ok {
 			return providers.ManagementResult{}, providers.ErrUnsupported
@@ -606,7 +577,7 @@ func (s *ManagementService) run(ctx context.Context, session ProviderSession, op
 			Target: params["target"],
 			Max:    atoi(params["max"]),
 		}, progress)
-	case models.ManagementKindGoogleCalendars, models.ManagementKindMicrosoftCalendars:
+	case models.ManagementKindMicrosoftCalendars:
 		transferrer, ok := session.Provider.(providers.CalendarTransferrer)
 		if !ok {
 			return providers.ManagementResult{}, providers.ErrUnsupported
@@ -614,16 +585,6 @@ func (s *ManagementService) run(ctx context.Context, session ProviderSession, op
 		return transferrer.TransferCalendars(ctx, creds, tokens, providers.CalendarTransferInput{
 			Source: params["source"],
 			Target: params["target"],
-		}, progress)
-	case models.ManagementKindGoogleDelegate:
-		delegator, ok := session.Provider.(providers.MailboxDelegator)
-		if !ok {
-			return providers.ManagementResult{}, providers.ErrUnsupported
-		}
-		return delegator.ManageDelegates(ctx, creds, tokens, providers.DelegateInput{
-			Mailbox:  params["mailbox"],
-			Delegate: params["delegate"],
-			Action:   params["action"],
 		}, progress)
 	case models.ManagementKindOneDriveToSite:
 		copier, ok := session.Provider.(providers.SiteContentCopier)
