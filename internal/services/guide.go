@@ -151,14 +151,12 @@ func guideSteps(provider models.ProviderName, links map[string]string) []GuideSt
 		return []GuideStep{
 			// The project hosts the API enablement and the OAuth client.
 			{ID: "project", URL: "https://console.cloud.google.com/projectcreate"},
-			// Drive API for the sync; Admin SDK and Enterprise License Manager
-			// for the directory scopes below.
-			{ID: "apis", URL: links["admin_api"]},
+			// Drive API for the sync.
+			{ID: "apis", URL: links["drive_api"]},
 			{ID: "consent", URL: "https://console.cloud.google.com/apis/credentials/consent"},
 			{ID: "client", URL: "https://console.cloud.google.com/apis/credentials"},
 			{ID: "redirect", URL: "https://console.cloud.google.com/apis/credentials", Copy: GuideCopyRedirectURI},
 			{ID: "permissions", URL: "https://console.cloud.google.com/apis/credentials", Copy: GuideCopyScopes},
-			{ID: "admin", URL: "https://admin.google.com/ac/owl/list"},
 			{ID: "connect"},
 		}
 	case models.ProviderMicrosoft:
@@ -169,7 +167,6 @@ func guideSteps(provider models.ProviderName, links map[string]string) []GuideSt
 			// Entra has no bulk paste: the permissions are added one by one.
 			{ID: "permissions", URL: links["entra_api_permissions"], Copy: GuideCopyPermissions},
 			{ID: "consent", Action: GuideActionAdminConsent},
-			{ID: "role"},
 			{ID: "connect"},
 		}
 	default:
@@ -185,16 +182,11 @@ func guideWarnings(provider models.ProviderName) []string {
 		return []string{
 			"api_enablement",
 			"consent_screen_type",
-			"unverified_app",
-			"admin_role_required",
-			"license_required",
 		}
 	case models.ProviderMicrosoft:
 		return []string{
 			"tenant_scope",
 			"work_accounts_only",
-			"admin_role_required",
-			"license_required",
 		}
 	default:
 		return []string{}

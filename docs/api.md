@@ -70,8 +70,8 @@ and protected by the signed `state` parameter instead.
 | Method | Path | Payload / answer |
 |---|---|---|
 | `GET` | `/api/stats?days=30` | `{days, since, stats:{accounts,jobs,enabled_jobs,runs,succeeded,partial,failed,cancelled,timed_out,conflicts,files_created,files_updated,files_deleted,bytes_transferred}, running_jobs, running_ids}` — `days=0` means *since the beginning* |
-| `GET` | `/api/settings` | `{settings:{default_locale,default_theme,sync_default_interval_minutes,sync_run_timeout_minutes,billing_schema,billing_schema_custom,billing_rate_in_per_gib,billing_rate_out_per_gib,billing_currency,purge_enabled,purge_jobs_days,purge_audits_days,purge_billing_days,purge_auditlogs_days,auditlogs_enabled,auditlogs_interval_minutes,auditlogs_request_delay_seconds}, locales[], themes[], billing_schemas[], billing_schema_default}` |
-| `PUT` | `/api/settings` | same `settings` object as body (`locale` ∈ the 7 codes, `theme` ∈ light/dark/system, interval `0–10080`, timeout `1–1440`, `billing_schema` ∈ `none`/`oci`/`aws`/`gcp`/`custom`, rate `0–100000` per GiB, currency a three letter code, `billing_schema_custom` a JSON document, retention `1–3650` days each, `auditlogs_interval_minutes` `1–1440`, `auditlogs_request_delay_seconds` `0–300`) → `{settings}` |
+| `GET` | `/api/settings` | `{settings:{default_locale,default_theme,sync_default_interval_minutes,sync_run_timeout_minutes,billing_schema,billing_schema_custom,billing_rate_in_per_gib,billing_rate_out_per_gib,billing_currency,purge_enabled,purge_jobs_days,purge_audits_days,purge_billing_days}, locales[], themes[], billing_schemas[], billing_schema_default}` |
+| `PUT` | `/api/settings` | same `settings` object as body (`locale` ∈ the 7 codes, `theme` ∈ light/dark/system, interval `0–10080`, timeout `1–1440`, `billing_schema` ∈ `none`/`oci`/`aws`/`gcp`/`custom`, rate `0–100000` per GiB, currency a three letter code, `billing_schema_custom` a JSON document, retention `1–3650` days each) → `{settings}` |
 | `GET` | `/api/settings/raw` | `{values:{key:value}}` — every stored key except `provider.*` |
 
 `billing_schemas` is the list the Admin > Settings form offers:
@@ -115,16 +115,12 @@ account connected before the field existed is classified without a Graph call �
 and is omitted when no signal could classify it. `org_id` is the organisation the
 account belongs to (the Entra tenant id, the Workspace hosted domain): it is read
 from the column the connection wrote, or from the tenant claim of the stored access
-token of an account connected before that column existed — the same fallback the
-activity collector applies — and is omitted when neither names one (a personal
-account, whose organisation has no administrator feed). The third list,
-`not_applicable_capabilities[]`, holds the capabilities the account can never be
-granted: on a personal Microsoft account (an MSA) the directory permissions are
-outside what the account can hold, so they are neither satisfied nor missing, and
-`needs_reconnect` ignores them — reconnecting could not deliver them. The
-vocabulary itself is scoped per provider (`providers.CapabilitiesFor`): `teams` and
-`planner` are Microsoft only, so a Workspace account is never offered them and they
-never appear in its `missing_capabilities`. `status` is
+token of an account connected before that column existed, and is omitted when
+neither names one. The third list, `not_applicable_capabilities[]`, holds the
+capabilities the account can never be granted: on a personal Microsoft account
+(an MSA) the SharePoint library scope is outside what the account can hold, so it
+is neither satisfied nor missing, and `needs_reconnect` ignores it — reconnecting
+could not deliver it. `status` is
 `connected` while the stored token works and `error` once a
 refresh was refused (with `last_error` holding the reason). The Accounts screen
 offers the same reconnect action for a missing capability and for an `error`
@@ -295,141 +291,6 @@ The CSV columns are
 mime_type`, prefixed with a UTF-8 BOM so a spreadsheet opens accented paths
 correctly.
 
-### 8.1 Activity logs
-
-These are **not** the content audits above: they are the stored activity the
-providers report (see [audit-logs.md](audit-logs.md)). The rows come from the
-collector's local copy, so the list is one table over both clouds and survives
-the retention of the vendors.
-
-| Method | Path | Notes |
-|---|---|---|
-| `GET` | `/api/audit-logs` | `{events:[auditLogView], total, limit, offset, cursors:[auditLogCursor], schedule:auditLogSchedule}` |
-| `GET` | `/api/audit-logs/last-login?account_id=&provider=&org_id=` | `{provider, org_id, as_of, users:[{email,last_login}]}` — the newest stored `login` event per actor, for a machine consumer such as n8n. `account_id` resolves provider/org; otherwise both `provider` and `org_id` are required |
-| `GET` | `/api/audit-logs/export` | `text/csv; charset=utf-8` download, same filters, capped at 5000 rows (`X-Total-Count` carries the filtered total) |
-| `GET` | `/api/audit-logs/cursors` | `{cursors:[auditLogCursor], schedule:auditLogSchedule}` — the position and health of every feed |
-
-Query parameters of the list and the export (every one optional):
-
-| Parameter | Meaning |
-|---|---|
-| `provider` | `microsoft` \| `google` |
-| `org_id` | the tenant (Microsoft) or Workspace domain (Google) |
-| `action` | `create` \| `delete` \| `update` \| `move` \| `share` \| `login` \| `other` |
-| `target` | `file` \| `folder` \| `user` \| `group` \| `device` \| `application` \| `site` \| `drive` \| `other` |
-| `actor` | exact actor address, or the address of the person a workload acted for |
-| `search` | substring of the actor address, the actor name, the person a workload acted for, or the object name |
-| `from`, `to` | RFC3339 or `YYYY-MM-DD`; a date-only `to` means the end of that day |
-| `limit`, `offset` | pagination of the list (`limit` default 50, max 500) |
-
-An unknown value is a **400** (`validation`), never a silently empty page.
-
-`auditLogView` = `{id, provider, source, remote_id, org_id, action, target,
-actor_kind, actor_email, actor_name?, actor_id?, actor_on_behalf_of?,
-actor_on_behalf_of_name?, target_name?, target_id?, drive_id?, site_id?,
-occurred_at}`. `source` is the feed the record came from (`directory`, `unified`,
-`drive`, `user_accounts`, `groups`, `admin`, `login`). `actor_kind` is `user`
-(a person: `actor_email` is set), `application` (a workload: `actor_name` only,
-`actor_email` empty) or `system` (no principal: `actor_name` is the service that
-logged the event); `actor_on_behalf_of` names the person a workload acted for when
-it is known (see [audit-logs.md](audit-logs.md) §3). The vendor document is stored
-but **never serialised**.
-
-`auditLogCursor` = `{provider, org_id, stream, cursor?, last_event_at?,
-last_run_at?, healthy, needs_consent, last_error?}`: `healthy` is false when the
-last pass failed, and `needs_consent` marks the one failure an operator can fix
-with a grant.
-
-`auditLogSchedule` = `{enabled, interval_minutes, request_delay_seconds,
-last_run_at?, next_run_at?}` — the collector as configured in Admin > Settings
-(§3): `enabled` is the `auditlogs_enabled` switch, and `next_run_at` is absent
-while it is off, so the screen can say why the list stopped growing.
-`last_run_at`/`next_run_at` describe the pass of the running process, not the
-database: a restart polls immediately and reports from there.
-
-### 8.2 Directory reports
-
-A directory report is the read-only inventory of an organisation (see
-[reports.md](reports.md)). It is async like an audit: the start answers **202**
-and every section is persisted, so reading or exporting it never touches the
-provider again.
-
-| Method | Path | Notes |
-|---|---|---|
-| `GET` | `/api/reports/sections?account_id=` | `{sections:[name], supported}` — what the account's provider can collect |
-| `POST` | `/api/reports` | body below → **202** `{report}`; **409 busy** while another report of the same account runs |
-| `GET` | `/api/reports?limit=` | `{reports:[reportView]}` (`limit` 50, max 200, newest first) |
-| `GET` | `/api/reports/:id` | `{report, sections:[reportSectionView]}` — the table of contents, without the rows |
-| `GET` | `/api/reports/:id/sections/:section?offset=&limit=` | `{section, columns, rows, total, offset, limit, truncated, error?}` — one page of one table |
-| `GET` | `/api/reports/:id/export` | `application/zip` download of one CSV per section (`report-<id>.zip`) |
-| `POST` | `/api/reports/:id/cancel` | `{id, cancelled}` — idempotent |
-| `GET` | `/api/reports/schedules` | `{schedules:[reportScheduleView]}` |
-| `PUT` | `/api/reports/schedules/:account_id` | body below → `{schedule}` |
-| `DELETE` | `/api/reports/schedules/:account_id` | `{account_id, deleted}` — idempotent |
-
-```json
-{ "account_id": 1, "sections": ["users", "groups", "licenses"] }
-```
-
-```json
-{ "enabled": true, "interval_minutes": 1440, "sections": [] }
-```
-
-`sections` is the closed vocabulary `organization`, `users`, `guests`, `groups`,
-`distribution_lists`, `sites`, `licenses`, `domains`, `suspended_users`,
-`group_members`, `org_units`, `roles`, `role_assignments`, `shared_drives`,
-`teams`, `team_members`, `planner_plans`, `shared_drive_members`, `analytics`,
-`youtube`; **an
-empty list means every section the provider supports**, and an unknown name is a
-**400**. A section the provider cannot collect is dropped from the run (the
-answered `section_list` is what was actually requested), and `GET
-/api/reports/sections` is what tells the UI which half of the vocabulary the
-account's provider owns — `guests`, `distribution_lists`, `sites`, `teams`,
-`team_members` and `planner_plans` belong to Microsoft, `suspended_users`,
-`group_members`, `org_units`, `roles`, `role_assignments`, `shared_drives`,
-`shared_drive_members`, `analytics` and `youtube` to Google (see
-[reports.md §1](reports.md#1-what-a-report-contains)).
-
-`reportView` = the `directory_reports` row (`id, account_id, account_email,
-provider, org_id, sections, status, trigger, started_at, finished_at, duration_ms,
-section_count, row_count, failed, truncated, message, created_at`) plus `running`
-and `section_list` (the stored comma separated list as an array).
-`reportSectionView` = `{section, columns:[{key,title}], row_count, truncated,
-error?}`.
-
-`status` is the lifecycle of the pass (`running | success | partial | failed |
-cancelled | timeout`): **partial** means at least one section carries an `error` (a refused
-endpoint, a personal account without `/sites`). Column keys and titles are
-stable and English — a report is a data export, so the CSV header does not
-follow the UI locale.
-
-`reportScheduleView` = the `report_schedules` row (`id, account_id, enabled,
-interval_minutes, sections, next_run_at?, last_run_at?, last_report_id?,
-last_error?, created_at, updated_at`) plus `section_list`. `interval_minutes` is
-clamped to `15 … 43200` (a value outside is a **400**) and defaults to `1440`; a
-disabled schedule has no `next_run_at`.
-
-### 8.3 Admin operations
-
-Provider-backed administrative tasks (see [management.md](management.md) for the
-full operation catalogue and the per-provider scope prerequisites).
-
-| Method | Path | Notes |
-| --- | --- | --- |
-| `GET` | `/api/management/operations?account_id=` | The operations the account can run; `account_id` is required (**400** without it). Each entry carries `supported` and `missing_capability`. |
-| `GET` | `/api/management/tasks?account_id=&limit=` | History, newest first; `account_id` optional, `limit` clamped to `200`. |
-| `POST` | `/api/management/tasks` | `{account_id, kind, params}` → **202** `{task}`; **400** for an unknown kind, a missing required parameter or an unconfirmed destructive operation; **409** while another task of the account runs; **412** when the grant does not cover the capability. |
-| `GET` | `/api/management/tasks/:id` | `{task}` with `steps` (the journal). |
-| `POST` | `/api/management/tasks/:id/cancel` | `{id, cancelled}`. |
-| `GET` | `/api/management/tasks/:id/export` | The journal as `text/csv` (UTF-8 BOM). |
-
-`managementTaskView` = the `management_tasks` row (`id, account_id,
-account_email, provider, kind, title, status, trigger, params, result?, step_count,
-failed, items_processed, bytes_moved, started_at, finished_at?, duration_ms,
-message?, created_at`) plus `running` and `param_map` (the stored `params` as an
-object). Destructive operations require `params.confirm = "true"`; the server
-enforces it.
-
 ## 9. Notifications
 
 | Method | Path | Payload / answer |
@@ -517,9 +378,7 @@ bucket,day,month,account_id,account_email,run_id,job_id,inbound,outbound,operati
 | `POST` | `/api/maintenance/oauth/states/prune` | `{removed}` |
 | `POST` | `/api/maintenance/runs/prune` | `{keep}` (default 200, 1…10000) → `{keep, pruned:true}` |
 | `POST` | `/api/maintenance/audits/prune` | `{keep}` (default 50, 1…10000) → `{keep, pruned:true}` |
-| `POST` | `/api/maintenance/auditlogs/collect` | `{organisations, streams, failed, events, repaired, pending_repairs, duration_ms, errors?}` — one activity-feed pass right now, including the repair of the stored history (see [audit-logs.md](audit-logs.md)) |
-| `POST` | `/api/maintenance/auditlogs/renormalise` | `{scanned, updated, attributed, remaining, duration_ms}` — re-read the stored vendor documents and re-attribute the events a release before `actor_kind` mapped with a single actor slot |
-| `POST` | `/api/maintenance/purge` | `{target}` ∈ `all` \| `jobs` \| `audits` \| `billing` \| `auditlogs`, optional `{days}` → `PurgeOutcome` |
+| `POST` | `/api/maintenance/purge` | `{target}` ∈ `all` \| `jobs` \| `audits` \| `billing`, optional `{days}` → `PurgeOutcome` |
 
 ## 11. Worked examples
 

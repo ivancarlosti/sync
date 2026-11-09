@@ -128,93 +128,6 @@ walk could not descend into the folder), `listed` (false when the folder's
 children are not part of the report), `modified_at` and `mime_type`. The rows are
 batch-inserted after the walk, so their `id` order is the DFS preorder of the tree.
 
-`directory_reports` — one row per directory report (see [reports.md](reports.md)):
-`account_id`, `account_email`, `provider`, `org_id` (the tenant), `sections` (the
-comma separated list of the sections requested), `status`/`trigger`/timing like
-`sync_runs`, and the summary counters `section_count`, `row_count`, `failed` (the
-sections that could not be collected) and `truncated`.
-
-`report_sections` — one stored table per report: `report_id` + `section`
-(`uniqueIndex idx_report_section`) and the `columns` (`TEXT`) and `rows`
-(`LONGTEXT`) JSON documents with `row_count`, `truncated` and the `error` of a
-section that could not be collected. The columns are stored beside the rows, so a
-report written before a column was added keeps rendering with the header it was
-collected with. `rows` is `LONGTEXT` because it is the document itself: a section
-is a whole table of the directory, and a `TEXT` column stops at 65 535 bytes, which
-made the INSERT of a large tenant fail with `Error 1406 (22001): Data too long for
-column 'rows'`. The service still bounds one document at 8 MiB
-(`services.reportSectionBytes`, see [reports.md](reports.md) §3) so a value never
-outgrows the packet a single statement may carry, and each section is written with
-its own INSERT, so a section the database refuses never takes the tables beside it
-down.
-
-`report_schedules` — the **opt-in** of the automatic report: one row per
-`account_id` (`uniqueIndex`) with `enabled`, `interval_minutes` (15 … 43200),
-`sections`, `next_run_at`, `last_run_at`, `last_report_id` and `last_error`. No
-row means "do not report this account automatically".
-
-`audit_log_events` — **the activity feed** behind [audit-logs.md](audit-logs.md):
-one row per vendor record (`provider`, `source` (`directory` \| `unified` \|
-`drive` \| `user_accounts` \| `groups` \| `admin` \| `login`), `remote_id`,
-`org_id`), normalised as `action` (`create` \| `delete` \| `update` \| `move` \|
-`share` \| `login` \| `other`) and `target` (`file` \| `folder` \| `user` \|
-`group` \| `device` \| `application` \| `site` \| `drive` \| `other`), the actor
-(`actor_kind` (`user` \| `application` \| `system`), `actor_email`, `actor_name`,
-`actor_id`), the person behind a workload-made change (`actor_on_behalf_of`,
-`actor_on_behalf_of_name`), the object (`target_name`, `target_id`, `drive_id`,
-`site_id`), the vendor timestamp `occurred_at` (indexed with `org_id`) and the
-vendor document itself in `raw` (`text`, never serialised to the API).
-
-`actor_kind` is what keeps a workload from being read as a person:
-`actor_email` is filled for `user` rows only, an `application` row carries its
-name in `actor_name`, and a `system` row names the service that logged the event.
-A row with an **empty** `actor_kind` was stored by a release before the column
-existed; the collector repairs those rows from `raw` at the end of every pass (see
-[audit-logs.md](audit-logs.md) §3), so the column converges on a value without a
-migration rewriting history.
-
-`uniqueIndex idx_auditlog_event_identity` on `provider` + `source` + `remote_id`
-is what makes re-reading an overlapping window idempotent.
-
-`audit_log_cursors` — **the position of every feed**: `uniqueIndex
-idx_auditlog_cursor_identity` on `provider` + `org_id` + `stream` (one
-organisation is read once, not once per connected account), the opaque `cursor`
-(RFC3339 watermark), `last_event_at` (the newest event it covers), `last_run_at`
-and `last_error` (why the feed is stale). A feed with an empty `cursor` starts
-from the default window of its provider.
-
-`notification_channels` — see [notifications.md](notifications.md) for the
-`config` documents; the table itself keeps `name`, `type` (`smtp` \| `webhook` \|
-`shoutrrr`), `config` (JSON, secrets encrypted), `events` (JSON array),
-`enabled`, `last_status`, `last_error`, `last_used_at`.
-
-`traffic_entries` — **the traffic accounting** behind [api.md](api.md) §9: one row
-per `(run_id, account_id, direction)` (`uniqueIndex
-idx_traffic_run_account_direction`, which is what makes a retried flush harmless)
-with `job_id`, `account_email`, `provider`, `direction` (`inbound` \| `outbound`),
-`bytes`, `files`, `operations`, and the UTC buckets `day` (`2026-10-13`) and
-`month` (`2026-10`) of the run start, plus `started_at`. The counters are
-**absolute** totals of the run, never increments, and the bucket columns are text
-so the report is a portable `GROUP BY`. A row is deleted with its run
-(`PruneRuns`).
-
-`api_tokens` — the programmatic credentials of [api.md](api.md) §9:
-`name`, `prefix` (`uniqueIndex`, the public half of `sync_<prefix>.<secret>`),
-`hash` (the SHA-256 of the secret half; the secret itself is never stored),
-`scopes` (JSON array of `read`/`write`), `created_by`, `expires_at`,
-`revoked_at`, `last_used_at`, `last_used_ip` and `requests`.
-
-## 4. Relationships
-
-```text
-connected_accounts ──1:N──► sync_jobs (source_account_id / destination_account_id)
-sync_jobs ──1:N──► sync_runs ──1:N──► sync_items
-sync_jobs ──1:N──► sync_files          (state, one row per path)
-connected_accounts ──1:N──► audit_runs ──1:N──► audit_entries
-connected_accounts ──1:N──► directory_reports ──1:N──► report_sections
-connected_accounts ──1:1──► report_schedules    (the opt-in of the automatic report)
-connected_accounts ──N:1──► audit_log_cursors   (one feed per provider + org_id + stream)
-audit_log_cursors ──1:N──► audit_log_events     (by provider + org_id, no foreign key)
 notification_channels ──N:M──► events (JSON array inside the row, no join table)
 settings                              (independent key/value store)
 oauth_states ──► ephemeral (deleted after 10 minutes or on redemption)
@@ -222,8 +135,7 @@ oauth_states ──► ephemeral (deleted after 10 minutes or on redemption)
 
 There are deliberately **no foreign key constraints**
 (`DisableForeignKeyConstraintWhenMigrating`): deleting an account cascades in the
-service layer, where the jobs that use it (and that account's audits and
-directory reports, with their report rows and opt-in schedule) are removed
+service layer, where the jobs that use it and that account's audits are removed
 together with it (that is what the accounts screen warns about before
 confirming).
 
@@ -232,17 +144,8 @@ confirming).
 1. Stop the old container (or let the orchestrator replace it).
 2. Start the new image. `AutoMigrate` adds new tables/columns and indexes;
    existing data is preserved, and `Seed` never overwrites an edited setting.
-   A column whose declared type a release **widens** is altered in place (GORM
-   compares the declared type with the stored one, so `TEXT` → `LONGTEXT` on
-   `report_sections.rows` is a `MODIFY COLUMN` on the first boot after the
-   upgrade); the table is copied once, which is the only cost of that release.
 3. If a release changes the meaning of a stored value, the release notes say so:
-   the schema is additive and historic rows are never rewritten silently. The one
-   deliberate exception is the actor attribution of `audit_log_events`: a release
-   that maps a field more precisely repairs the old rows **from their own `raw`
-   vendor document**, deterministically and idempotently, at the end of every
-   collect pass (see [audit-logs.md](audit-logs.md) §3). Nothing is guessed: a
-   field the vendor document does not carry stays as it was.
+   the schema is additive and historic rows are never rewritten silently.
 
 Downgrades are not supported: a new column added by an upgrade simply stays
 unused by an older binary, but a value written by a new release may be unknown to
@@ -256,8 +159,6 @@ it (an unknown `status` renders as-is in the UI).
 | `oauth_states` | 10 minutes | pruned at boot and through `POST /api/maintenance/oauth/states/prune` |
 | `sync_files` | one row per path, updated in place | nothing to prune; deleting a job deletes its state |
 | `audit_runs` + `audit_entries` | `auditKeepCount = 50` newest audits per account | `Store.PruneAudits` — called on demand through `POST /api/maintenance/audits/prune` (default `keep: 50`, allowed 1…10000) |
-| `directory_reports` + `report_sections` | `reportKeepCount = 20` newest reports per account | `Store.PruneReports` — at the end of every report pass |
-| `audit_log_events` | `purge_auditlogs_days` (default 180, 1…3650 days) | `Store.PurgeAuditLogsBefore` — the retention pass of the scheduler, or `POST /api/maintenance/purge` with `target: "auditlogs"` |
 
 ## 7. Backup and restore
 

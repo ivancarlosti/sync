@@ -42,18 +42,6 @@
 * **Full audit trail** — every run stores counters and a per-file decision with
   the reason (`evidence`), which is what the Runs screen and
   `GET /api/runs/:id/items` show.
-* **Activity feed of both clouds** — the Audit Logs screen keeps what Microsoft 365
-  and Google Workspace report (who created, deleted, moved or shared what, and
-  who signed in), polled on the interval an operator sets in Admin > Settings
-  (ten minutes by default, can be switched off) and stored past the retention of
-  the vendors (see [docs/audit-logs.md](docs/audit-logs.md)).
-* **Directory reports** — a read-only inventory of the organisation behind an
-  account, for both providers: the tenant record, users (guests on Microsoft,
-  suspended accounts on Google), groups and their members, SharePoint sites or
-  Google Shared Drives, licence assignments, domains, organisational units and
-  administrative roles. Opt-in per-account schedule, downloadable as a ZIP of
-  CSVs, built from the permissions the account already holds (see
-  [docs/reports.md](docs/reports.md)).
 * **Encrypted at rest** — OAuth access/refresh tokens and notification secrets
   are AES-256-GCM ciphertexts (`v1:`); the database never holds a plaintext
   secret.
@@ -144,14 +132,6 @@ CSV.
 
 ![Audit](docs/screenshots/09-audit.png)
 
-**Audit logs** — the organisation-wide activity feed of both clouds: who created,
-deleted, moved or shared what, and who signed in. It is polled on an interval an
-operator sets in Admin > Settings (ten minutes by default, and it can be switched
-off entirely) and stored locally, so the history outlives the seven days the
-Office 365 activity feed keeps (see [docs/audit-logs.md](docs/audit-logs.md)).
-
-![Audit logs](docs/screenshots/10-audit-logs.png)
-
 **Audit report** — the tree with the exact size of every folder, the folders
 whose children were not listed, and the totals the report was computed from (a
 depth limit trims the listing, never the totals).
@@ -192,7 +172,7 @@ secret itself is shown once, at creation.
 
 **Settings** — the defaults proposed to every operator (language, theme,
 schedule, run timeout), the billing vocabulary and prices, and how long runs,
-audit reports, traffic days and activity events are kept.
+audit reports and traffic days are kept.
 
 ![Settings](docs/screenshots/17-settings.png)
 

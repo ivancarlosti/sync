@@ -102,13 +102,12 @@ func TestAdminConsentEndpoint(t *testing.T) {
 }
 
 // TestAccountCapabilitiesAreDerived pins that the accounts endpoint reports what
-// an older grant covers: a connection made before the directory scopes existed
+// an older grant covers: a connection made before the identity scopes existed
 // keeps working and is flagged for reconnection.
 func TestAccountCapabilitiesAreDerived(t *testing.T) {
 	server, store := newTestServer(t, models.AuthModeNone)
 	account := saveAccount(t, store, models.ProviderGoogle, "google-1", "g@example.com")
-	account.Scopes = "openid https://www.googleapis.com/auth/userinfo.email " +
-		"https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/drive"
+	account.Scopes = "openid https://www.googleapis.com/auth/drive"
 	if err := store.SaveAccount(context.Background(), account); err != nil {
 		t.Fatalf("saving the account: %v", err)
 	}
@@ -122,10 +121,10 @@ func TestAccountCapabilitiesAreDerived(t *testing.T) {
 		t.Fatalf("accounts = %+v", list.Accounts)
 	}
 	older := list.Accounts[0]
-	if len(older.Capabilities) != 1 || older.Capabilities[0] != providers.CapabilityFiles {
-		t.Fatalf("capabilities = %v, want only files", older.Capabilities)
+	if len(older.Capabilities) != 0 {
+		t.Fatalf("capabilities = %v, want none: the older grant lacks the identity scopes", older.Capabilities)
 	}
-	if !older.NeedsReconnect || len(older.MissingCapabilities) != len(providers.CapabilitiesFor(models.ProviderGoogle))-1 {
+	if !older.NeedsReconnect || len(older.MissingCapabilities) != len(providers.CapabilitiesFor(models.ProviderGoogle)) {
 		t.Fatalf("missing = %v (needs_reconnect=%v)", older.MissingCapabilities, older.NeedsReconnect)
 	}
 

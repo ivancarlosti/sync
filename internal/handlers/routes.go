@@ -66,43 +66,6 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		audits.POST("/:id/cancel", s.handleCancelAudit)
 		audits.GET("/:id/export", s.handleExportAudit)
 
-		// The directory reports of the Reports screen: a read-only snapshot of
-		// the organisation behind an account (users, groups, sites, licences,
-		// domains), its section catalogue, the opt-in schedules and the ZIP
-		// export.
-		reports := secured.Group("/reports")
-		reports.GET("", s.handleListReports)
-		reports.POST("", s.handleStartReport)
-		reports.GET("/sections", s.handleReportSections)
-		reports.GET("/schedules", s.handleListReportSchedules)
-		reports.PUT("/schedules/:account_id", s.handleSaveReportSchedule)
-		reports.DELETE("/schedules/:account_id", s.handleDeleteReportSchedule)
-		reports.GET("/:id", s.handleGetReport)
-		reports.POST("/:id/cancel", s.handleCancelReport)
-		reports.GET("/:id/export", s.handleExportReport)
-		reports.GET("/:id/sections/:section", s.handleGetReportSection)
-
-		// The Admin operations screen: the catalogue of provider-backed
-		// administrative tasks (move a Drive into a Shared Drive, archive a
-		// user, copy a mailbox, transfer calendars, report folder sizes), the
-		// start request, the auditable journal and its CSV export.
-		management := secured.Group("/management")
-		management.GET("/operations", s.handleListManagementOperations)
-		management.GET("/options", s.handleManagementOptions)
-		management.GET("/tasks", s.handleListManagementTasks)
-		management.POST("/tasks", s.handleStartManagementTask)
-		management.GET("/tasks/:id", s.handleGetManagementTask)
-		management.POST("/tasks/:id/cancel", s.handleCancelManagementTask)
-		management.GET("/tasks/:id/export", s.handleExportManagementTask)
-
-		// The activity feed of the Audit Logs screen: the stored history, its
-		// export and the status of every feed.
-		auditLogs := secured.Group("/audit-logs")
-		auditLogs.GET("", s.handleListAuditLogs)
-		auditLogs.GET("/last-login", s.handleLastLogins)
-		auditLogs.GET("/export", s.handleExportAuditLogs)
-		auditLogs.GET("/cursors", s.handleAuditLogCursors)
-
 		settings := secured.Group("/settings")
 		settings.GET("", s.handleGetSettings)
 		settings.PUT("", s.handleUpdateSettings)
@@ -144,8 +107,6 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		maintenance.POST("/runs/prune", s.handleMaintenanceRuns)
 		maintenance.POST("/audits/prune", s.handleMaintenanceAudits)
 		maintenance.POST("/purge", s.handleMaintenancePurge)
-		maintenance.POST("/auditlogs/collect", s.handleMaintenanceAuditLogs)
-		maintenance.POST("/auditlogs/renormalise", s.handleMaintenanceAuditLogRepair)
 	}
 
 	router.NoRoute(s.spa())

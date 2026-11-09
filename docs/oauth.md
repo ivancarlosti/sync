@@ -129,8 +129,8 @@ provider (`internal/providers/google/permissions.go`,
 
 | Provider | Capabilities | Request options |
 |---|---|---|
-| Google | files (`drive`, `userinfo.email`, `userinfo.profile`, `openid`), users (`admin.directory.user`, `.user.alias`), groups (`admin.directory.group`), members (`admin.directory.group.member`), domains (`admin.directory.domain.readonly`), orgunits (`admin.directory.orgunit`), roles (`admin.directory.rolemanagement.readonly`), licenses (`apps.licensing`) | `access_type=offline`, `prompt=consent`, `include_granted_scopes=true`, PKCE `S256` |
-| Microsoft | files (`Files.ReadWrite.All`, `Sites.ReadWrite.All`, `User.Read`, `offline_access`, `openid`, `profile`, `email`), users (`User.Read.All`, `User.ReadWrite.All`), groups (`Group.ReadWrite.All`, `Directory.ReadWrite.All`), members (`GroupMember.ReadWrite.All`), domains (`Domain.Read.All`), orgunits (`AdministrativeUnit.ReadWrite.All`), roles (`RoleManagement.Read.All`), licenses (`Organization.Read.All`, `LicenseAssignment.ReadWrite.All`) | `prompt=consent`, `response_mode=query`, PKCE `S256`; every directory scope needs the tenant-wide admin consent (§1.1) |
+| Google | files (`drive`, `userinfo.email`, `userinfo.profile`, `openid`) | `access_type=offline`, `prompt=consent`, `include_granted_scopes=true`, PKCE `S256` |
+| Microsoft | files (`Files.ReadWrite.All`, `Sites.ReadWrite.All`, `User.Read`, `offline_access`, `openid`, `profile`, `email`) | `prompt=consent`, `response_mode=query`, PKCE `S256`; `Sites.ReadWrite.All` accepts the tenant-wide admin consent (§1.1) |
 
 `Files.ReadWrite.All` is the Graph scope that covers personal OneDrive;
 `Sites.ReadWrite.All` is what allows synchronising a SharePoint document library
@@ -140,12 +140,11 @@ which also derives the capability badges: `capabilities` (satisfied by the store
 grant) and `missing_capabilities` / `needs_reconnect` (requested by this release,
 not yet granted → reconnect).
 
-`Sites.ReadWrite.All` and every directory scope of the Microsoft row are **work or
-school** permissions. A personal Microsoft account (an MSA) is a tenant of its own
-and can never be granted them, so the accounts API reports those capabilities in
-`not_applicable_capabilities` — greyed out, with no reconnect offered — instead of
-reporting a reconnect that cannot deliver them (`account_kind: "personal"` says
-why; see `docs/providers.md` §4).
+`Sites.ReadWrite.All` is a **work or school** permission. A personal Microsoft
+account (an MSA) is a tenant of its own and can never be granted it, so the
+accounts API reports that scope in `not_applicable_capabilities` — greyed out,
+with no reconnect offered — instead of reporting a reconnect that cannot deliver
+it (`account_kind: "personal"` says why; see `docs/providers.md` §4).
 
 The four OpenID Connect scopes (`openid`, `profile`, `email`, `offline_access`)
 are requested but never used to **prove** a capability. Microsoft Entra ID grants

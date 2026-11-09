@@ -16,18 +16,6 @@ var wantScopes = []string{
 	"https://www.googleapis.com/auth/userinfo.email",
 	"https://www.googleapis.com/auth/userinfo.profile",
 	"https://www.googleapis.com/auth/drive",
-	"https://www.googleapis.com/auth/admin.directory.user",
-	"https://www.googleapis.com/auth/admin.directory.user.alias",
-	"https://www.googleapis.com/auth/admin.directory.group",
-	"https://www.googleapis.com/auth/admin.directory.group.member",
-	"https://www.googleapis.com/auth/admin.directory.domain.readonly",
-	"https://www.googleapis.com/auth/admin.directory.customer.readonly",
-	"https://www.googleapis.com/auth/admin.directory.orgunit",
-	"https://www.googleapis.com/auth/admin.directory.rolemanagement.readonly",
-	"https://www.googleapis.com/auth/apps.licensing",
-	"https://www.googleapis.com/auth/admin.reports.audit.readonly",
-	"https://www.googleapis.com/auth/analytics.readonly",
-	"https://www.googleapis.com/auth/youtube.readonly",
 }
 
 // TestScopesMatchThePermissionTable pins Scopes() to the table the guide renders.
@@ -66,19 +54,12 @@ func TestPermissionsAreCompleteAndUnique(t *testing.T) {
 	}
 }
 
-// TestDirectoryScopesAreMarkedAsAdministratorGrants pins the flag the guide uses
-// to explain that a Workspace administrator identity is required.
-func TestDirectoryScopesAreMarkedAsAdministratorGrants(t *testing.T) {
-	permissions := New().Permissions()
-	if providers.HasCapability(filePermissions(permissions), wantScopes, providers.CapabilityUsers) {
-		t.Fatal("the Drive-only permissions should not satisfy the user capability")
-	}
-	for _, permission := range permissions {
-		if permission.Capability == providers.CapabilityFiles && permission.AdminConsent {
-			t.Fatalf("the file scope %q should not require an administrator", permission.Scope)
-		}
-		if permission.Capability != providers.CapabilityFiles && !permission.AdminConsent {
-			t.Fatalf("the directory scope %q should require an administrator", permission.Scope)
+// TestEveryScopeIsAUserGrant pins that the sync engine needs no administrator
+// consent: the file scopes are granted by the user during the flow.
+func TestEveryScopeIsAUserGrant(t *testing.T) {
+	for _, permission := range New().Permissions() {
+		if permission.AdminConsent {
+			t.Fatalf("the file scope %q must not require an administrator", permission.Scope)
 		}
 	}
 }
@@ -87,22 +68,9 @@ func TestDirectoryScopesAreMarkedAsAdministratorGrants(t *testing.T) {
 // to, so a removed key is caught before the UI renders an empty href.
 func TestConsoleURLsCoverTheGuideSteps(t *testing.T) {
 	links := New().ConsoleURLs()
-	for _, key := range []string{
-		"drive_api", "admin_api", "licensing_api", "analytics_api", "youtube_api",
-	} {
+	for _, key := range []string{"drive_api"} {
 		if !strings.HasPrefix(links[key], "https://console.cloud.google.com/") {
 			t.Fatalf("console link %q is missing or not a Cloud console URL: %q", key, links[key])
 		}
 	}
-}
-
-// filePermissions keeps the four identity/Drive scopes of a table.
-func filePermissions(permissions []providers.Permission) []providers.Permission {
-	files := []providers.Permission{}
-	for _, permission := range permissions {
-		if permission.Capability == providers.CapabilityFiles {
-			files = append(files, permission)
-		}
-	}
-	return files
 }

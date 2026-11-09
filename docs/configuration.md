@@ -14,7 +14,7 @@ once.
 | `docker/.env` (created locally from `docker/.env.example`) | `docker compose up` passes it through `env_file:`; never commit it |
 | `.env` in the working directory | local `go run ./cmd/server` (loaded with `godotenv`) |
 | real environment variables | container orchestrators; **always win** over the files |
-| Admin > Settings (database) | the editable settings: default locale, default theme, default interval, run timeout, billing vocabulary and the retention of runs, audit reports, traffic days and activity events — they override the environment for the SPA, never for the boot checks |
+| Admin > Settings (database) | the editable settings: default locale, default theme, default interval, run timeout, billing vocabulary and the retention of runs, audit reports and traffic days — they override the environment for the SPA, never for the boot checks |
 | Admin > Providers (database, encrypted) | provider OAuth clients; override the environment values when present |
 
 ## 2. Boot sequence
@@ -166,8 +166,7 @@ Google Drive; the same applies to Microsoft 365.
 | What | Where | Effect |
 |---|---|---|
 | default locale / theme, default interval, run timeout | Admin > Settings (`PUT /api/settings`) | validated (`0–10080` min interval, `1–1440` min timeout) and stored in `settings`; applied to visitors without their own choice |
-| retention of runs, audit reports, traffic days, activity events | Admin > Settings (`PUT /api/settings`) | validated (`1–3650` days) and applied by the retention loop on its next pass; *Purge now* applies it immediately |
-| activity log capture (switch, interval, pause between requests) | Admin > Settings (`PUT /api/settings`) | validated (`1–1440` min interval, `0–300` s pause) and read by the `logs` loop on its next wake-up (at most a minute); *Collect now* always works, switch or not ([audit-logs.md](audit-logs.md) §3) |
+| retention of runs, audit reports, traffic days | Admin > Settings (`PUT /api/settings`) | validated (`1–3650` days) and applied by the retention loop on its next pass; *Purge now* applies it immediately |
 | provider OAuth client (client id, secret, redirect URI, tenant) | Admin > Providers (`PUT /api/providers/:provider`) | the secret is encrypted (`v1:`) and overrides the environment; `DELETE` clears the override |
 | job schedule, direction, conflict policy, excludes, deletions | job editor (`PUT /api/jobs/:id`) | stored on the job; `next_run_at` is recomputed immediately |
 

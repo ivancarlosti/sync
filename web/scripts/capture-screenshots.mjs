@@ -93,7 +93,6 @@ const STEPS = [
     viewport: true,
   },
   { file: '09-audit', path: '/audit', title: 'Audit' },
-  { file: '10-audit-logs', path: '/audit-logs', title: 'Audit logs' },
   {
     file: '11-audit-report',
     path: '/audit',

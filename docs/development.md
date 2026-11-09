@@ -18,8 +18,6 @@ If Go is not on the `PATH`, this checkout has been developed with a local SDK at
 
 ```text
 cmd/server            the binary: config → database → services → HTTP → signals
-cmd/reportprobe        a development tool: one directory report against a real
-                      tenant, without a database or a connection (see §3)
 internal/config        environment parsing + validation (the only os.Getenv caller)
 internal/version       build metadata injected with -ldflags
 internal/crypto        AES-256-GCM, HMAC-SHA256, PKCE (standard library only)
@@ -27,7 +25,7 @@ internal/database      GORM connection, DSN, AutoMigrate, settings repository
 internal/models        GORM entities + every enum vocabulary (also the API contract)
 internal/providers     Provider interface, registry, google/, microsoft/
 internal/services      Store, AuthService, OAuthService, TokenManager, SettingsService,
-                       SyncService (engine), AuditService, ReportService, Scheduler,
+                       SyncService (engine), AuditService, Scheduler,
                        Notifier, ProviderSettings, SecretBox
 internal/notify        senders: smtp, webhook, shoutrrr (no storage knowledge)
 internal/handlers      routing, session, validation, error → HTTP mapping, SPA fallback
@@ -104,39 +102,6 @@ at an instance with a few accounts, jobs and runs: a fresh one is all empty
 states. The committed files are re-encoded through an 8-bit adaptive palette
 (~⅓ of the truecolor weight), which the script's header documents.
 
-### A directory report against a real tenant (`cmd/reportprobe`)
-
-A report that comes back short cannot be debugged from the outside: the run row
-stores counters, the CSV stores the answer, and the reason a user's licence cell is
-empty is a log line an operator reads hours later. `cmd/reportprobe` runs the
-collector itself (`google.Provider.CollectReport`, the call `ReportService` makes)
-against the real tenant — no database, no OAuth connection, no web server — writes
-every section as the CSV the ZIP carries and counts what the two licence columns of
-the users section actually say.
-
-```bash
-go run ./cmd/reportprobe -scopes                  # the scopes a grant must list
-mkdir -p .local                                   # gitignored, see .gitignore
-cp /path/to/service-account.json .local/          # a key with domain-wide delegation
-go run ./cmd/reportprobe -subject admin@example.com -debug
-ls .local/report                                  # users.csv, licenses.csv, summary.txt
-```
-
-The credential is one of three: a service-account key with domain-wide delegation
-(`-service-account`, `-subject`), the OAuth client and refresh token a connection
-stores (`-client-id`, `-client-secret`, `-refresh-token`), or a token minted
-elsewhere (`-access-token "$(gcloud auth print-access-token)"`). `-sections`
-selects the sections (default `users,licenses`, the two a licence gap needs),
-`-ask-scopes` narrows what the delegation grant is asked for when it authorises only
-part of the provider's list (a grant that omits one asked scope fails the whole
-exchange), `-debug` logs the answer of every part of a licence batch, and `-out` is
-where the CSVs and `summary.txt` land. A section the tenant refused is written as
-`<section>.error.txt` rather than as an empty CSV.
-
-`summary.txt` is the point of the tool: it counts the users that hold a licence, the
-users the API answered with none (`License count = 0`) and the users whose lookup
-never answered (both cells empty, the section `truncated`).
-
 ## 4. Tests
 
 ```bash
@@ -151,12 +116,6 @@ an in-memory SQLite database (`gorm.io/driver/sqlite`) and a fake provider, so n
 MariaDB, no network and no credentials are required. `internal/handlers` drives
 the real Gin router, which is why a routing change fails a test rather than a
 review.
-
-The directory report has two suites of its own: `internal/providers/microsoft/
-report_test.go` drives the collector against a scripted Graph transport (paging,
-the derived sections, the refused `$select`, a `nextLink` that leaves Graph) and
-`internal/services/report_test.go` covers the opt-in schedule, the stored tables,
-the pruner and the status mapping.
 
 ## 5. Adding things
 
@@ -173,7 +132,7 @@ the pruner and the status mapping.
 
 1. add the key to `web/src/i18n/locales/en-US.json` (namespaced: `common`, `nav`,
    `auth`, `status`, `validation`, `dashboard`, `accounts`, `browser`, `jobs`,
-   `runs`, `audit`, `auditLogs`, `notifications`, `admin`, `errors`, `theme`,
+   `runs`, `audit`, `notifications`, `admin`, `errors`, `theme`,
    `language`);
 2. translate it in the six other files;
 3. `node web/scripts/check-i18n.mjs` (also part of `npm run typecheck`);
@@ -213,5 +172,4 @@ internal/version.{Version,Commit}`.
 | `npm run dev` cannot reach the API | the Go server must listen on the `VITE_DEV_API` target (default 3000) |
 | session lost on every request | cookie `Secure` requires HTTPS: `APP_URL` must match how you actually reach the instance |
 | provider call hangs | `LOG_LEVEL=debug`; the provider clients use explicit request timeouts |
-| the `Licenses` column of a report is short | `go run ./cmd/reportprobe -debug` (§3): the `retried`/`refused` counters of each user say whether the Enterprise License Manager API throttled or refused the SKUs |
 | a job never starts | `enabled`, `interval_minutes` and `next_run_at` (`GET /api/jobs/:id/schedule`), then `POST /api/maintenance/schedule/run` |

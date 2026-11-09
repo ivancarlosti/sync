@@ -18,11 +18,6 @@ export type RouteName =
   | 'job-edit'
   | 'runs'
   | 'audit'
-  | 'audit-logs'
-  | 'reports'
-  | 'management-operations'
-  | 'management-operation'
-  | 'management-activity'
   | 'billing'
   | 'notifications'
   | 'admin-providers'
@@ -78,45 +73,6 @@ const routes: RouteRecordRaw[] = [
         path: 'audit',
         name: 'audit',
         component: () => import('@/views/AuditView.vue'),
-      },
-      {
-        // The organisation-wide activity feed: the stored copy of the Microsoft
-        // and Google audit logs (see views/AuditLogsView.vue).
-        path: 'audit-logs',
-        name: 'audit-logs',
-        component: () => import('@/views/AuditLogsView.vue'),
-      },
-      {
-        // The directory report: the read-only inventory of an organisation
-        // (see views/ReportsView.vue).
-        path: 'reports',
-        name: 'reports',
-        component: () => import('@/views/ReportsView.vue'),
-      },
-      {
-        // The Admin operations screen: provider-backed administrative tasks
-        // (see views/management/OperationsView.vue) and their auditable
-        // journal (see views/management/ActivityView.vue).
-        path: 'management',
-        component: () => import('@/layouts/ManagementLayout.vue'),
-        children: [
-          { path: '', redirect: { name: 'management-operations' } },
-          {
-            path: 'operations',
-            name: 'management-operations',
-            component: () => import('@/views/management/OperationsView.vue'),
-          },
-          {
-            path: 'operations/:kind',
-            name: 'management-operation',
-            component: () => import('@/views/management/OperationView.vue'),
-          },
-          {
-            path: 'activity',
-            name: 'management-activity',
-            component: () => import('@/views/management/ActivityView.vue'),
-          },
-        ],
       },
       {
         // The traffic report: what the instance moved, by day, month, account

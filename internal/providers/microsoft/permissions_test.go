@@ -11,8 +11,7 @@ import (
 
 // wantScopes is the exact permission set this provider requests, in request
 // order. It is pinned on purpose: widening it is a deliberate change (a stored
-// grant is not retroactive) and every directory scope needs the tenant-wide
-// admin consent.
+// grant is not retroactive).
 var wantScopes = []string{
 	"offline_access",
 	"openid",
@@ -21,23 +20,6 @@ var wantScopes = []string{
 	"https://graph.microsoft.com/User.Read",
 	"https://graph.microsoft.com/Files.ReadWrite.All",
 	"https://graph.microsoft.com/Sites.ReadWrite.All",
-	"https://graph.microsoft.com/User.Read.All",
-	"https://graph.microsoft.com/User.ReadWrite.All",
-	"https://graph.microsoft.com/Group.ReadWrite.All",
-	"https://graph.microsoft.com/Directory.ReadWrite.All",
-	"https://graph.microsoft.com/GroupMember.ReadWrite.All",
-	"https://graph.microsoft.com/Team.ReadBasic.All",
-	"https://graph.microsoft.com/TeamMember.Read.All",
-	"https://graph.microsoft.com/Tasks.Read",
-	"https://graph.microsoft.com/Domain.Read.All",
-	"https://graph.microsoft.com/AdministrativeUnit.ReadWrite.All",
-	"https://graph.microsoft.com/RoleManagement.Read.All",
-	"https://graph.microsoft.com/Organization.Read.All",
-	"https://graph.microsoft.com/LicenseAssignment.ReadWrite.All",
-	"https://graph.microsoft.com/AuditLog.Read.All",
-	"https://graph.microsoft.com/Mail.ReadWrite",
-	"https://graph.microsoft.com/Calendars.ReadWrite",
-	"https://graph.microsoft.com/Sites.Manage.All",
 }
 
 // TestScopesMatchThePermissionTable pins Scopes() to the table the guide renders.
@@ -60,11 +42,6 @@ func TestScopesMatchThePermissionTable(t *testing.T) {
 // for scope 'Tasks.Read.All' that doesn't exist on the resource
 // 00000003-0000-0000-c000-000000000000", even with the permission granted on the
 // app registration.
-//
-// applicationOnlyScopes are the Graph permissions this product needs in their
-// app-only shape (or needed before that trap was found). They belong to the
-// client-credentials calls — `ActivityFeed.Read` on manage.office.com, see
-// unified.go and docs/app-registration.md §3.4 — and never to the table above.
 var applicationOnlyScopes = []string{
 	"Tasks.Read.All",
 	"Tasks.ReadWrite.All",
@@ -96,7 +73,7 @@ func TestPermissionsAreCompleteAndUnique(t *testing.T) {
 		if permission.Title == "" {
 			t.Fatalf("scope %q has no i18n title", permission.Scope)
 		}
-		if !strings.HasPrefix(permission.Scope, "https://graph.microsoft.com/") &&
+		if !strings.HasPrefix(permission.Scope, graphResource) &&
 			permission.Scope != "offline_access" && permission.Scope != "openid" &&
 			permission.Scope != "profile" && permission.Scope != "email" {
 			t.Fatalf("scope %q is neither an OIDC scope nor a Graph scope", permission.Scope)
@@ -109,19 +86,12 @@ func TestPermissionsAreCompleteAndUnique(t *testing.T) {
 	}
 }
 
-// TestDirectoryScopesRequireAdminConsent pins decision 2.3 of the plan: every
-// directory permission is an admin consent permission, and the file scopes are
-// not (they are granted by the user during the flow).
-func TestDirectoryScopesRequireAdminConsent(t *testing.T) {
+// TestNoScopeRequiresAdminConsent pins that the sync engine needs no tenant-wide
+// consent: the file scopes are granted by the user during the flow.
+func TestNoScopeRequiresAdminConsent(t *testing.T) {
 	for _, permission := range New().Permissions() {
-		if permission.Capability == providers.CapabilityFiles {
-			if permission.AdminConsent {
-				t.Fatalf("the file scope %q must not require an administrator", permission.Scope)
-			}
-			continue
-		}
-		if !permission.AdminConsent {
-			t.Fatalf("the directory scope %q must require an administrator", permission.Scope)
+		if permission.AdminConsent {
+			t.Fatalf("the file scope %q must not require an administrator", permission.Scope)
 		}
 	}
 }
@@ -150,8 +120,6 @@ func TestGrantAsEntraReportsItSatisfiesEveryCapability(t *testing.T) {
 	if len(granted) != len(encoded) {
 		t.Fatalf("granted = %v, want %d scopes", granted, len(encoded))
 	}
-	// delegation is Google-only, so it is outside this provider's vocabulary;
-	// every capability it does speak must be satisfied by the grant.
 	for _, capability := range providers.CapabilitiesFor(models.ProviderMicrosoft) {
 		if !providers.HasCapability(provider.Permissions(), granted, capability) {
 			t.Fatalf("a grant as Entra reports it does not satisfy %q", capability)
@@ -183,14 +151,18 @@ func TestOnlyTheOIDCScopesAreInformational(t *testing.T) {
 	}
 }
 
-// TestPersonalAccountsKeepOnlyTheScopesTheyCanHold pins the split decision A of
-// the capability report: on a personal Microsoft account the directory scopes (and
-// the SharePoint library scope) are not part of the table at all, so a reconnect is
-// never asked for over permissions that account can never be granted — while the
-// scopes a personal account really receives still prove the files capability.
+// TestPersonalAccountsKeepOnlyTheScopesTheyCanHold pins the split decision of the
+// capability report: on a personal Microsoft account the SharePoint library scope
+// is not part of the table, so a reconnect is never asked for over a permission
+// that account can never be granted — while the scopes a personal account really
+// receives still prove the files capability.
 func TestPersonalAccountsKeepOnlyTheScopesTheyCanHold(t *testing.T) {
 	provider := New()
 	applicable, notApplicable := providers.ApplicablePermissions(provider.Permissions(), providers.AccountKindPersonal)
+
+	if len(notApplicable) != 1 || notApplicable[0].Scope != graphScope("Sites.ReadWrite.All") {
+		t.Fatalf("notApplicable = %+v, want the SharePoint scope alone", notApplicable)
+	}
 
 	// The grant of a personal account: the OneDrive scopes, and the four OpenID
 	// Connect ones Entra ID never reports back (see Permissions).
@@ -204,42 +176,15 @@ func TestPersonalAccountsKeepOnlyTheScopesTheyCanHold(t *testing.T) {
 	if len(report.Missing) != 0 {
 		t.Fatalf("a personal account is asked to reconnect for %v", report.Missing)
 	}
-
-	// Everything the account cannot hold — the 14 directory scopes behind these
-	// ten capabilities, and nothing else: files is reachable through OneDrive.
-	want := []providers.Capability{
-		providers.CapabilityUsers,
-		providers.CapabilityGroups,
-		providers.CapabilityMembers,
-		providers.CapabilityTeams,
-		providers.CapabilityPlanner,
-		providers.CapabilityDomains,
-		providers.CapabilityOrgUnits,
-		providers.CapabilityRoles,
-		providers.CapabilityLicenses,
-		providers.CapabilityLogs,
-		providers.CapabilityMail,
-		providers.CapabilityCalendars,
-		providers.CapabilitySitesAdmin,
-	}
-	if len(report.NotApplicable) != len(want) {
-		t.Fatalf("notApplicable = %v, want %v", report.NotApplicable, want)
-	}
-	for i, capability := range want {
-		if report.NotApplicable[i] != capability {
-			t.Fatalf("notApplicable = %v, want %v", report.NotApplicable, want)
-		}
+	if len(report.NotApplicable) != 0 {
+		t.Fatalf("notApplicable = %v, want none: files is reachable through OneDrive", report.NotApplicable)
 	}
 
-	// A work or school account is unaffected: the whole table applies to it, so
-	// the same grant is reported exactly as it was before kinds existed.
+	// A work or school account is unaffected: the whole table applies to it.
 	work, workNotApplicable := providers.ApplicablePermissions(provider.Permissions(), providers.AccountKindWork)
 	if len(workNotApplicable) != 0 || len(work) != len(provider.Permissions()) {
 		t.Fatalf("work account: %d applicable and %d not applicable scopes, want all and none",
 			len(work), len(workNotApplicable))
-	}
-	if missing := providers.MissingCapabilities(work, granted); len(missing) != len(providers.ProviderCapabilities) {
-		t.Fatalf("work account missing = %v, want every capability", missing)
 	}
 }
 

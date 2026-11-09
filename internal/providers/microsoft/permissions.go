@@ -16,12 +16,10 @@ var _ providers.ScopeCatalog = (*Provider)(nil)
 // guide renders it (GET /api/providers/microsoft/guide) and the Accounts screen
 // derives the capability badges from the grant.
 //
-// Every Microsoft Graph scope in this table is an *admin consent* permission:
-// the tenant administrator has to grant it once for the whole directory, which is
-// why the provider also implements providers.ConsentGranter (the adminconsent
-// flow). A directory operation still requires the acting identity to hold the
-// matching Entra role — the grant is what the application may do, not what the
-// signed-in user is allowed to do.
+// The table is the minimum the sync engine needs: identity, OneDrive and
+// SharePoint. Every Graph scope beyond User.Read is an *admin consent*
+// permission, which is why the provider also implements providers.ConsentGranter
+// (the adminconsent flow).
 //
 // Graph scopes are declared in their fully qualified form because that is what
 // the token response carries; matching is prefix tolerant (see
@@ -34,14 +32,14 @@ var _ providers.ScopeCatalog = (*Provider)(nil)
 // carries the Graph resource scopes — so requiring them would mark every account
 // that connects today as "connected before these permissions existed".
 //
-// A personal Microsoft account (an MSA) cannot hold the directory scopes at all,
-// because it is a tenant of its own and not a member of a directory
-// (see account_kind.go): Entra ID never grants them and Graph never reports them
-// back, so a reconnect cannot change the answer. Those rows therefore carry
-// Kinds: workAccounts, and providers.ApplicablePermissions moves them out of the
-// table of a personal account — where the Accounts screen shows them as not
-// applicable instead of missing. Scopes() still requests the full table, because
-// the kind of the account is unknown until the flow comes back.
+// A personal Microsoft account (an MSA) cannot hold Sites.ReadWrite.All, because
+// it is a tenant of its own and not a member of a directory (see
+// account_kind.go): Entra ID never grants it and Graph never reports it back, so
+// a reconnect cannot change the answer. That row therefore carries Kinds:
+// workAccounts, and providers.ApplicablePermissions moves it out of the table of
+// a personal account — where the Accounts screen shows it as not applicable
+// instead of missing. Scopes() still requests the full table, because the kind of
+// the account is unknown until the flow comes back.
 func (p *Provider) Permissions() []providers.Permission {
 	return []providers.Permission{
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: "offline_access", Informational: true},
@@ -51,70 +49,6 @@ func (p *Provider) Permissions() []providers.Permission {
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("User.Read")},
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("Files.ReadWrite.All")},
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("Sites.ReadWrite.All"), Kinds: workAccounts},
-
-		{Capability: providers.CapabilityUsers, Title: "users", Scope: graphScope("User.Read.All"), AdminConsent: true, Kinds: workAccounts},
-		{Capability: providers.CapabilityUsers, Title: "users", Scope: graphScope("User.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
-
-		// Distribution lists are Microsoft 365 groups, so creating and renaming
-		// them is a group write; Directory.ReadWrite.All is what allows creating
-		// the object and reading the tenant-wide catalogue it lives in.
-		{Capability: providers.CapabilityGroups, Title: "groups", Scope: graphScope("Group.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
-		{Capability: providers.CapabilityGroups, Title: "groups", Scope: graphScope("Directory.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
-
-		{Capability: providers.CapabilityMembers, Title: "members", Scope: graphScope("GroupMember.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
-
-		// Teams are groups with a team resource behind them, and Graph keeps
-		// the team membership on its own endpoint (the conversation roles of a
-		// member live there, not on the group). Both scopes are read-only: the
-		// teams and team members report sections never write.
-		{Capability: providers.CapabilityTeams, Title: "teams", Scope: graphScope("Team.ReadBasic.All"), AdminConsent: true, Kinds: workAccounts},
-		{Capability: providers.CapabilityTeams, Title: "teams", Scope: graphScope("TeamMember.Read.All"), AdminConsent: true, Kinds: workAccounts},
-
-		// Planner plans hang off the group that owns them, and the planner plans
-		// report section reads them per group (`GET /groups/{id}/planner/plans`).
-		//
-		// Tasks.Read is the delegated least privileged scope of that read. The
-		// `Tasks.Read.All` permission that looks like its directory-wide twin is
-		// an *application* permission only — it has no delegated counterpart, so
-		// listing it here makes Entra refuse the whole authorization request with
-		// AADSTS650053 ("asked for scope 'Tasks.Read.All' that doesn't exist on
-		// the resource 00000003-0000-0000-c000-000000000000"), even though the
-		// app registration carries it. The higher privileged delegated scopes of
-		// the same API (Group.Read.All, Group.ReadWrite.All, Tasks.ReadWrite)
-		// are already consented through the `groups` row above, so the section
-		// works with either scope in hand once the account reconnects.
-		{Capability: providers.CapabilityPlanner, Title: "planner", Scope: graphScope("Tasks.Read"), AdminConsent: true, Kinds: workAccounts},
-
-		{Capability: providers.CapabilityDomains, Title: "domains", Scope: graphScope("Domain.Read.All"), AdminConsent: true, Kinds: workAccounts},
-
-		// Administrative units are the closest Graph equivalent of the Google
-		// organisational units the same screen manages.
-		{Capability: providers.CapabilityOrgUnits, Title: "orgunits", Scope: graphScope("AdministrativeUnit.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
-
-		{Capability: providers.CapabilityRoles, Title: "roles", Scope: graphScope("RoleManagement.Read.All"), AdminConsent: true, Kinds: workAccounts},
-
-		// Organization.Read.All lists the subscribed SKUs; the write scope is what
-		// assigns or removes a licence.
-		{Capability: providers.CapabilityLicenses, Title: "licenses", Scope: graphScope("Organization.Read.All"), AdminConsent: true, Kinds: workAccounts},
-		{Capability: providers.CapabilityLicenses, Title: "licenses", Scope: graphScope("LicenseAssignment.ReadWrite.All"), AdminConsent: true, Kinds: workAccounts},
-
-		// The directory feed of the Audit Logs screen. AuditLog.Read.All is the
-		// read side of Graph's `auditLogs/directoryAudits`, and it is the whole
-		// delegated contract of the feature: the file/workload feed is read with
-		// an *application* permission (ActivityFeed.Read) that cannot be part of
-		// an authorization request — see unified.go and
-		// docs/app-registration.md.
-		{Capability: providers.CapabilityLogs, Title: "logs", Scope: auditLogScope, AdminConsent: true, Kinds: workAccounts},
-
-		// The Admin operations screen. Mail.ReadWrite reads a mailbox and
-		// creates the copy in another one; Calendars.ReadWrite reads the events
-		// of a user and creates them on the target; Sites.Manage.All provisions
-		// the SharePoint site the OneDrive → SharePoint copy targets. All three
-		// act on other users' mailboxes, so they need the tenant-wide consent
-		// and are only applicable to a work or school account.
-		{Capability: providers.CapabilityMail, Title: "mail", Scope: graphScope("Mail.ReadWrite"), AdminConsent: true, Kinds: workAccounts},
-		{Capability: providers.CapabilityCalendars, Title: "calendars", Scope: graphScope("Calendars.ReadWrite"), AdminConsent: true, Kinds: workAccounts},
-		{Capability: providers.CapabilitySitesAdmin, Title: "sitesadmin", Scope: graphScope("Sites.Manage.All"), AdminConsent: true, Kinds: workAccounts},
 	}
 }
 
@@ -128,11 +62,6 @@ func (p *Provider) ConsoleURLs() map[string]string {
 		"entra_credentials":     "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/Credentials",
 		"entra_api_permissions": "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI",
 		"graph_permissions":     "https://learn.microsoft.com/en-us/graph/permissions-reference",
-		// The management activity API (the file/workload feed of the Audit Logs
-		// screen) is app-only, so it has its own application-permission blade
-		// and its own subscription checklist.
-		"entra_app_permissions": "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationMenuBlade/~/CallAnAPI/appId/",
-		"office_activity_api":   "https://learn.microsoft.com/en-us/office/office-365-management-api/office-365-management-activity-api-reference",
 	}
 }
 

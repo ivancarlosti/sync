@@ -176,12 +176,9 @@ func (s *Server) accountKind(account models.ConnectedAccount) providers.AccountK
 
 // accountOrg resolves the organisation (Entra tenant, Workspace domain) an account
 // belongs to: the column the connection wrote, or, for an account connected before
-// that column existed, the tenant claim of its stored access token — the very
-// fallback AuditLogService.organisations applies when it groups the feeds. The two
-// must agree, or the Audit Logs screen would list an organisation whose feed no
-// account of it can be selected for. The fallback is free (no provider call, no
-// refresh) and an account no source can place keeps the empty value, which the
-// screen reads as "no organisation feed".
+// that column existed, the tenant claim of its stored access token. The fallback
+// is free (no provider call, no refresh) and an account no source can place keeps
+// the empty value.
 func (s *Server) accountOrg(account models.ConnectedAccount) string {
 	if org := strings.ToLower(strings.TrimSpace(account.OrgID)); org != "" {
 		return org

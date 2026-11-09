@@ -66,16 +66,6 @@ type ConsentGranter interface {
     AdminConsentURL(creds Credentials, state string) string
 }
 
-// Optional capability: providers with an organisation-wide activity feed. The
-// audit-log collector calls it once per stream and keeps one cursor per
-// (provider, organisation, stream); a provider that does not implement it is
-// simply skipped. See docs/audit-logs.md.
-type ActivityLogSource interface {
-    ActivityLogStreams() []string
-    ActivityLogScopes() []string
-    ActivityLogs(ctx, creds Credentials, tokens *Tokens, stream, cursor string) ([]ActivityEvent, string, error)
-}
-
 // Optional capability: providers that can name the organisation (tenant or
 // domain) of a token set without a provider call. Microsoft reads the `tid`
 // claim; Google cannot (its tokens are opaque), so its accounts rely on the
@@ -217,8 +207,8 @@ What the registration has to expose:
 
 | Provider | Redirect URI to register | APIs / permissions |
 |---|---|---|
-| Google | `APP_URL/api/oauth/google/callback` | Drive API + Admin SDK API + Enterprise License Manager API enabled; the scopes of the permission table (sensitive: `admin.directory.*`, `apps.licensing`); the client ID allow-listed in Admin console → Security → API controls |
-| Microsoft | `APP_URL/api/oauth/microsoft/callback` | the Graph delegated permissions of the permission table, all of them *admin consent required*; the tenant administrator grants them once (the guide has the consent button) |
+| Google | `APP_URL/api/oauth/google/callback` | Drive API enabled; the identity and Drive scopes of the permission table (`openid`, `userinfo.email`, `userinfo.profile`, `drive`); the client ID allow-listed in Admin console → Security → API controls |
+| Microsoft | `APP_URL/api/oauth/microsoft/callback` | the delegated permissions of the permission table (`offline_access`, `openid`, `profile`, `email`, `User.Read`, `Files.ReadWrite.All`, `Sites.ReadWrite.All`); the tenant administrator can grant `Sites.ReadWrite.All` once for the whole directory |
 
 Both flows are shown with `prompt=consent`, so a reconnection always returns a
 refresh token; Google also uses `access_type=offline` and `include_granted_scopes`.
@@ -243,7 +233,7 @@ prefix stripped (`copy: "permissions"` — `User.Read`, `Files.ReadWrite.All`, �
 | Deletion | `DELETE /files/:id` (permanent) | `DELETE /drives/:drive/items/:id` (OneDrive/SharePoint still keep the item in the recycle bin) |
 | Progress while uploading | resumable upload for large files | upload session for large files (`upload.go`) |
 | Account kind | n/a — a Google account is a Google account | `personal` (an MSA) vs `work`, read from the `tid` claim (or the tenant segment of `iss`) of the access token, falling back to the own drive's `driveType` when the token carries no readable claim (`account_kind.go`). Stored on the account row as `kind` and reported as `account_kind`, it decides which permissions are applicable to the account (`Permission.Kinds`, `providers.ApplicablePermissions`) |
-| Organisation (`org_id`) | the hosted domain (`hd` claim of the ID token) read at connection (`google.go`), lower-cased; a consumer account has none, and Google tokens are opaque so there is nothing to re-read later | the `tid` claim of the token (its `iss` tenant segment when `tid` is missing), `providers.OrgIdentifier.OrgIDOf` (`account_kind.go`); the consumer tenant and an unreadable token answer none. Stored on the account row as `org_id` and reported as `org_id`: it groups the administrator accounts of one organisation under a single activity feed (`auditlog.go`) and is what `/audit-logs` narrows to when an account is picked |
+| Organisation (`org_id`) | the hosted domain (`hd` claim of the ID token) read at connection (`google.go`), lower-cased; a consumer account has none, and Google tokens are opaque so there is nothing to re-read later | the `tid` claim of the token (its `iss` tenant segment when `tid` is missing), `providers.OrgIdentifier.OrgIDOf` (`account_kind.go`); the consumer tenant and an unreadable token answer none. Stored on the account row as `org_id` and reported as `org_id` |
 
 Both providers answer `IsNotFound(err) == true` for a remote item that vanished,
 which is how a deletion detected during a run is distinguished from a failure.
@@ -256,8 +246,8 @@ problem (403), and never confuses the two.
 
 * **Accounts** — one row per connected account: provider, e-mail, status, granted
   permissions, capability badges — the ones the stored grant satisfies, the ones
-  outside what that kind of account can hold (greyed out: the directory
-  permissions on a personal Microsoft account, with a one-line explanation, see
+  outside what that kind of account can hold (greyed out: the SharePoint library
+  scope on a personal Microsoft account, with a one-line explanation, see
   `accounts.notApplicableCapabilities`) and the ones the current release asks for
   on top of it (red) — expiry, last refresh and last synchronisation, with *Check
   the token*, *Reconnect* (only when an **applicable** permission is missing) and
@@ -313,6 +303,5 @@ problem (403), and never confuses the two.
 | Microsoft: the *files* badge is red right after connecting, and reconnecting changes nothing | the grant is missing a **Graph** permission — `User.Read`, `Files.ReadWrite.All` or `Sites.ReadWrite.All`. The four OpenID Connect scopes are `informational` and never gate the badge (Entra does not report them back) | grant the missing Graph permission (admin consent for the tenant), then reconnect |
 | SharePoint libraries missing | `Sites.ReadWrite.All` not granted, no admin consent, or the library belongs to a site the signed-in user cannot reach | grant the scope and reconnect; the picker also accepts a pasted SharePoint URL (the manual fallback of the site field) |
 | SharePoint missing on a **personal** Microsoft account, with the "only one OneDrive" hint | an MSA has no site collection at all: its directory holds no `Microsoft.FileServices` address and Graph answers `/sites` with *This API is not supported for MSA accounts* | nothing to fix — the API answers an empty list instead of an error, and an intra-account job (OneDrive → OneDrive) covers what the account does have |
-| the directory badges of a **personal** Microsoft account are greyed out (*Not applicable*) | an MSA can never be granted the directory scopes: it is a tenant of its own, not a member of a directory, so no consent screen offers them and a reconnect returns the same grant | nothing to fix — the account is fully usable for files (its OneDrive badges stay green); the directory screens need a work or school account |
 | `ObjectHandle is Invalid` (`400 invalidRequest`) when browsing the destination | the picker opened a **bookkeeping** drive of a personal account (`ODCMetadataArchive`, `Bundles_*`), which Microsoft tags `driveType: personal` like the real OneDrive, but whose root cannot be listed | update to a release that resolves the own drive through `/me/drive`; a job stored against such a drive must be re-pointed at the OneDrive with the folder picker |
 | Google native docs never copied | by design in V1 (`unsupported`) | export them manually, or keep them out of the source folder |

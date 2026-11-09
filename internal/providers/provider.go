@@ -9,7 +9,6 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -147,133 +146,6 @@ type OrgIdentifier interface {
 	OrgIDOf(tokens *Tokens) string
 }
 
-// OrganisationNamer is implemented by providers that can turn an organisation id
-// into the name a person recognises: the display name of an Entra tenant, the
-// primary domain (and the organisation name of the Workspace profile) of a Google
-// customer.
-//
-// It is what makes a failed feed identifiable. An audit-log failure is stored
-// against (provider, organisation, stream), so without this the operator reads a
-// bare tenant id in the banner and has to look up which of their tenants it is —
-// and, in the common case of one tenant waiting for a consent and the rest
-// reading fine, which of several tenants needs the grant.
-//
-// Two rules keep it honest. It is optional, so a provider that cannot name its
-// organisation simply answers nothing and the caller falls back to the id. And it
-// is deliberately cheap: the answer is a display label read from an endpoint the
-// connection already grants (see docs/audit-logs.md), never a new consent, and
-// the collector caches it for hours (see services.AuditLogService).
-type OrganisationNamer interface {
-	// OrganisationName answers the display name and the domain of the
-	// organisation behind tokens. An empty name is not an error: it means the
-	// provider could not resolve one, which is a label the caller may skip.
-	OrganisationName(ctx context.Context, creds Credentials, tokens *Tokens) (name, domain string, err error)
-}
-
-// ActivityEvent is one record of a provider's activity feed, already normalised
-// onto the vocabulary of models.AuditLogAction / models.AuditLogTarget. It is
-// what an ActivityLogSource returns and what the collector stores as a
-// models.AuditLogEvent; keeping it provider agnostic is what lets one screen and
-// one filter engine cover both clouds.
-type ActivityEvent struct {
-	// Source names the feed the record came from (directory, drive, unified,
-	// admin, login, token, …). Together with RemoteID it is the identity of the
-	// event, so two feeds may use unrelated id spaces.
-	Source   string
-	RemoteID string
-
-	Action models.AuditLogAction
-	Target models.AuditLogTarget
-
-	ActorEmail string
-	ActorName  string
-	ActorID    string
-	// ActorKind is the nature of the principal (models.AuditLogActorKind): a
-	// person, a workload or nobody at all. An application name belongs in
-	// ActorName, never in ActorEmail.
-	ActorKind models.AuditLogActorKind
-	// ActorOnBehalfOf names the person a workload acted for, when the vendor
-	// says so (a device registration is a service acting for the human who
-	// enrolled it). Both stay empty when the record does not say.
-	ActorOnBehalfOf     string
-	ActorOnBehalfOfName string
-
-	TargetName string
-	TargetID   string
-	DriveID    string
-	SiteID     string
-
-	// OccurredAt is when the vendor says the event happened.
-	OccurredAt time.Time
-	// Raw is the vendor record, kept for fields the normaliser did not map.
-	Raw json.RawMessage
-}
-
-// ActivityLogSource is the optional capability behind the Audit Logs screen:
-// providers able to read their organisation-wide activity feed. It is
-// implemented the same way as SiteBrowser / SiteResolver, so a provider that
-// cannot answer one simply does not implement it and the collector skips it.
-//
-// The feed is tenant/domain scoped, never per user: one call reads every event
-// of the organisation the tokens belong to. A provider rarely exposes one feed,
-// though — Microsoft answers directory changes from Graph and file activity from
-// the Office 365 management activity API, Google answers one application of the
-// Reports API per call — so a *stream* names the feed being read. The collector
-// stores one cursor per (provider, organisation, stream), which is what lets one
-// feed stay healthy while another one of the same tenant is waiting for a
-// consent, and what keeps the failures of one stream out of the other.
-type ActivityLogSource interface {
-	// ActivityLogStreams lists the feeds this provider reads, using the same
-	// names the events carry in ActivityEvent.Source. The collector calls
-	// ActivityLogs once per stream and keeps one cursor per stream.
-	ActivityLogStreams() []string
-
-	// ActivityLogScopes lists the extra scopes the collector needs, so the guide
-	// and the Accounts screen can ask an operator to reconnect an account that
-	// was granted before the feed existed.
-	ActivityLogScopes() []string
-
-	// ActivityLogs reads one feed (stream) of the organisation behind tokens,
-	// starting after cursor, and answers the normalised events plus the cursor of
-	// the next pass. cursor is empty on the first call; next may be empty when
-	// the provider has no meaningful resume token, in which case the collector
-	// keeps the previous position.
-	ActivityLogs(ctx context.Context, creds Credentials, tokens *Tokens, stream, cursor string) (events []ActivityEvent, next string, err error)
-}
-
-// ActivityLogNormaliser is the optional capability behind the repair pass of the
-// activity feed: it maps one *stored* vendor record back onto the shared
-// vocabulary, without a network read. The collector keeps the vendor document of
-// every event in AuditLogEvent.Raw precisely so a normaliser that learned a field
-// later can re-read the history instead of leaving it wrong forever (see
-// plan 2026-11-07-audit-log-actor-attribution.md).
-//
-// A provider that does not implement it simply keeps its stored rows as they are:
-// the repair pass skips its events, which is why the interface is optional.
-type ActivityLogNormaliser interface {
-	// NormaliseActivityEvent parses one vendor record of the named stream.
-	// It answers false for a record it cannot read, which leaves the stored row
-	// untouched instead of erasing what the previous release mapped.
-	NormaliseActivityEvent(source string, raw json.RawMessage) (ActivityEvent, bool)
-}
-
-// ActivityActorEnricher is the optional capability that gives an event a better
-// actor than the one its record carries: vendors log a change as made by a
-// workload ("Device Registration Service") while the person behind it is only
-// recoverable from another object the event points at (the device, and its
-// registered owners).
-//
-// The collector calls it on the events of a pass and on the rows of a repair
-// pass, so a batch is always the unit of work: an implementation deduplicates
-// inside the batch, and a failure — a throttle, a refusal, an object that no
-// longer exists — must be logged and skipped, never returned: attribution is an
-// improvement, and an unreachable enrichment must not cost the pass.
-type ActivityActorEnricher interface {
-	// EnrichActivityActors fills the actor fields of the events it can, and
-	// answers how many it improved.
-	EnrichActivityActors(ctx context.Context, tokens *Tokens, events []ActivityEvent) int
-}
-
 // Drive is a named root the operator can browse and pick a folder from. For
 // Google it is "My Drive" or a shared drive; for Microsoft it is a personal
 // OneDrive or a SharePoint document library.
@@ -398,96 +270,10 @@ type Capability string
 const (
 	// CapabilityFiles covers browsing and transferring files (the sync engine).
 	CapabilityFiles Capability = "files"
-	// CapabilityUsers covers reading and managing user accounts.
-	CapabilityUsers Capability = "users"
-	// CapabilityGroups covers groups and Microsoft distribution lists.
-	CapabilityGroups Capability = "groups"
-	// CapabilityMembers covers group membership.
-	CapabilityMembers Capability = "members"
-	// CapabilityTeams covers reading the Microsoft Teams of a tenant and their
-	// membership (the teams and team members report sections).
-	CapabilityTeams Capability = "teams"
-	// CapabilityPlanner covers reading the Planner plans of the groups of a
-	// tenant (the planner plans report section).
-	CapabilityPlanner Capability = "planner"
-	// CapabilityDomains covers the verified domains of a tenant.
-	CapabilityDomains Capability = "domains"
-	// CapabilityOrgUnits covers organisational units and their settings.
-	CapabilityOrgUnits Capability = "orgunits"
-	// CapabilityRoles covers the administrative role catalogue (read-only).
-	CapabilityRoles Capability = "roles"
-	// CapabilityLicenses covers subscription and licence assignment.
-	CapabilityLicenses Capability = "licenses"
-	// CapabilityLogs covers reading the organisation-wide activity feed behind
-	// the Audit Logs screen (see ActivityLogSource).
-	CapabilityLogs Capability = "logs"
-	// CapabilityMail covers reading and copying mailbox content (the mailbox
-	// copy of the Admin operations screen).
-	CapabilityMail Capability = "mail"
-	// CapabilityCalendars covers reading and transferring calendars (the
-	// calendar transfer of the Admin operations screen).
-	CapabilityCalendars Capability = "calendars"
-
-	// CapabilitySitesAdmin covers creating sites and copying content into them
-	// (the OneDrive → SharePoint operation).
-	CapabilitySitesAdmin Capability = "sitesadmin"
-	// CapabilityAnalytics covers the read-only Google Analytics inventory
-	// behind the analytics report section (properties, accounts and their
-	// settings).
-	CapabilityAnalytics Capability = "analytics"
-	// CapabilityYouTube covers the read-only YouTube channel inventory behind
-	// the youtube report section.
-	CapabilityYouTube Capability = "youtube"
 )
 
 // ProviderCapabilities lists every capability in the order the UI displays them.
-var ProviderCapabilities = []Capability{
-	CapabilityFiles,
-	CapabilityUsers,
-	CapabilityGroups,
-	CapabilityMembers,
-	CapabilityTeams,
-	CapabilityPlanner,
-	CapabilityDomains,
-	CapabilityOrgUnits,
-	CapabilityRoles,
-	CapabilityLicenses,
-	CapabilityLogs,
-	CapabilityMail,
-	CapabilityCalendars,
-	CapabilitySitesAdmin,
-	CapabilityAnalytics,
-	CapabilityYouTube,
-}
-
-// capabilityExclusive names the capabilities only one provider declares, exactly
-// as reportSectionExclusive does for the report sections: the vocabulary is
-// shared, the products behind it are not. Google has no Teams and no Planner, so a
-// Workspace account is never offered them — not in the guide, not as a badge, and
-// above all not as a missing permission a reconnection could add. A capability
-// absent from this map is part of every provider's vocabulary.
-var capabilityExclusive = map[Capability]models.ProviderName{
-	CapabilityTeams:      models.ProviderMicrosoft,
-	CapabilityPlanner:    models.ProviderMicrosoft,
-	CapabilityMail:       models.ProviderMicrosoft,
-	CapabilityCalendars:  models.ProviderMicrosoft,
-	CapabilitySitesAdmin: models.ProviderMicrosoft,
-	CapabilityAnalytics:  models.ProviderGoogle,
-	CapabilityYouTube:    models.ProviderGoogle,
-}
-
-// CapabilitiesFor answers the capabilities in the vocabulary of one provider, in
-// display order.
-func CapabilitiesFor(name models.ProviderName) []Capability {
-	capabilities := make([]Capability, 0, len(ProviderCapabilities))
-	for _, capability := range ProviderCapabilities {
-		if owner, exclusive := capabilityExclusive[capability]; exclusive && owner != name {
-			continue
-		}
-		capabilities = append(capabilities, capability)
-	}
-	return capabilities
-}
+var ProviderCapabilities = []Capability{CapabilityFiles}
 
 // Permission documents one requested scope: why it is requested, which feature
 // needs it, and whether a tenant administrator has to grant it for everybody.
@@ -641,6 +427,13 @@ func MissingCapabilities(permissions []Permission, granted []string) []Capabilit
 		missing = append(missing, capability)
 	}
 	return missing
+}
+
+// CapabilitiesFor answers the capabilities in the vocabulary of one provider, in
+// display order. The vocabulary is shared by both providers now that the
+// directory/report features are gone.
+func CapabilitiesFor(_ models.ProviderName) []Capability {
+	return append([]Capability(nil), ProviderCapabilities...)
 }
 
 // CapabilityReport is what a permission table says about one account, in display

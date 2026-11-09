@@ -156,109 +156,6 @@ const (
 	AuditKindFile AuditKind = "file"
 )
 
-// AuditLogAction is the normalised verb of an activity event. The vendor
-// spelling of the same act stays in AuditLogEvent.Raw; this is the vocabulary
-// every provider maps onto, so one screen can sort a Google and a Microsoft
-// event side by side.
-type AuditLogAction string
-
-const (
-	// AuditLogCreate is an object or membership being created.
-	AuditLogCreate AuditLogAction = "create"
-	// AuditLogDelete is an object or membership being removed.
-	AuditLogDelete AuditLogAction = "delete"
-	// AuditLogUpdate is an object being changed.
-	AuditLogUpdate AuditLogAction = "update"
-	// AuditLogMove is a file or folder being moved or renamed.
-	AuditLogMove AuditLogAction = "move"
-	// AuditLogShare is a permission or sharing change.
-	AuditLogShare AuditLogAction = "share"
-	// AuditLogLogin is a sign-in or token event.
-	AuditLogLogin AuditLogAction = "login"
-	// AuditLogOther is an event the normaliser did not recognise.
-	AuditLogOther AuditLogAction = "other"
-)
-
-// Valid reports whether the value is a supported action.
-func (a AuditLogAction) Valid() bool {
-	switch a {
-	case AuditLogCreate, AuditLogDelete, AuditLogUpdate, AuditLogMove, AuditLogShare, AuditLogLogin, AuditLogOther:
-		return true
-	default:
-		return false
-	}
-}
-
-// AuditLogTarget is the normalised kind of object an activity event touched.
-type AuditLogTarget string
-
-const (
-	// AuditLogTargetFile is a file (a Drive file, a SharePoint document).
-	AuditLogTargetFile AuditLogTarget = "file"
-	// AuditLogTargetFolder is a folder or document library folder.
-	AuditLogTargetFolder AuditLogTarget = "folder"
-	// AuditLogTargetUser is a user account.
-	AuditLogTargetUser AuditLogTarget = "user"
-	// AuditLogTargetGroup is a group, a distribution list or a membership.
-	AuditLogTargetGroup AuditLogTarget = "group"
-	// AuditLogTargetSite is a SharePoint site.
-	AuditLogTargetSite AuditLogTarget = "site"
-	// AuditLogTargetDrive is a drive or document library.
-	AuditLogTargetDrive AuditLogTarget = "drive"
-	// AuditLogTargetDevice is a device registration (an Entra device object:
-	// a laptop, a phone, a server joined to the directory).
-	AuditLogTargetDevice AuditLogTarget = "device"
-	// AuditLogTargetApplication is an application or service principal: the
-	// identity of a workload rather than of a person.
-	AuditLogTargetApplication AuditLogTarget = "application"
-	// AuditLogTargetOther is a target the normaliser did not recognise.
-	AuditLogTargetOther AuditLogTarget = "other"
-)
-
-// Valid reports whether the value is a supported target.
-func (t AuditLogTarget) Valid() bool {
-	switch t {
-	case AuditLogTargetFile, AuditLogTargetFolder, AuditLogTargetUser, AuditLogTargetGroup,
-		AuditLogTargetSite, AuditLogTargetDrive, AuditLogTargetDevice, AuditLogTargetApplication,
-		AuditLogTargetOther:
-		return true
-	default:
-		return false
-	}
-}
-
-// AuditLogActorKind is the nature of the principal behind an activity event.
-// It exists because the actor of a change is not always a person: a device
-// registration names "Device Registration Service", a policy refresh names the
-// workload that ran it. Without this column a service name has to travel in the
-// actor e-mail slot, where the screen reads it as an address (see plan
-// 2026-11-07-audit-log-actor-attribution.md).
-type AuditLogActorKind string
-
-const (
-	// AuditLogActorUser is a person: ActorEmail holds the address.
-	AuditLogActorUser AuditLogActorKind = "user"
-	// AuditLogActorApplication is a workload (a service principal, an
-	// application, a background service): ActorEmail stays empty and
-	// ActorName holds the display name. ActorOnBehalfOf may name the person
-	// whose action the workload carried out.
-	AuditLogActorApplication AuditLogActorKind = "application"
-	// AuditLogActorSystem is an event the vendor attributes to no principal at
-	// all (a scheduled policy, a background job), named after the service that
-	// logged it.
-	AuditLogActorSystem AuditLogActorKind = "system"
-)
-
-// Valid reports whether the value is a supported actor kind.
-func (k AuditLogActorKind) Valid() bool {
-	switch k {
-	case AuditLogActorUser, AuditLogActorApplication, AuditLogActorSystem:
-		return true
-	default:
-		return false
-	}
-}
-
 // TrafficDirection is the side of a job one traffic row accounts for. The source
 // account is read from (inbound) and the destination is written to (outbound);
 // an operation that moves no payload (a delete, a folder creation) is attributed
@@ -351,26 +248,13 @@ const (
 	// SettingPurgeEnabled arms the automatic retention pass (and leaves the
 	// manual "purge now" actions available either way).
 	SettingPurgeEnabled = "purge_enabled"
-	// SettingPurgeJobsDays, SettingPurgeAuditsDays, SettingPurgeBillingDays and
-	// SettingPurgeAuditLogsDays are the ages, in days, past which the automatic
-	// pass erases a run, an audit report, a traffic day and an activity event.
-	// Operators delete records under different legal constraints, so the four
-	// move independently.
-	SettingPurgeJobsDays      = "purge_jobs_days"
-	SettingPurgeAuditsDays    = "purge_audits_days"
-	SettingPurgeBillingDays   = "purge_billing_days"
-	SettingPurgeAuditLogsDays = "purge_auditlogs_days"
-	// SettingAuditLogsEnabled arms the scheduled pass of the activity feed
-	// collector (and leaves the manual "collect now" action available either
-	// way). Off is what an operator uses when the vendor throttles the tenant.
-	SettingAuditLogsEnabled = "auditlogs_enabled"
-	// SettingAuditLogsIntervalMinutes is how often the collector polls the
-	// activity feeds of the connected organisations.
-	SettingAuditLogsIntervalMinutes = "auditlogs_interval_minutes"
-	// SettingAuditLogsRequestDelaySeconds is the pause the pass waits between
-	// the provider calls it makes: the pace that keeps one busy tenant from
-	// answering 429 to its second feed.
-	SettingAuditLogsRequestDelaySeconds = "auditlogs_request_delay_seconds"
+	// SettingPurgeJobsDays, SettingPurgeAuditsDays and SettingPurgeBillingDays
+	// are the ages, in days, past which the automatic pass erases a run, an
+	// audit report and a traffic day. Operators delete records under different
+	// legal constraints, so the three move independently.
+	SettingPurgeJobsDays    = "purge_jobs_days"
+	SettingPurgeAuditsDays  = "purge_audits_days"
+	SettingPurgeBillingDays = "purge_billing_days"
 )
 
 // ProviderConfigPrefix is the settings-key prefix holding credentials entered

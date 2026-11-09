@@ -112,15 +112,8 @@ func Migrate(db *gorm.DB) error {
 		&models.SyncFile{},
 		&models.AuditRun{},
 		&models.AuditEntry{},
-		&models.DirectoryReport{},
-		&models.ReportSectionData{},
-		&models.ReportSchedule{},
-		&models.AuditLogEvent{},
-		&models.AuditLogCursor{},
 		&models.TrafficEntry{},
 		&models.APIToken{},
-		&models.ManagementTask{},
-		&models.ManagementTaskStep{},
 	); err != nil {
 		return fmt.Errorf("database: migration failed: %w", err)
 	}

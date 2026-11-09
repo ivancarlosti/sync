@@ -17,8 +17,8 @@ database, one HTTP port.
 │                                                                                         │
 │  internal/handlers  ── routing, session, validation, error → HTTP status mapping          │
 │  internal/services  ── Store, AuthService, OAuthService, TokenManager, SettingsService,   │
-│                        SyncService (engine), AuditService, ReportService, Scheduler,      │
-│                        Notifier, ProviderSettings                                         │
+│                        SyncService (engine), AuditService, Scheduler, Notifier,           │
+│                        ProviderSettings                                                   │
 │  internal/providers ── provider interface + google + microsoft implementations            │
 │  internal/notify    ── SMTP / webhook / shoutrrr senders                                  │
 │  internal/database  ── GORM connection, AutoMigrate, settings repository                  │
@@ -35,11 +35,10 @@ Four background loops run inside the same process (`internal/services/scheduler.
 
 | Loop | Period | What it does |
 |---|---|---|
-| schedule | 30 s (`DefaultScheduleInterval`) | starts every enabled job whose `next_run_at` elapsed, and every opted-in directory report whose slot elapsed |
+| schedule | 30 s (`DefaultScheduleInterval`) | starts every enabled job whose `next_run_at` elapsed |
 | tokens | 60 s (`DefaultTokenInterval`) | renews access tokens that expire inside the 5 min window (`DefaultRefreshWindow`) |
-| retention | 6 h (`DefaultPurgeInterval`) | applies the retention of Admin > Settings > Purge (runs, audit reports, traffic days, activity events) |
-| logs | 1 min tick (`DefaultAuditLogTick`), a pass every `auditlogs_interval_minutes` (10 by default) | polls the activity feeds of the connected organisations while `auditlogs_enabled` is on, paced by `auditlogs_request_delay_seconds` ([audit-logs.md](audit-logs.md)) |
-| (on boot) bootstrap | once | closes runs, audits and reports a restart interrupted, recomputes `next_run_at` for every scheduled job |
+| retention | 6 h (`DefaultPurgeInterval`) | applies the retention of Admin > Settings > Purge (runs, audit reports, traffic days) |
+| (on boot) bootstrap | once | closes runs and audits a restart interrupted, recomputes `next_run_at` for every scheduled job |
 
 Sync runs are goroutines owned by `SyncService`; a per-job lease guarantees that
 one job never runs twice, even when the binary is started twice against the same
@@ -135,67 +134,7 @@ list folder tree to a depth ──► buffer entries (DFS preorder) ──► ba
 Cancellation is cooperative too (`AuditService.Cancel`), and the scheduler
 `Bootstrap` closes the audits a restart interrupted.
 
-## 3c. Directory report pipeline
-
-`ReportService.Start` (`internal/services/report.go`) is the second read-only
-sibling of the run pipeline: it claims a per-account lease, writes a
-`directory_reports` row (`status=running`) and collects the organisation behind
-the account in the background ([reports.md](reports.md)).
-
-```text
-POST /api/reports ──► reserve account ──► report row (running)
-                          │
-                          └─► providers.ReportSource.CollectReport   (one table per section)
-                                users ─┐
-                                       ├─► guests / suspended users (derived)
-                                groups ─┴─► distribution lists (derived) / group members (one walk per group)
-                                teams ────► team members (one walk per team)
-                                groups ───► planner plans (one walk per group)
-                                shared drives ─► shared drive members (one walk per drive)
-                                sites, licenses, domains, organization, org units, roles, role assignments
-                                │
-                                ▼
-                        report_sections (columns + rows as JSON) ──► finalise row ──► prune
-```
-
-* The collector is an optional interface (`providers.ReportSource`), type-asserted
-  like `ScopeCatalog` and `SiteBrowser`, so the mandatory `Provider` contract
-  stays about files. Both providers implement it (`microsoft/report.go`,
-  `google/report.go`); a provider that does not is answered `supported:false`
-  instead of starting a report nothing could build.
-* The vocabulary is provider neutral and each collector advertises its half
-  (`providers.ReportSectionsFor`): `guests`, `distribution_lists`, `sites`,
-  `teams`, `team_members` and `planner_plans` belong to Microsoft,
-  `suspended_users`, `group_members`, `org_units`, `roles`, `role_assignments`,
-  `shared_drives`, `shared_drive_members`, `analytics` and `youtube` to Google.
-  `ReportSections` stays the
-  validation union the API accepts, so a stored request never names a table no
-  collector can produce.
-* The capability vocabulary is split the same way (`providers.CapabilitiesFor`
-  over `capabilityExclusive`): `teams` and `planner` are Microsoft only, so a
-  Workspace account is never offered them; `analytics` and `youtube` are Google
-  only, so a Microsoft account never is — not in the setup guide, not as a badge,
-  and above all not as a permission a reconnection could grant. A
-  capability absent from the map belongs to every provider.
-* Every section is independent: a refused endpoint fails **that** section
-  (`partial`), never the pass. Each section is bounded (20 000 rows, 500 pages)
-  and says so through `truncated`; the pass has a 15 minute budget.
-* The derived sections are the optimisation over the n8n flow: the users and
-  groups pages are read once and filtered, so the per-user `licenseDetails` loop
-  (one call per account of the tenant) becomes a handful of paged reads.
-* Pagination is the one thing the two collectors do differently: Graph hands a
-  next link (guarded to the Graph host so a page cannot carry the token
-  elsewhere) while Google hands an opaque `nextPageToken` (validated and
-  percent-encoded before it joins the query).
-* `GET /api/reports/:id/export` streams a ZIP of one CSV per section from the
-  stored tables; `PruneReports` keeps the newest 20 reports per account.
-
-The automatic report is opt in per account (`report_schedules`):
-`ReportService.RunDue` runs inside the schedule loop, pushes the slot forward
-before starting (so a failing account retries once per interval) and records the
-report id and the last error on the row.
-
-## 3d. Traffic accounting (billing)
+## 3c. Traffic accounting (billing)
 
 `internal/services/billing.go` sits beside the engine: the three places that touch
 a provider (`copy`, `remove`, `ensureFolder`) report what they moved, and the run
