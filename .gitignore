@@ -9,6 +9,10 @@
 docker/.env
 docker/.env.local
 
+# Local scratch space of the development tools: cmd/reportprobe reads its
+# service-account key from .local/ and writes the report it collects there.
+.local/
+
 # Go build artifacts
 /bin/
 /dist/

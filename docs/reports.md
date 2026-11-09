@@ -226,6 +226,12 @@ users is 300 calls, not 23 100. What bounds it:
   anyway. Names come from the answer when it carries one (`skuName`) and from the
   list otherwise.
 
+A report whose licence cells came back short is read with `cmd/reportprobe`
+([development.md](development.md) §3): the same collector, against the real
+tenant, with the counters of every user in the log and the three readings of the
+licence columns in `summary.txt`.
+
+
 ## 2. Permissions
 
 **Microsoft 365** is served by the scopes the account grants at connection time

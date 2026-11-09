@@ -950,7 +950,8 @@ func (d *reportData) probeLicenses() (int, error) {
 			// left to weigh.
 			err = answer.fault()
 		}
-		if err == nil && !answer.open() {
+		known := err == nil && !answer.open()
+		if known {
 			d.licensesKnown[strings.ToLower(address)] = true
 		} else {
 			// The read of this user's licences is open: a part that kept asking
@@ -974,6 +975,12 @@ func (d *reportData) probeLicenses() (int, error) {
 				refusedErr = answer.Err
 			}
 		}
+		// The counters of one user, at debug level. A report whose licence cells are
+		// short is read with this line: it says whether the API answered the SKUs of
+		// that user, asked to be asked again (the throttle) or refused them.
+		slog.Debug("per-user licence lookup",
+			"user", address, "rows", answer.Rows, "answered", answer.Answered,
+			"retried", answer.Retried, "refused", answer.Refused, "known", known)
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -1217,12 +1224,16 @@ func (d *reportData) acceptLicenseAnswers(address string, answers []batchAnswer)
 		default:
 			refusal := batchRefusal(part)
 			if transientLicenseFailure(refusal) {
+				slog.Debug("a part of a licence lookup asked to be asked again",
+					"user", address, "status", part.Status, "reason", refusal)
 				answer.Retried++
 				if answer.RetryErr == nil {
 					answer.RetryErr = refusal
 				}
 				continue
 			}
+			slog.Debug("a part of a licence lookup was refused",
+				"user", address, "status", part.Status, "reason", refusal)
 			answer.Refused++
 			if answer.Err == nil {
 				answer.Err = refusal
