@@ -584,6 +584,17 @@ func (e *testEnv) statePaths(t *testing.T) map[string]models.SyncFile {
 	return state
 }
 
+// folderStatePaths returns the tracked folders of the job (see the sync_folders
+// table): the folder the engine remembers both sides listing.
+func (e *testEnv) folderStatePaths(t *testing.T) map[string]models.SyncFolder {
+	t.Helper()
+	state, err := e.store.FolderState(context.Background(), e.job.ID)
+	if err != nil {
+		t.Fatalf("loading the folder state: %v", err)
+	}
+	return state
+}
+
 // saveJob persists the job row after a test changed one of its fields.
 func (e *testEnv) saveJob(t *testing.T) {
 	t.Helper()
@@ -1452,6 +1463,206 @@ func TestEngineFolderDeletionRenewsToken(t *testing.T) {
 	}
 	if env.msft.folderPaths()["solo"] {
 		t.Error("the folder must be gone after the renewed token")
+	}
+}
+
+// TestEnginePropagatesFolderDeletion covers the folder half of the delete-missing
+// option on a bidirectional job: a folder deleted on the source is deleted on the
+// destination instead of being mirrored back. The listing alone cannot tell that
+// deletion from a folder that has not travelled yet, so the state table is what
+// decides it.
+func TestEnginePropagatesFolderDeletion(t *testing.T) {
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	env := newTestEnv(t, models.DirectionBidirectional, models.ConflictNewestWins)
+	env.job.SyncEmptyFolders = true
+	env.job.DeleteMissing = true
+	env.saveJob(t)
+
+	env.google.add("docs/plan.md", "# plan", base)
+	env.google.folder(providers.DriveRoot, "empty")
+	if run := env.run(t); run.FoldersCreated != 2 {
+		t.Fatalf("FoldersCreated = %d, want 2 (docs and empty)", run.FoldersCreated)
+	}
+	if !env.msft.folderPaths()["empty"] {
+		t.Fatalf("the empty folder did not travel: %v", env.msft.folderPaths())
+	}
+	if _, ok := env.folderStatePaths(t)["empty"]; !ok {
+		t.Fatalf("a folder both sides list must be remembered: %v", env.folderStatePaths(t))
+	}
+
+	env.google.remove("empty")
+	run := env.run(t)
+	if run.FoldersDeleted != 1 {
+		t.Errorf("FoldersDeleted = %d, want 1", run.FoldersDeleted)
+	}
+	if env.msft.folderPaths()["empty"] {
+		t.Errorf("the folder deleted on the source must be gone from the destination: %v",
+			env.msft.folderPaths())
+	}
+	if action := actionOf(env.items(t, run.ID), "empty"); action != string(models.ActionFolderDeleted) {
+		t.Errorf("the action of the deleted folder = %q, want folder_deleted", action)
+	}
+	if _, ok := env.folderStatePaths(t)["empty"]; ok {
+		t.Errorf("the state row of a folder gone from both sides must be dropped: %v",
+			env.folderStatePaths(t))
+	}
+}
+
+// TestEnginePropagatesFolderDeletionFromTheDestination verifies the deletion
+// travels the other way too: a bidirectional job deletes on the source the folder
+// removed on the destination. Its mirror image would re-create the folder on the
+// destination, and the two readings are the same listing.
+func TestEnginePropagatesFolderDeletionFromTheDestination(t *testing.T) {
+	env := newTestEnv(t, models.DirectionBidirectional, models.ConflictNewestWins)
+	env.job.SyncEmptyFolders = true
+	env.job.DeleteMissing = true
+	env.saveJob(t)
+
+	env.google.folder(providers.DriveRoot, "empty")
+	if run := env.run(t); run.FoldersCreated != 1 {
+		t.Fatalf("FoldersCreated = %d, want 1 (empty)", run.FoldersCreated)
+	}
+	if !env.msft.folderPaths()["empty"] {
+		t.Fatalf("the empty folder did not travel: %v", env.msft.folderPaths())
+	}
+
+	env.msft.remove("empty")
+	run := env.run(t)
+	if run.FoldersDeleted != 1 {
+		t.Errorf("FoldersDeleted = %d, want 1", run.FoldersDeleted)
+	}
+	if env.google.folderPaths()["empty"] {
+		t.Errorf("the folder deleted on the destination must be gone from the source: %v",
+			env.google.folderPaths())
+	}
+	if action := actionOf(env.items(t, run.ID), "empty"); action != string(models.ActionFolderDeleted) {
+		t.Errorf("the action of the deleted folder = %q, want folder_deleted", action)
+	}
+}
+
+// TestEngineDoesNotDeleteANewFolder verifies the untracked half of the folder
+// decision: a folder one side has just created and the other has never seen is
+// new, so it travels instead of being read as a deletion — on either side of a
+// bidirectional job, with delete_missing on.
+func TestEngineDoesNotDeleteANewFolder(t *testing.T) {
+	env := newTestEnv(t, models.DirectionBidirectional, models.ConflictNewestWins)
+	env.job.SyncEmptyFolders = true
+	env.job.DeleteMissing = true
+	env.saveJob(t)
+
+	env.google.folder(providers.DriveRoot, "new-on-source")
+	env.msft.folder(providers.DriveRoot, "new-on-destination")
+
+	run := env.run(t)
+	if run.FoldersDeleted != 0 {
+		t.Errorf("FoldersDeleted = %d, want 0: a folder the state does not know is new", run.FoldersDeleted)
+	}
+	if run.FoldersCreated != 2 {
+		t.Errorf("FoldersCreated = %d, want 2", run.FoldersCreated)
+	}
+	for name, folders := range map[string]map[string]bool{
+		"source":      env.google.folderPaths(),
+		"destination": env.msft.folderPaths(),
+	} {
+		for _, path := range []string{"new-on-source", "new-on-destination"} {
+			if !folders[path] {
+				t.Errorf("%s is missing the folder %q: %v", name, path, folders)
+			}
+		}
+	}
+	if _, ok := env.folderStatePaths(t)["new-on-source"]; !ok {
+		t.Errorf("both new folders must be remembered: %v", env.folderStatePaths(t))
+	}
+}
+
+// TestEngineRestoresAFolderWithoutDeleteMissing verifies a bidirectional job
+// without delete_missing keeps the file behaviour for folders: the folder the
+// write side no longer has is restored, and the state row survives the round trip.
+func TestEngineRestoresAFolderWithoutDeleteMissing(t *testing.T) {
+	env := newTestEnv(t, models.DirectionBidirectional, models.ConflictNewestWins)
+	env.job.SyncEmptyFolders = true
+	env.job.DeleteMissing = false
+	env.saveJob(t)
+
+	env.google.folder(providers.DriveRoot, "empty")
+	env.run(t)
+	if !env.msft.folderPaths()["empty"] {
+		t.Fatalf("the empty folder did not travel: %v", env.msft.folderPaths())
+	}
+
+	env.google.remove("empty")
+	run := env.run(t)
+	if run.FoldersDeleted != 0 {
+		t.Errorf("FoldersDeleted = %d, want 0 without delete_missing", run.FoldersDeleted)
+	}
+	if run.FoldersCreated != 1 {
+		t.Errorf("FoldersCreated = %d, want 1 (the restored folder)", run.FoldersCreated)
+	}
+	if !env.google.folderPaths()["empty"] {
+		t.Errorf("the folder must be restored on the side that lost it: %v", env.google.folderPaths())
+	}
+	if action := actionOf(env.items(t, run.ID), "empty"); action != string(models.ActionFolderCreated) {
+		t.Errorf("the action of the restored folder = %q, want folder_created", action)
+	}
+	if _, ok := env.folderStatePaths(t)["empty"]; !ok {
+		t.Errorf("a restored folder is in sync again and must stay remembered: %v",
+			env.folderStatePaths(t))
+	}
+}
+
+// TestEngineKeepsAFolderHoldingContentWhenDeletedElsewhere is the narrow half of
+// the rule: the deletion reaches the folder the other side emptied, never a folder
+// that still holds something there. A native document cannot be copied, so it
+// protects the folder it sits in.
+func TestEngineKeepsAFolderHoldingContentWhenDeletedElsewhere(t *testing.T) {
+	base := time.Date(2026, 9, 27, 12, 0, 0, 0, time.UTC)
+	env := newTestEnv(t, models.DirectionBidirectional, models.ConflictNewestWins)
+	env.job.SyncEmptyFolders = true
+	env.job.DeleteMissing = true
+	env.saveJob(t)
+
+	env.google.folder(providers.DriveRoot, "manual")
+	env.run(t)
+	if !env.msft.folderPaths()["manual"] {
+		t.Fatalf("the empty folder did not travel: %v", env.msft.folderPaths())
+	}
+	env.msft.native("manual/doc.gdoc", base)
+
+	env.google.remove("manual")
+	run := env.run(t)
+	if run.FoldersDeleted != 0 {
+		t.Errorf("FoldersDeleted = %d, want 0: the folder still holds a native document", run.FoldersDeleted)
+	}
+	if !env.msft.folderPaths()["manual"] {
+		t.Errorf("the folder holding an item the engine cannot copy must survive: %v",
+			env.msft.folderPaths())
+	}
+	if action := actionOf(env.items(t, run.ID), "manual"); action != string(models.ActionSkipped) {
+		t.Errorf("the action of the kept folder = %q, want skipped", action)
+	}
+	if run.FilesSkipped != 2 {
+		t.Errorf("FilesSkipped = %d, want 2 (the native document and the folder the guard kept)",
+			run.FilesSkipped)
+	}
+}
+
+// TestEnginePrunesUntrackedDestinationFolders locks the one-way behaviour of the
+// delete-missing option: the destination is mirrored from the source, so a folder
+// only the destination has — and the state never knew — is pruned.
+func TestEnginePrunesUntrackedDestinationFolders(t *testing.T) {
+	env := newTestEnv(t, models.DirectionGoogleToMicrosoft, models.ConflictNewestWins)
+	env.job.DeleteMissing = true
+	env.saveJob(t)
+
+	env.msft.folder(providers.DriveRoot, "stray")
+
+	run := env.run(t)
+	if run.FoldersDeleted != 1 {
+		t.Errorf("FoldersDeleted = %d, want 1", run.FoldersDeleted)
+	}
+	if env.msft.folderPaths()["stray"] {
+		t.Errorf("a one-way job must prune a folder only the destination has: %v",
+			env.msft.folderPaths())
 	}
 }
 

@@ -110,6 +110,7 @@ func Migrate(db *gorm.DB) error {
 		&models.SyncRun{},
 		&models.SyncItem{},
 		&models.SyncFile{},
+		&models.SyncFolder{},
 		&models.AuditRun{},
 		&models.AuditEntry{},
 		&models.TrafficEntry{},

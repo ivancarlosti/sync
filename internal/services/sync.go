@@ -355,17 +355,22 @@ func formatDuration(ms int64) string {
 // engine is one execution of a job. It is single-use: created by execute() and
 // discarded when the run finishes.
 type engine struct {
-	service  *SyncService
-	job      *models.SyncJob
-	run      *models.SyncRun
-	state    map[string]models.SyncFile
-	items    []models.SyncItem
-	excludes []string
-	source   *endpoint
-	target   *endpoint
-	forward  bool
-	backward bool
-	fatal    error
+	service *SyncService
+	job     *models.SyncJob
+	run     *models.SyncRun
+	state   map[string]models.SyncFile
+	// folderState remembers the folders both sides listed at the end of the last
+	// run. It is what tells a folder that has not travelled yet (create it on
+	// the other side) from one deleted there (delete it here), the same job
+	// sync_files does for the files.
+	folderState map[string]models.SyncFolder
+	items       []models.SyncItem
+	excludes    []string
+	source      *endpoint
+	target      *endpoint
+	forward     bool
+	backward    bool
+	fatal       error
 	// traffic accumulates what the run moves through each account; it is flushed
 	// throttled from the transfer path and once when the run ends.
 	traffic          map[trafficKey]trafficCounter
@@ -412,6 +417,11 @@ func (e *engine) reconcile(ctx context.Context) error {
 		return e.fail(err)
 	}
 	e.state = state
+	folders, err := e.service.store.FolderState(ctx, e.job.ID)
+	if err != nil {
+		return e.fail(err)
+	}
+	e.folderState = folders
 
 	for _, side := range []*endpoint{e.source, e.target} {
 		if err := e.walk(ctx, side); err != nil {
@@ -419,21 +429,25 @@ func (e *engine) reconcile(ctx context.Context) error {
 		}
 		e.recordUnsupported(side)
 	}
-	if e.job.SyncEmptyFolders {
-		if err := e.mirrorFolders(ctx); err != nil {
-			return e.fail(err)
-		}
+	// The folder plan is taken on the listing of both sides, before the files
+	// run: the creates have to happen first (every upload must find its parents)
+	// while the deletes have to wait (a folder whose last file this run deletes
+	// is not empty yet).
+	plan := e.planFolders()
+	if err := e.createFolders(ctx, plan.creates); err != nil {
+		return e.fail(err)
 	}
 	if err := e.reconcilePaths(ctx); err != nil {
 		return e.fail(err)
 	}
-	if e.job.DeleteMissing {
-		if err := e.removeEmptyFolders(ctx); err != nil {
-			return e.fail(err)
-		}
+	if err := e.deleteFolders(ctx, plan.deletes); err != nil {
+		return e.fail(err)
 	}
 	if e.fatal != nil {
 		return e.fatal
+	}
+	if err := e.rememberFolders(ctx); err != nil {
+		return e.fail(err)
 	}
 
 	now := e.service.now()
@@ -745,44 +759,111 @@ func (e *engine) reconcilePaths(ctx context.Context) error {
 	return nil
 }
 
-// mirrorFolders creates, on each side, the folders the other side has and it
-// does not — including the folders that hold no file at all, which the file by
-// file reconciliation never visits. It is what makes the "sync empty folders"
-// option work, and it runs before the files so every upload finds its parents
-// already created.
-//
-// It only ever creates. A folder the other side has and this one does not is
-// added, never removed: removals belong to the delete-missing option (see
-// removeEmptyFolders), a separate decision an operator takes.
-func (e *engine) mirrorFolders(ctx context.Context) error {
-	if e.forward {
-		if err := e.createFolders(ctx, e.source, e.target); err != nil {
-			return err
-		}
-	}
-	if e.backward {
-		return e.createFolders(ctx, e.target, e.source)
-	}
-	return nil
+// folderOp is one folder a run adds to a side or removes from it.
+type folderOp struct {
+	path     string
+	side     *endpoint // the side gaining the folder (create) or losing it (delete)
+	evidence string
 }
 
-// createFolders creates on `to` every folder `from` has and `to` is missing.
+// folderPlan is what the folder half of a run has to do: the creates happen
+// before the files, the deletes after them.
+type folderPlan struct {
+	creates []folderOp
+	deletes []folderOp
+}
+
+// planFolders decides, for every folder only one side lists, whether the other
+// side is missing a folder that has to be created or is the side the folder was
+// deleted on.
 //
-// The paths are created in sorted order, and a path always sorts after its own
-// parent, so a parent is made before its children (and ensureFolder would create
-// a missing grandparent anyway). A path the other side holds as a file is left
-// alone: a folder and a file cannot share a name, and the file reconciliation is
-// the piece that knows how to resolve that.
-func (e *engine) createFolders(ctx context.Context, from, to *endpoint) error {
-	paths := make([]string, 0, len(from.folders))
-	for relative, id := range from.folders {
-		if relative != "" && id != "" {
+// The two readings are the same observation — "this side lists it, the other one
+// does not" — so each option gates one candidate action: `delete_missing` allows
+// the removal on a side the job writes, `sync_empty_folders` the creation on one.
+// When only one of the two is possible there is nothing to decide, and that is
+// what keeps the one-way behaviours exactly as they were (delete_missing prunes
+// the write side, a folder deleted on the write side is restored).
+//
+// When both are possible — a bidirectional job with both options on — the state
+// table decides: a folder both sides listed in the last run was deleted on the
+// side that no longer has it, and a folder the state does not know is new and has
+// to travel. Without that memory the case is a coin flip, and "create" is what
+// resurrected deleted folders while "delete" would discard folders that had just
+// been made.
+//
+// Creates come back in ascending order (a parent sorts before its children) and
+// deletes in descending order (deepest first), so a folder is empty by the time
+// its turn comes.
+func (e *engine) planFolders() folderPlan {
+	paths := make([]string, 0, len(e.source.folders)+len(e.target.folders))
+	seen := make(map[string]bool, len(paths))
+	for _, side := range []*endpoint{e.source, e.target} {
+		for relative := range side.folders {
+			if relative == "" || seen[relative] {
+				continue
+			}
+			seen[relative] = true
 			paths = append(paths, relative)
 		}
 	}
 	sort.Strings(paths)
 
+	var plan folderPlan
 	for _, relative := range paths {
+		_, onSource := e.source.folders[relative]
+		_, onTarget := e.target.folders[relative]
+		if onSource == onTarget {
+			// Both sides list it (nothing to do) or neither does (a row
+			// rememberFolders drops).
+			continue
+		}
+		survivor, missing := e.source, e.target
+		if onTarget {
+			survivor, missing = e.target, e.source
+		}
+		canDelete := e.job.DeleteMissing && e.writes(survivor)
+		canCreate := e.job.SyncEmptyFolders && e.writes(missing)
+		_, tracked := e.folderState[relative]
+		switch {
+		case canDelete && canCreate && tracked:
+			plan.deletes = append(plan.deletes, folderOp{path: relative, side: survivor,
+				evidence: "removed on " + missing.label() + " since the last run"})
+		case canDelete && canCreate:
+			plan.creates = append(plan.creates, folderOp{path: relative, side: missing,
+				evidence: "the folder appeared on " + survivor.label()})
+		case canDelete:
+			plan.deletes = append(plan.deletes, folderOp{path: relative, side: survivor,
+				evidence: "the other side no longer lists the folder"})
+		case canCreate:
+			plan.creates = append(plan.creates, folderOp{path: relative, side: missing,
+				evidence: "the folder holds no file and belongs to " + survivor.label()})
+		}
+	}
+	// A child always sorts after its own parent, so the reverse order deletes
+	// the deepest folders first.
+	sort.Slice(plan.deletes, func(i, j int) bool { return plan.deletes[i].path > plan.deletes[j].path })
+	return plan
+}
+
+// writes reports whether the job writes to a side, i.e. whether the side is the
+// destination of one of the two allowed flows.
+func (e *engine) writes(side *endpoint) bool {
+	if side == e.source {
+		return e.backward
+	}
+	return e.forward
+}
+
+// createFolders creates the folders of the plan on the side that is missing them.
+//
+// The plan is in sorted order, and a path always sorts after its own parent, so a
+// parent is made before its children (and ensureFolder would create a missing
+// grandparent anyway). A path the side holds as a file is left alone: a folder and
+// a file cannot share a name, and the file reconciliation is the piece that knows
+// how to resolve that.
+func (e *engine) createFolders(ctx context.Context, ops []folderOp) error {
+	for _, op := range ops {
+		relative, to := op.path, op.side
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("the run was interrupted while creating folders: %w", err)
 		}
@@ -822,110 +903,149 @@ func (e *engine) createFolders(ctx context.Context, from, to *endpoint) error {
 	return nil
 }
 
-// removeEmptyFolders deletes, on the "slave" side of each allowed flow, the
-// folders the other side does not have and that hold nothing: the folder half of
-// the delete-missing option. Forward jobs delete on the destination, backward
-// jobs on the source, exactly like a file deletion.
+// deleteFolders removes the folders of the plan, deepest first: the folder half of
+// the delete-missing option.
+//
+// The rule is deliberately narrow. A folder is only removed when it holds nothing
+// — no file, no item the engine cannot copy and no subfolder that survived (a
+// blocked one, or one whose own deletion failed) — so the deletion can never
+// discard content: whatever lives only on this side protects the folder it sits
+// in, and a folder nothing is left in cannot lose data. A folder the plan named
+// but the guard kept is recorded as skipped, not as an error: nothing failed.
 //
 // It runs after the files, so a folder whose last file this run deleted is seen
 // as the empty folder it now is.
-func (e *engine) removeEmptyFolders(ctx context.Context) error {
-	if e.forward {
-		if err := e.deleteEmptyFolders(ctx, e.target, e.source); err != nil {
-			return err
+func (e *engine) deleteFolders(ctx context.Context, ops []folderOp) error {
+	if len(ops) == 0 {
+		return nil
+	}
+	// filled counts what still sits in each folder of the snapshot, per side. A
+	// successful deletion subtracts the folder from its parent, so a parent stays
+	// out of reach while a child is still there.
+	filled := map[*endpoint]map[string]int{}
+	count := func(side *endpoint) map[string]int {
+		if counts, ok := filled[side]; ok {
+			return counts
 		}
-	}
-	if e.backward {
-		return e.deleteEmptyFolders(ctx, e.source, e.target)
-	}
-	return nil
-}
-
-// deleteEmptyFolders deletes the folders of `slave` that `master` does not have
-// and that hold no file, no item the engine cannot copy and no folder of their
-// own.
-//
-// The rule is deliberately narrow. A folder is only removed when it is missing
-// on the other side *and* holds nothing, so the deletion can never discard a
-// file: content that lives only on the slave (a file uploaded by hand, a native
-// document the engine cannot transfer) protects the folder it sits in, and a
-// folder nothing is left in cannot lose data. Folders go deepest first, because
-// a provider refuses to delete a folder that still contains a subfolder.
-func (e *engine) deleteEmptyFolders(ctx context.Context, slave, master *endpoint) error {
-	// keep is the ancestor-closed set of folders that must stay: every folder
-	// the other side lists, plus every folder that still holds something here.
-	keep := map[string]bool{}
-	mark := func(relative string) {
-		for relative != "" && !keep[relative] {
-			keep[relative] = true
-			relative = dirOf(relative)
+		counts := map[string]int{}
+		for relative := range side.folders {
+			if relative != "" {
+				counts[dirOf(relative)]++
+			}
 		}
-	}
-	for relative := range master.folders {
-		// A listing holds the parent of every folder it holds, so this set is
-		// already closed under dirOf.
-		keep[relative] = true
-	}
-	for relative := range master.files {
-		mark(dirOf(relative))
-	}
-	for relative := range slave.files {
-		mark(dirOf(relative))
-	}
-	for _, item := range slave.unsupported {
-		mark(dirOf(item.Path))
+		for relative := range side.files {
+			counts[dirOf(relative)]++
+		}
+		for _, item := range side.unsupported {
+			counts[dirOf(item.Path)]++
+		}
+		filled[side] = counts
+		return counts
 	}
 
-	paths := make([]string, 0, len(slave.folders))
-	for relative := range slave.folders {
-		if relative != "" && !keep[relative] {
-			paths = append(paths, relative)
-		}
-	}
-	// Reverse order: a child always sorts after its own parent, so walking the
-	// list backwards deletes the deepest folders first and leaves every folder
-	// empty by the time it is its turn.
-	sort.Sort(sort.Reverse(sort.StringSlice(paths)))
-
-	for _, relative := range paths {
+	for _, op := range ops {
+		relative, side := op.path, op.side
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("the run was interrupted while deleting folders: %w", err)
 		}
 		if e.fatal != nil {
 			return nil
 		}
-		if _, isFile := slave.files[relative]; isFile {
+		if _, isFile := side.files[relative]; isFile {
 			// One name cannot be a file and a folder at once: the file
 			// reconciliation owns this path.
 			continue
 		}
-		if err := e.removeFolder(ctx, slave, relative); err != nil {
-			if side := e.unauthorized(err); side != nil {
-				if renewErr := e.reissue(ctx, side); renewErr == nil {
-					if retryErr := e.removeFolder(ctx, slave, relative); retryErr == nil {
-						continue
-					} else {
-						err = retryErr
-					}
+		counts := count(side)
+		if counts[relative] > 0 {
+			// Counted with the skips, like every other item that is left
+			// alone: folders have no counter of their own for it.
+			e.run.FilesSkipped++
+			e.record(models.ActionSkipped, relative, 0,
+				"kept: the folder still holds something on "+side.label())
+			continue
+		}
+		err := e.removeFolder(ctx, side, relative, op.evidence)
+		if err != nil {
+			if unauth := e.unauthorized(err); unauth != nil {
+				// The access token died since the run started: renew it and
+				// retry the folder once, like the file reconciliation does.
+				if renewErr := e.reissue(ctx, unauth); renewErr == nil {
+					err = e.removeFolder(ctx, side, relative, op.evidence)
 				} else {
 					err = renewErr
 				}
 			}
+		}
+		if err != nil {
 			e.run.Errors++
 			e.record(models.ActionFailed, relative, 0, err.Error())
 			slog.Warn("deleting a folder failed", "job", e.job.ID, "path", relative, "error", err)
 			if errors.Is(err, ErrReconnect) {
 				e.fail(err)
 			}
+			continue
 		}
+		// The state row is not dropped here: rememberFolders does it, from the
+		// listings, so a folder that is gone from both sides stops being tracked
+		// and one that is still somewhere in the tree keeps its row.
+		counts[dirOf(relative)]--
 	}
 	return nil
 }
 
-// removeFolder deletes one remote folder. Unlike remove it leaves the state
-// table alone: the engine tracks files, and a folder is only ever removed once
-// nothing is left under it.
-func (e *engine) removeFolder(ctx context.Context, side *endpoint, relative string) error {
+// rememberFolders stores the folders both sides list at the end of the run, and
+// forgets the paths neither side lists any more.
+//
+// It is the memory planFolders reads on the next run. Only shared paths are added
+// (a folder still on one side is not in sync yet, so it must not be remembered as
+// if it were) and only the delta is written: a steady tree costs one read and
+// nothing else.
+func (e *engine) rememberFolders(ctx context.Context) error {
+	if e.folderState == nil {
+		e.folderState = map[string]models.SyncFolder{}
+	}
+	now := e.service.now()
+	var fresh []models.SyncFolder
+	for relative := range e.source.folders {
+		if relative == "" {
+			continue
+		}
+		if _, ok := e.target.folders[relative]; !ok {
+			continue
+		}
+		if _, tracked := e.folderState[relative]; tracked {
+			continue
+		}
+		row := models.SyncFolder{JobID: e.job.ID, Path: relative, CreatedAt: now, UpdatedAt: now}
+		fresh = append(fresh, row)
+		e.folderState[relative] = row
+	}
+	if err := e.service.store.SaveFolders(ctx, fresh); err != nil {
+		return err
+	}
+
+	var gone []string
+	for relative := range e.folderState {
+		_, onSource := e.source.folders[relative]
+		_, onTarget := e.target.folders[relative]
+		if !onSource && !onTarget {
+			gone = append(gone, relative)
+		}
+	}
+	if err := e.service.store.DeleteFolders(ctx, e.job.ID, gone); err != nil {
+		return err
+	}
+	for _, relative := range gone {
+		delete(e.folderState, relative)
+	}
+	return nil
+}
+
+// removeFolder deletes one remote folder and forgets its state row. Unlike remove
+// it does not touch the file state table: a folder is only ever removed once
+// nothing is left under it, and the caller owns the folder state.
+func (e *engine) removeFolder(ctx context.Context, side *endpoint, relative, evidence string) error {
 	if err := e.freshen(ctx, side); err != nil {
 		return err
 	}
@@ -940,7 +1060,8 @@ func (e *engine) removeFolder(ctx context.Context, side *endpoint, relative stri
 	e.flushTraffic(ctx, false)
 	delete(side.folders, relative)
 	e.run.FoldersDeleted++
-	e.record(models.ActionFolderDeleted, relative, 0, "removed the folder from "+side.label())
+	e.record(models.ActionFolderDeleted, relative, 0,
+		evidence+"; removed the folder from "+side.label())
 	return nil
 }
 

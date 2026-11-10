@@ -113,6 +113,15 @@ ids of both sides, size, provider hash, both modification times, `last_synced_at
 `last_direction` and `status`. It is what makes deletions, renames and conflicts
 detectable without hashing the whole tree on every run.
 
+`sync_folders` — **the folder half of the engine state**: one row per folder both
+sides listed at the end of a run (`uniqueIndex idx_syncfolder_job_path` on
+`job_id` + `path`). "This side lists the folder, the other does not" means either
+that it has not travelled yet or that it was deleted there, and a listing cannot
+tell the two apart; these rows are the memory that separates them (see
+[architecture.md](architecture.md) §3). They are written as a delta — new shared
+paths only, `ON CONFLICT DO NOTHING` — and dropped for the paths neither side lists
+any more.
+
 `audit_runs` — one row per content audit (see [api.md](api.md) §8): the audited
 root (`account_id`, `account_email`, `provider`, `drive_id`, `drive_name`
 (`VARCHAR(191)`), `drive_kind` (`VARCHAR(32)`), `drive_owner` (`VARCHAR(191)`),
@@ -158,6 +167,7 @@ it (an unknown `status` renders as-is in the UI).
 | `sync_runs` + `sync_items` | `runKeepCount = 50` newest runs per job | `Store.PruneRuns` — called on demand through `POST /api/maintenance/runs/prune` (default `keep: 200`, allowed 1…10000) |
 | `oauth_states` | 10 minutes | pruned at boot and through `POST /api/maintenance/oauth/states/prune` |
 | `sync_files` | one row per path, updated in place | nothing to prune; deleting a job deletes its state |
+| `sync_folders` | one row per folder both sides have, written as a delta | nothing to prune: rows of folders neither side lists any more are dropped at the end of the run; deleting a job deletes its state |
 | `audit_runs` + `audit_entries` | `auditKeepCount = 50` newest audits per account | `Store.PruneAudits` — called on demand through `POST /api/maintenance/audits/prune` (default `keep: 50`, allowed 1…10000) |
 
 ## 7. Backup and restore

@@ -114,6 +114,9 @@ func (s *Store) DeleteAccount(ctx context.Context, id uint) (int64, error) {
 		if err := tx.Where("job_id NOT IN (?)", remaining).Delete(&models.SyncFile{}).Error; err != nil {
 			return err
 		}
+		if err := tx.Where("job_id NOT IN (?)", remaining).Delete(&models.SyncFolder{}).Error; err != nil {
+			return err
+		}
 		if err := tx.Where("job_id NOT IN (?)", remaining).Delete(&models.SyncItem{}).Error; err != nil {
 			return err
 		}
@@ -220,18 +223,21 @@ func (s *Store) SaveJob(ctx context.Context, job *models.SyncJob) error {
 	return nil
 }
 
-// DeleteJob removes a job definition and its file state, and keeps its run
+// DeleteJob removes a job definition and its engine state, and keeps its run
 // history: the runs, their items and their traffic rows outlive the job, which
 // is what the delete dialog promises and what an operator needs when a job is
-// removed right after a failure. Only sync_files goes, because that state is
-// engine bookkeeping (it is what makes a re-created job resume correctly) and
-// nothing can ever read it again once the job row is gone.
+// removed right after a failure. Only sync_files and sync_folders go, because
+// that state is engine bookkeeping (it is what makes a re-created job resume
+// correctly) and nothing can ever read it again once the job row is gone.
 //
 // The history stays reachable: ListRuns(0) returns every run whatever its job,
 // and the run row carries job_name so an orphaned run still reads well.
 func (s *Store) DeleteJob(ctx context.Context, id uint) error {
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("job_id = ?", id).Delete(&models.SyncFile{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("job_id = ?", id).Delete(&models.SyncFolder{}).Error; err != nil {
 			return err
 		}
 		return tx.Delete(&models.SyncJob{}, id).Error
@@ -767,6 +773,73 @@ func (s *Store) DeleteFileState(ctx context.Context, jobID uint, path string) er
 		Delete(&models.SyncFile{}).Error
 	if err != nil {
 		return fmt.Errorf("services: deleting file state %q: %w", path, err)
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Folder state
+// ---------------------------------------------------------------------------
+
+// stateChunk bounds how many rows go into one multi-row statement, so a job
+// whose two trees share thousands of folders does not build a statement a driver
+// refuses (SQLite and MySQL both have a limit on bound parameters).
+const stateChunk = 500
+
+// FolderState returns the folder state rows of a job keyed by relative path.
+func (s *Store) FolderState(ctx context.Context, jobID uint) (map[string]models.SyncFolder, error) {
+	var rows []models.SyncFolder
+	if err := s.db.WithContext(ctx).Where("job_id = ?", jobID).Find(&rows).Error; err != nil {
+		return nil, fmt.Errorf("services: loading folder state: %w", err)
+	}
+	state := make(map[string]models.SyncFolder, len(rows))
+	for _, row := range rows {
+		state[row.Path] = row
+	}
+	return state, nil
+}
+
+// SaveFolders remembers folders that are now on both sides.
+//
+// The rows are append-only: job + path is the identity of a folder, so a folder
+// that is already tracked is left untouched (DO NOTHING) instead of being
+// re-stamped on every run. That keeps the write to the delta the tree gained,
+// which is usually zero.
+func (s *Store) SaveFolders(ctx context.Context, rows []models.SyncFolder) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	for start := 0; start < len(rows); start += stateChunk {
+		end := start + stateChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		batch := rows[start:end]
+		err := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&batch).Error
+		if err != nil {
+			return fmt.Errorf("services: saving folder state: %w", err)
+		}
+	}
+	return nil
+}
+
+// DeleteFolders forgets the tracked folders at paths: neither side lists them any
+// more, so there is nothing left to remember about them.
+func (s *Store) DeleteFolders(ctx context.Context, jobID uint, paths []string) error {
+	if len(paths) == 0 {
+		return nil
+	}
+	for start := 0; start < len(paths); start += stateChunk {
+		end := start + stateChunk
+		if end > len(paths) {
+			end = len(paths)
+		}
+		err := s.db.WithContext(ctx).
+			Where("job_id = ? AND path IN ?", jobID, paths[start:end]).
+			Delete(&models.SyncFolder{}).Error
+		if err != nil {
+			return fmt.Errorf("services: deleting folder state: %w", err)
+		}
 	}
 	return nil
 }

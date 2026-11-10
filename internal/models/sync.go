@@ -132,3 +132,23 @@ type SyncFile struct {
 
 // TableName pins the physical table name.
 func (SyncFile) TableName() string { return "sync_files" }
+
+// SyncFolder is the folder half of the engine state: one row per folder both
+// sides listed at the end of a run.
+//
+// A listing alone cannot tell a folder that has not travelled yet (it has to be
+// created on the other side) from one that was deleted there (it has to be
+// deleted here): both look like "one side lists it and the other one does not".
+// The rows of this table are the memory that tells the two apart, exactly like
+// sync_files does for the files.
+type SyncFolder struct {
+	ID    uint   `gorm:"primaryKey" json:"id"`
+	JobID uint   `gorm:"index:idx_syncfolder_job_path,unique" json:"job_id"`
+	Path  string `gorm:"size:1024;index:idx_syncfolder_job_path,unique" json:"path"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// TableName pins the physical table name.
+func (SyncFolder) TableName() string { return "sync_folders" }

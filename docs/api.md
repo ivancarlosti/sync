@@ -210,13 +210,25 @@ path alone. Values are clamped to the column widths (`191`/`32`/`191`).
 
 `delete_missing` propagates a deletion instead of re-copying the file back, and
 also deletes, on the side the job writes to, a folder the other side no longer
-has once nothing is left under it (`folder_deleted` in the run items).
+has once nothing is left under it (`folder_deleted` in the run items). A folder
+that still holds a file, an item V1 cannot copy or a subfolder of its own is kept,
+and the run records it as `skipped`.
 
 `sync_empty_folders` mirrors the folder tree itself, so a folder that holds no
 file is created on the other side too (`folder_created`). It is on by default and
 **optional** in the payload: a value that is omitted leaves the stored setting of
 an update alone — an older client keeps working — and starts a new job with
 `true`.
+
+The two options meet on one decision: a folder only one side lists is either new
+there (travel it) or deleted on the other side (propagate the deletion). With a
+one-way job there is nothing to decide — `delete_missing` prunes the write side,
+`sync_empty_folders` restores it. A bidirectional job with both options on has a
+real choice, and `sync_folders` (the folder half of the engine state) decides: a
+folder both sides listed in the last run was **deleted**, a folder the state has
+never seen is **new**, so it travels and is never read as a deletion. The state
+starts empty after an upgrade: a folder deleted before the first run that recorded
+it is mirrored once, and from then on the deletion propagates.
 
 ## 7. Runs
 

@@ -87,16 +87,27 @@ list source tree ──► list destination tree ──► plan per path ──�
 * **Planning** compares the two sides against `sync_files` (the state table) and
   the conflict policy; every decision is stored with a short `evidence` string
   (e.g. `destination newer by 42s`).
+* **Folder plan** is taken on the two listings, before the transfer: a folder only
+  one side lists is either new there or deleted on the other side, and
+  `sync_folders` (the folder half of the state) is what tells them apart. The plan
+  yields the creates, which run first so every upload finds its parents, and the
+  deletes, which run last.
 * **Transfer** streams a download and an upload; folders are created on demand
   (`folder_created`).
-* **Folder mirroring** (`sync_empty_folders`, on by default) runs before the
-  transfer and creates on each side every folder the other side lists and it does
-  not, so a folder that holds no file still travels. It only ever creates:
-  removals are the next bullet.
-* **Folder pruning** (`delete_missing`) runs after the transfer and deletes, on
-  the side the job writes to, the folders the other side no longer has once
-  nothing is left under them — no file, no item V1 cannot copy, no subfolder
-  (`folder_deleted`).
+* **Folder creation** (`sync_empty_folders`, on by default) creates on a side every
+  folder the plan calls new on the other one, so a folder that holds no file still
+  travels.
+* **Folder deletion** (`delete_missing`) runs after the transfer and removes the
+  folders the plan says were deleted elsewhere once nothing is left under them — no
+  file, no item V1 cannot copy, no subfolder that survived (`folder_deleted`; a
+  folder the guard kept is recorded as `skipped`). Only a bidirectional job with
+  both options on has a real choice, and then the state decides: tracked in
+  `sync_folders` means deleted, untracked means new. A one-way job keeps its
+  behaviour, where `delete_missing` prunes the write side and `sync_empty_folders`
+  restores it.
+* **State** is written when the run ends: `sync_files` per transferred path and
+  `sync_folders` per folder both sides listed, so the next run can tell a deletion
+  from a folder that has not travelled yet.
 * **Finalising** sets `success`, `partial` (some files failed), `failed`, or
   `timeout` when the run exhausts its time budget (a throttled provider is the
   usual cause; the run continues on the next slot) or `cancelled` when an operator
