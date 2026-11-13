@@ -185,7 +185,7 @@ Identity mapping: `sub` → `subject`, `email` → `email`,
 
 A programmatic caller does not have to hold a session cookie: it can present an
 **API token** instead. Tokens are created in **Admin > API** (or through
-`POST /api/tokens`, see [api.md](api.md) §9).
+`POST /api/tokens`, see [api.md](api.md) §11).
 
 * Shape: `sync_<prefix>.<secret>` — the 8 hex character `prefix` is public (it is
   what the row is looked up by, through the unique index), the 43 character

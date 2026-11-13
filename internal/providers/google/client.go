@@ -262,9 +262,23 @@ func (p *Provider) client(tokens *providers.Tokens) *http.Client {
 	return &clone
 }
 
-// doJSON performs a request and decodes the JSON response into out. A nil body
-// means "no request payload"; out may be nil when the response is irrelevant.
+// doJSON performs a request of the Drive API and decodes the JSON response into
+// out. A nil body means "no request payload"; out may be nil when the response is
+// irrelevant.
 func (p *Provider) doJSON(ctx context.Context, client *http.Client, method, target string, body, out any) error {
+	return p.doJSONFor(ctx, "google drive", client, method, target, body, out)
+}
+
+// doCalendarJSON is doJSON for the Calendar API: same transport, same guards,
+// only the wording of the errors differs so an operator reading a run log can
+// tell which API refused.
+func (p *Provider) doCalendarJSON(ctx context.Context, client *http.Client, method, target string, body, out any) error {
+	return p.doJSONFor(ctx, "google calendar", client, method, target, body, out)
+}
+
+// doJSONFor performs a request and decodes the JSON response into out. label
+// prefixes the errors with the API the request belongs to.
+func (p *Provider) doJSONFor(ctx context.Context, label string, client *http.Client, method, target string, body, out any) error {
 	// Every request this provider issues goes through here, and the URL reaches
 	// the request built below, so it is narrowed here, in the function that
 	// sends it (see requestURLPattern). The per-identifier guards of the callers
@@ -281,14 +295,14 @@ func (p *Provider) doJSON(ctx context.Context, client *http.Client, method, targ
 	if body != nil {
 		payload, err := json.Marshal(body)
 		if err != nil {
-			return fmt.Errorf("google drive: cannot encode request body: %w", err)
+			return fmt.Errorf("%s: cannot encode request body: %w", label, err)
 		}
 		reader = bytes.NewReader(payload)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, method, target, reader)
 	if err != nil {
-		return fmt.Errorf("google drive: cannot build %s request: %w", method, err)
+		return fmt.Errorf("%s: cannot build %s request: %w", label, method, err)
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -311,7 +325,7 @@ func (p *Provider) doJSON(ctx context.Context, client *http.Client, method, targ
 			return client.Do(attempt)
 		})
 	if err != nil {
-		return fmt.Errorf("google drive: %s %s failed: %w", method, safeURL(target), err)
+		return fmt.Errorf("%s: %s %s failed: %w", label, method, safeURL(target), err)
 	}
 	defer resp.Body.Close()
 
@@ -326,7 +340,7 @@ func (p *Provider) doJSON(ctx context.Context, client *http.Client, method, targ
 		if err == io.EOF {
 			return nil
 		}
-		return fmt.Errorf("google drive: cannot decode %s response: %w", method, err)
+		return fmt.Errorf("%s: cannot decode %s response: %w", label, method, err)
 	}
 	return nil
 }

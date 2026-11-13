@@ -31,6 +31,11 @@ const LINKS: NavLink[] = [
   { route: 'dashboard', label: 'nav.dashboard', matches: ['dashboard'] },
   { route: 'accounts', label: 'nav.accounts', matches: ['accounts'] },
   { route: 'jobs', label: 'nav.jobs', matches: ['jobs', 'job-new', 'job-edit'] },
+  {
+    route: 'calendars',
+    label: 'nav.calendars',
+    matches: ['calendars', 'calendar-new', 'calendar-edit'],
+  },
   { route: 'runs', label: 'nav.runs', matches: ['runs'] },
   { route: 'audit', label: 'nav.audit', matches: ['audit'] },
   { route: 'billing', label: 'nav.billing', matches: ['billing'] },

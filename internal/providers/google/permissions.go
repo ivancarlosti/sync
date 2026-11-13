@@ -36,6 +36,14 @@ func (p *Provider) Permissions() []providers.Permission {
 			Title:      "files",
 			Scope:      "https://www.googleapis.com/auth/drive",
 		},
+		// The calendar capability is read/write: the engine mirrors events and an
+		// .ics subscription needs a writable destination. calendar.events alone
+		// would not let the picker list the calendars of the account.
+		{
+			Capability: providers.CapabilityCalendars,
+			Title:      "calendars",
+			Scope:      "https://www.googleapis.com/auth/calendar",
+		},
 	}
 }
 

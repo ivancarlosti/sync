@@ -16,6 +16,9 @@ export type RouteName =
   | 'jobs'
   | 'job-new'
   | 'job-edit'
+  | 'calendars'
+  | 'calendar-new'
+  | 'calendar-edit'
   | 'runs'
   | 'audit'
   | 'billing'
@@ -62,6 +65,26 @@ const routes: RouteRecordRaw[] = [
         path: 'jobs/:id(\\d+)/edit',
         name: 'job-edit',
         component: () => import('@/views/JobEditorView.vue'),
+        props: true,
+      },
+      {
+        // The calendar pairings: Google and Microsoft calendars in either
+        // combination, plus .ics subscriptions (see views/CalendarsView.vue).
+        path: 'calendars',
+        name: 'calendars',
+        component: () => import('@/views/CalendarsView.vue'),
+      },
+      {
+        path: 'calendars/new',
+        name: 'calendar-new',
+        component: () => import('@/views/CalendarEditorView.vue'),
+      },
+      {
+        // `calendar-edit` comes after `calendar-new`: the static segment must be
+        // matched before the numeric one is considered.
+        path: 'calendars/:id(\\d+)/edit',
+        name: 'calendar-edit',
+        component: () => import('@/views/CalendarEditorView.vue'),
         props: true,
       },
       {

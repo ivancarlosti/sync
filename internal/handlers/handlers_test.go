@@ -150,6 +150,11 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 	notifier.SetLink(cfg.AppURL)
 	engine := services.NewSyncService(store, tokens, appSettings, notifier)
 	audit := services.NewAuditService(store, tokens)
+	// The calendar engine is wired the way cmd/server does it, so the calendar
+	// endpoints are exercised against the real scheduler contract.
+	calendars := services.NewCalendarService(store, tokens, appSettings, notifier, box, cfg.CalendarAllowPrivateTargets)
+	scheduler := services.NewScheduler(store, engine, tokens, notifier)
+	scheduler.SetCalendars(calendars)
 
 	deps := Deps{
 		Config:      cfg,
@@ -165,7 +170,8 @@ func testDepsWith(t *testing.T, mode models.AuthMode, options testOptions) Deps 
 		Notifier:    notifier,
 		Sync:        engine,
 		Audit:       audit,
-		Scheduler:   services.NewScheduler(store, engine, tokens, notifier),
+		Calendars:   calendars,
+		Scheduler:   scheduler,
 		Purge:       services.NewPurgeService(store),
 		Assets:      testAssets(),
 		Info:        version.Get(),

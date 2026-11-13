@@ -17,9 +17,10 @@ database, one HTTP port.
 │                                                                                         │
 │  internal/handlers  ── routing, session, validation, error → HTTP status mapping          │
 │  internal/services  ── Store, AuthService, OAuthService, TokenManager, SettingsService,   │
-│                        SyncService (engine), AuditService, Scheduler, Notifier,           │
-│                        ProviderSettings                                                   │
-│  internal/providers ── provider interface + google + microsoft implementations            │
+│                        SyncService (engine), CalendarService (engine), AuditService,      │
+│                        Scheduler, Notifier, ProviderSettings                              │
+│  internal/providers ── provider interface (files + calendars) + google + microsoft         │
+│  internal/ical      ── .ics fetcher, validator and RFC 5545 parser                        │
 │  internal/notify    ── SMTP / webhook / shoutrrr senders                                  │
 │  internal/database  ── GORM connection, AutoMigrate, settings repository                  │
 │  internal/models    ── GORM entities and every enum vocabulary                            │
@@ -35,10 +36,10 @@ Four background loops run inside the same process (`internal/services/scheduler.
 
 | Loop | Period | What it does |
 |---|---|---|
-| schedule | 30 s (`DefaultScheduleInterval`) | starts every enabled job whose `next_run_at` elapsed |
+| schedule | 30 s (`DefaultScheduleInterval`) | starts every enabled job, file or calendar, whose `next_run_at` elapsed |
 | tokens | 60 s (`DefaultTokenInterval`) | renews access tokens that expire inside the 5 min window (`DefaultRefreshWindow`) |
 | retention | 6 h (`DefaultPurgeInterval`) | applies the retention of Admin > Settings > Purge (runs, audit reports, traffic days) |
-| (on boot) bootstrap | once | closes runs and audits a restart interrupted, recomputes `next_run_at` for every scheduled job |
+| (on boot) bootstrap | once | closes runs, calendar runs and audits a restart interrupted, recomputes `next_run_at` for every scheduled job |
 
 Sync runs are goroutines owned by `SyncService`; a per-job lease guarantees that
 one job never runs twice, even when the binary is started twice against the same
@@ -174,6 +175,49 @@ delete / folder created ─► one operation (the account it acts on)           
   (`none`, `oci`, `aws`, `gcp`, `custom`): the labels, the unit and the price per
   GiB. The quantities stay bytes in the database.
 
+## 3d. Calendar pipeline
+
+`CalendarService` (`internal/services/calendarsync.go`) is the sibling of the file
+engine: same reserve/run-row/timeout/cancel/retention lifecycle, a different unit
+of reconciliation. It pairs **events by iCalendar UID** instead of items by path.
+
+```text
+window (now ± past/future days) ──► list source ─┐
+                                   list destination ┴──► pair by UID ──► decide ──► write one side ──► upsert link
+                                     (provider or .ics)   (calendar_event_links)  (§4, §5 of calendars.md)   (fingerprints)
+```
+
+* **One run per job.** `reserve` claims an in-process lease (`running[job.ID]`);
+  the store also refuses a job that already has a row marked `running`, so a
+  second binary against the same database cannot double-run a job (`ErrBusy` →
+  `409 busy`). A slot that finds the job busy is pushed one interval forward
+  instead of queued.
+* **The plan is a pure function.** `calendar_plan.go` (`decide`) maps both
+  listings, the recorded link and the job options onto one action per UID
+  (`create_destination`, `update_source`, `delete_*`, `skip`, `unchanged`,
+  `forget_link`), so *Preview* (dry run) and a real run cannot disagree.
+* **Fingerprints, not stamps, decide "who changed".** `providers.EventFingerprint`
+  hashes the content (summary, description, location, start, end, all-day flag,
+  sorted attendees, recurring flag) and deliberately ignores the provider id and
+  the modification stamp; `calendar_event_links` stores both fingerprints, so an
+  unchanged calendar costs two listings and no writes. `newest_wins` can only
+  compare stamps — Graph often publishes none — and reports a `conflict` instead
+  of guessing.
+* **An `.ics` source is a third source kind**, not a provider: `internal/ical`
+  fetches the feed with `ETag`/`Last-Modified` validators (a `304` skips both the
+  parse and the writes), refuses non-public destinations unless
+  `CALENDAR_ALLOW_PRIVATE_TARGETS=true` (checked on the host name and again on the
+  dialled address), and parses only the RFC 5545 subset the engine uses. A feed is
+  read-only, so its job is forced to `one_way`.
+* **Recurring series are never expanded.** A series master and its instances
+  carry `RRULE`/`RECURRENCE-ID`/a recurrence block; they are counted in
+  `events_skipped` and left alone rather than copied with an invented rule.
+* **Calendar runs move no bytes**, so `billing` is not involved and the
+  notification events stay with the file engine; the evidence lives in
+  `calendar_runs` and `calendar_run_items` (newest 50 runs per job).
+  `FinishCalendarRun` mirrors the outcome on the job row in the same transaction
+  as the run, which is what advances the next slot.
+
 ## 3e. API tokens
 
 `internal/services/apitokens.go` mints `sync_<prefix>.<secret>`: 4 random bytes as
@@ -214,7 +258,8 @@ administrator may do", so the guard only ever narrows a token.
 | new endpoint | `internal/handlers/routes.go` + handler file + `docs/api.md` |
 | new setting | `internal/models/enums.go` (`Setting*`), `services.Defaults`, `SettingsService.Update`, Admin > Settings view + catalogs |
 | new channel kind | `internal/notify` sender + `channelSchemas` in `internal/handlers/notifications.go` + `docs/notifications.md` |
-| new provider | implement `providers.Provider`, register in `cmd/server/main.go` (`build`), document in `providers.md` |
+| new provider | implement `providers.Provider` (and optionally `providers.CalendarProvider`), register in `cmd/server/main.go` (`build`), document in `providers.md` |
+| new pairing rule | `internal/services/calendar_plan.go` (with a table test) + evidence text in `calendars.md` §4 |
 | new UI language | catalog file + `web/src/i18n/index.ts` (`MESSAGES`, `LOCALES`) + `config.SupportedLocales` + `docs/i18n.md` |
 | new screen | `web/src/views/**`, route in `web/src/router/index.ts`, nav entry + catalog keys |
 
@@ -225,6 +270,7 @@ administrator may do", so the guard only ever narrows a token.
 * [authentication.md](authentication.md) — the three auth modes and the session cookie
 * [oauth.md](oauth.md) — provider flows, PKCE, token refresh
 * [providers.md](providers.md) — provider capabilities and registration
+* [calendars.md](calendars.md) — calendar jobs, pairing rules and `.ics` subscriptions
 * [api.md](api.md) — endpoint reference
 * [notifications.md](notifications.md) — channel schemas and events
 * [development.md](development.md) — toolchain, commands, tests

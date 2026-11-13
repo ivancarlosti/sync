@@ -412,6 +412,162 @@ export interface RunItem {
   created_at: string;
 }
 
+/** CalendarSourceKind names where the events of a calendar job are read from. */
+export type CalendarSourceKind = 'google' | 'microsoft' | 'ics';
+
+/**
+ * CalendarJob is a pairing of two calendars plus its schedule: a source (a
+ * provider calendar or an .ics subscription) and a writable destination. The
+ * display names of both ends travel with the row, so the list renders without a
+ * provider round trip.
+ */
+export interface CalendarJob {
+  id: number;
+  name: string;
+  source_kind: CalendarSourceKind;
+  /** source_account_id is zero for an .ics subscription. */
+  source_account_id: number;
+  source_calendar_id: string;
+  source_calendar_name: string;
+  /** The subscription half; the password is never returned by the API. */
+  source_url?: string;
+  source_username?: string;
+  source_etag?: string;
+  source_last_modified?: string;
+  source_fetched_at?: string;
+  destination_account_id: number;
+  destination_calendar_id: string;
+  destination_calendar_name: string;
+  direction: 'bidirectional' | 'one_way';
+  conflict_policy: 'newest_wins' | 'source_wins' | 'destination_wins' | 'skip';
+  delete_missing: boolean;
+  past_days: number;
+  future_days: number;
+  interval_minutes: number;
+  enabled: boolean;
+  /** running is the decoration the API adds when a run is in flight. */
+  running: boolean;
+  last_run_at?: string;
+  next_run_at?: string;
+  last_status?: string;
+  last_error?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * CalendarPayload is what POST/PUT /api/calendars accepts. `source_password` is
+ * write-only: an empty value keeps the stored secret and
+ * `clear_source_password` erases it.
+ */
+export interface CalendarPayload {
+  name: string;
+  source_kind: string;
+  source_account_id: number;
+  source_calendar_id: string;
+  source_calendar_name: string;
+  source_url: string;
+  source_username: string;
+  source_password: string;
+  clear_source_password: boolean;
+  destination_account_id: number;
+  destination_calendar_id: string;
+  destination_calendar_name: string;
+  direction: string;
+  conflict_policy: string;
+  delete_missing: boolean;
+  past_days: number;
+  future_days: number;
+  interval_minutes: number;
+  enabled: boolean;
+}
+
+/** CalendarOption is one entry of the calendar picker of an account. */
+export interface CalendarOption {
+  id: string;
+  name: string;
+  primary: boolean;
+  time_zone?: string;
+  read_only: boolean;
+}
+
+/** CalendarRun is one execution of a calendar job. */
+export interface CalendarRun {
+  id: number;
+  job_id: number;
+  job_name: string;
+  status: 'running' | 'success' | 'partial' | 'failed' | 'cancelled' | 'timeout';
+  trigger: 'manual' | 'scheduled';
+  started_at: string;
+  finished_at?: string;
+  duration_ms: number;
+  events_scanned: number;
+  events_created: number;
+  events_updated: number;
+  events_deleted: number;
+  events_skipped: number;
+  conflicts: number;
+  errors: number;
+  message?: string;
+  created_at: string;
+}
+
+/** CalendarRunItem is the evidence of one decision of a calendar run. */
+export interface CalendarRunItem {
+  id: number;
+  run_id: number;
+  job_id: number;
+  /** action is the plan vocabulary: create_destination, update_source, … */
+  action: string;
+  uid: string;
+  summary: string;
+  start_at: string;
+  evidence?: string;
+  created_at: string;
+}
+
+/** CalendarPreviewDecision is one planned action and why it was planned. */
+export interface CalendarPreviewDecision {
+  uid: string;
+  summary: string;
+  start_at: string;
+  action: string;
+  evidence: string;
+}
+
+/** CalendarPreview is what a run would do right now, without writing anything. */
+export interface CalendarPreview {
+  job_id: number;
+  window_start: string;
+  window_end: string;
+  source_listed: number;
+  destination_listed: number;
+  events_scanned: number;
+  plan: CalendarPreviewDecision[];
+}
+
+/** FeedSampleEvent is one event of an .ics preview. */
+export interface FeedSampleEvent {
+  uid: string;
+  summary: string;
+  start_at: string;
+  end_at: string;
+  all_day: boolean;
+  recurring: boolean;
+}
+
+/** FeedPreview is the answer of "check this subscription" before a job exists. */
+export interface FeedPreview {
+  etag?: string;
+  last_modified?: string;
+  window_start: string;
+  window_end: string;
+  events: number;
+  recurring: number;
+  cancelled: number;
+  sample: FeedSampleEvent[];
+}
+
 /** AuditRun is one execution of a content audit. */
 export interface AuditRun {
   id: number;
@@ -659,6 +815,13 @@ export const accounts = {
   verify: (id: number) => request<ConnectedAccount>({ url: `/accounts/${id}/verify`, method: 'POST' }),
   drives: (id: number) => request<{ drives: Drive[] }>({ url: `/accounts/${id}/drives` }),
   /**
+   * calendarOptions lists the calendars of an account for the source and the
+   * destination pickers. A provider without calendars in this build answers a
+   * validation error, which is what the editor shows next to the picker.
+   */
+  calendarOptions: (id: number) =>
+    request<{ calendars: CalendarOption[] }>({ url: `/accounts/${id}/calendars` }),
+  /**
    * sites searches the extra roots of an account (`q` is the keyword; an empty
    * one lists every site the account can reach). It answers an empty list for a
    * provider without the capability, so a personal account is not an error.
@@ -731,6 +894,43 @@ export const runs = {
     }),
   items: (id: number, limit = 200) =>
     request<{ items: RunItem[]; limit: number }>({ url: `/runs/${id}/items`, params: { limit } }),
+};
+
+// calendars is the calendar half of the engine: the pairings of this instance
+// (see internal/handlers/calendars.go), their history and the two dry runs the
+// editor offers. `feedPreview` validates an .ics URL before a job exists, so a
+// typo costs one request instead of a failed first run.
+export const calendars = {
+  list: () => request<{ calendars: CalendarJob[] }>({ url: '/calendars', method: 'GET' }),
+  get: (id: number) => request<CalendarJob>({ url: `/calendars/${id}`, method: 'GET' }),
+  create: (payload: CalendarPayload) =>
+    request<CalendarJob>({ url: '/calendars', method: 'POST', data: payload }),
+  update: (id: number, payload: CalendarPayload) =>
+    request<CalendarJob>({ url: `/calendars/${id}`, method: 'PUT', data: payload }),
+  remove: (id: number) =>
+    request<{ id: number; cancelled: boolean }>({ url: `/calendars/${id}`, method: 'DELETE' }),
+  run: (id: number) =>
+    request<{ job_id: number; run: CalendarRun }>({ url: `/calendars/${id}/run`, method: 'POST' }),
+  cancel: (id: number) =>
+    request<{ job_id: number; cancelled: boolean }>({
+      url: `/calendars/${id}/cancel`,
+      method: 'POST',
+    }),
+  runs: (id: number, limit = 20) =>
+    request<{ runs: CalendarRun[] }>({ url: `/calendars/${id}/runs`, params: { limit } }),
+  runDetail: (id: number, runId: number) =>
+    request<{ run: CalendarRun; items: CalendarRunItem[] }>({
+      url: `/calendars/${id}/runs/${runId}`,
+      method: 'GET',
+    }),
+  preview: (id: number) => request<CalendarPreview>({ url: `/calendars/${id}/preview` }),
+  feedPreview: (payload: {
+    url: string;
+    username?: string;
+    password?: string;
+    past_days?: number;
+    future_days?: number;
+  }) => request<FeedPreview>({ url: '/calendars/feed-preview', method: 'POST', data: payload }),
 };
 
 export const audits = {

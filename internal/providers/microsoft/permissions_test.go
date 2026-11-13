@@ -20,6 +20,7 @@ var wantScopes = []string{
 	"https://graph.microsoft.com/User.Read",
 	"https://graph.microsoft.com/Files.ReadWrite.All",
 	"https://graph.microsoft.com/Sites.ReadWrite.All",
+	"https://graph.microsoft.com/Calendars.ReadWrite",
 }
 
 // TestScopesMatchThePermissionTable pins Scopes() to the table the guide renders.
@@ -167,11 +168,12 @@ func TestPersonalAccountsKeepOnlyTheScopesTheyCanHold(t *testing.T) {
 	// The grant of a personal account: the OneDrive scopes, and the four OpenID
 	// Connect ones Entra ID never reports back (see Permissions).
 	granted := providers.SplitScopes("https://graph.microsoft.com/User.Read " +
-		"https://graph.microsoft.com/Files.ReadWrite.All offline_access openid profile email")
+		"https://graph.microsoft.com/Files.ReadWrite.All https://graph.microsoft.com/Calendars.ReadWrite " +
+		"offline_access openid profile email")
 	report := providers.ReportCapabilities(models.ProviderMicrosoft, applicable, notApplicable, granted)
 
-	if len(report.Granted) != 1 || report.Granted[0] != providers.CapabilityFiles {
-		t.Fatalf("granted = %v, want only files", report.Granted)
+	if len(report.Granted) != 2 || report.Granted[0] != providers.CapabilityFiles || report.Granted[1] != providers.CapabilityCalendars {
+		t.Fatalf("granted = %v, want files and calendars", report.Granted)
 	}
 	if len(report.Missing) != 0 {
 		t.Fatalf("a personal account is asked to reconnect for %v", report.Missing)

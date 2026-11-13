@@ -270,10 +270,14 @@ type Capability string
 const (
 	// CapabilityFiles covers browsing and transferring files (the sync engine).
 	CapabilityFiles Capability = "files"
+	// CapabilityCalendars covers listing and writing calendars (the calendar
+	// engine). It is requested by both providers, so an account connected before
+	// it existed reports it as missing and offers a reconnect.
+	CapabilityCalendars Capability = "calendars"
 )
 
 // ProviderCapabilities lists every capability in the order the UI displays them.
-var ProviderCapabilities = []Capability{CapabilityFiles}
+var ProviderCapabilities = []Capability{CapabilityFiles, CapabilityCalendars}
 
 // Permission documents one requested scope: why it is requested, which feature
 // needs it, and whether a tenant administrator has to grant it for everybody.

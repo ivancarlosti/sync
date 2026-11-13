@@ -122,7 +122,7 @@ tell the two apart; these rows are the memory that separates them (see
 paths only, `ON CONFLICT DO NOTHING` — and dropped for the paths neither side lists
 any more.
 
-`audit_runs` — one row per content audit (see [api.md](api.md) §8): the audited
+`audit_runs` — one row per content audit (see [api.md](api.md) §9): the audited
 root (`account_id`, `account_email`, `provider`, `drive_id`, `drive_name`
 (`VARCHAR(191)`), `drive_kind` (`VARCHAR(32)`), `drive_owner` (`VARCHAR(191)`),
 `root_folder_id`, `root_path`), `max_depth`, `status`/`trigger`/timing like
@@ -137,9 +137,85 @@ walk could not descend into the folder), `listed` (false when the folder's
 children are not part of the report), `modified_at` and `mime_type`. The rows are
 batch-inserted after the walk, so their `id` order is the DFS preorder of the tree.
 
-notification_channels ──N:M──► events (JSON array inside the row, no join table)
+## 4. Calendar jobs, runs and links
+
+Four tables mirror the file family. They are deliberately separate from
+`sync_jobs` instead of sharing it: a calendar job has two calendar ids instead of
+four folder ids, no `exclude_patterns`, no byte counters, and an `.ics` source
+with no account at all.
+
+`calendar_jobs` — a durable source → destination calendar pairing (see
+[calendars.md](calendars.md)).
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | `BIGINT UNSIGNED` | |
+| `name` | `VARCHAR(191)` | |
+| `source_kind` | `VARCHAR(32)` | `google` \| `microsoft` \| `ics`, default `google` |
+| `source_account_id`, `destination_account_id` | `BIGINT UNSIGNED` | indexed; `source_account_id` is `0` for an `.ics` job |
+| `source_calendar_id`, `destination_calendar_id` | `VARCHAR(512)` | provider calendar ids (`primary` is accepted by Google); empty means the account's primary calendar |
+| `source_calendar_name`, `destination_calendar_name` | `VARCHAR(191)` | display names as the provider listed them, so a row renders without a provider call |
+| `source_url` | `VARCHAR(1024)` | the `.ics` subscription |
+| `source_username` | `VARCHAR(191)` | HTTP Basic user, if any |
+| `source_secret` | `TEXT` | **never serialised** (`json:"-"`); AES-GCM `v1:` payload |
+| `source_etag`, `source_last_modified` | `VARCHAR(255)` / `VARCHAR(64)` | validators of the last successful fetch (the `source_etag` column name is pinned: the naming strategy would split the initialism into `source_e_tag`) |
+| `source_fetched_at` | `DATETIME` (nullable) | when the current validators were obtained |
+| `direction` | `VARCHAR(32)` | `bidirectional` \| `one_way` (an `.ics` job is always `one_way`) |
+| `conflict_policy` | `VARCHAR(32)` | `newest_wins` \| `source_wins` \| `destination_wins` \| `skip` |
+| `delete_missing` | `BOOLEAN` | propagate a deletion instead of re-creating the event |
+| `past_days`, `future_days` | `INT` | listing window around *now*, default `30` / `365` |
+| `interval_minutes`, `enabled` | `INT` / `BOOLEAN` | `0` = manual only, capped at `10080`; a new job is enabled |
+| `last_run_at`, `next_run_at` | `DATETIME` (nullable) | `next_run_at` is recomputed on every save and moved one interval past the start of every finished run; `NULL` for a manual-only or disabled job |
+| `last_status`, `last_error` | `VARCHAR(32)` / `TEXT` | summary of the last run |
+
+`calendar_event_links` — **the engine state**: one row per event both sides know
+about (`uniqueIndex idx_calendarlink_job_uid` on `job_id` + `uid`). The pairing
+cannot rely on the provider event id (Google and Microsoft mint their own) nor on
+the UID alone (Graph ignores an `iCalUId` on create), so the row carries
+`uid` (`VARCHAR(768)`), `source_event_id` and `destination_event_id`
+(`VARCHAR(768)`), both content fingerprints (`source_fingerprint`,
+`destination_fingerprint`, each `VARCHAR(64)` — the destination column name is
+pinned for the same reason as `source_etag`), both last known starts
+(`source_start`, `destination_start`, UTC), `summary`, `last_action`,
+`last_synced_at`. The fingerprints make "which side moved since the last run"
+answerable without storing a copy of the event; the starts are what separate an
+event that travelled out of the listing window from one that was deleted.
+
+`calendar_runs` — one row per execution, the shape of `sync_runs` with event
+counters instead of file counters: `job_id` (indexed), `job_name`, `status`
+(indexed), `trigger`, `started_at`/`finished_at`/`duration_ms`, `events_scanned`,
+`events_created`, `events_updated`, `events_deleted`, `events_skipped`,
+`conflicts`, `errors` and a `message` for the failure the counters cannot express.
+
+`calendar_run_items` — the per-event evidence of a run: `run_id` and `job_id`
+(both indexed), `action` (indexed), `uid`, `summary` (the title at the time of
+the decision), `start_at` and the `evidence` string that explains the decision.
+At most `1000` rows are written per run.
+
+## 5. Table map
+
+```text
 settings                              (independent key/value store)
 oauth_states ──► ephemeral (deleted after 10 minutes or on redemption)
+
+connected_accounts ──1:N──► sync_jobs (source_account_id, destination_account_id)
+connected_accounts ──1:N──► audit_runs (account_id)
+connected_accounts ──1:N──► calendar_jobs (source_account_id, destination_account_id)
+connected_accounts ──1:N──► traffic_entries (account_id)
+
+sync_jobs ──1:N──► sync_runs ──1:N──► sync_items
+sync_jobs ──1:N──► sync_files   (engine state, one row per path)
+sync_jobs ──1:N──► sync_folders (engine state, one row per shared folder)
+
+calendar_jobs ──1:N──► calendar_runs ──1:N──► calendar_run_items
+calendar_jobs ──1:N──► calendar_event_links (engine state, one row per UID)
+
+audit_runs ──1:N──► audit_entries
+
+notification_channels ──N:M──► events (JSON array inside the row, no join table)
+api_tokens                            (bearer credentials of the public API)
+traffic_entries ──► sync_runs.run_id  (unique per run + account + direction; a calendar
+                                      run moves no bytes and writes none)
 ```
 
 There are deliberately **no foreign key constraints**
@@ -148,7 +224,7 @@ service layer, where the jobs that use it and that account's audits are removed
 together with it (that is what the accounts screen warns about before
 confirming).
 
-## 5. Upgrade path
+## 6. Upgrade path
 
 1. Stop the old container (or let the orchestrator replace it).
 2. Start the new image. `AutoMigrate` adds new tables/columns and indexes;
@@ -160,7 +236,7 @@ Downgrades are not supported: a new column added by an upgrade simply stays
 unused by an older binary, but a value written by a new release may be unknown to
 it (an unknown `status` renders as-is in the UI).
 
-## 6. Retention and housekeeping
+## 7. Retention and housekeeping
 
 | Data | Bound | Trigger |
 |---|---|---|
@@ -169,8 +245,10 @@ it (an unknown `status` renders as-is in the UI).
 | `sync_files` | one row per path, updated in place | nothing to prune; deleting a job deletes its state |
 | `sync_folders` | one row per folder both sides have, written as a delta | nothing to prune: rows of folders neither side lists any more are dropped at the end of the run; deleting a job deletes its state |
 | `audit_runs` + `audit_entries` | `auditKeepCount = 50` newest audits per account | `Store.PruneAudits` — called on demand through `POST /api/maintenance/audits/prune` (default `keep: 50`, allowed 1…10000) |
+| `calendar_runs` + `calendar_run_items` | newest 50 runs per job (the same `runKeepCount` bound as a file job) | pruned at the end of every calendar run; the `/api/maintenance/*` pruners do not touch them. Deleting a job keeps its history: the rows stay for the record, while the endpoints stop answering because they resolve the job first |
+| `calendar_event_links` | one row per iCalendar UID, updated in place | nothing to prune; a row whose event is gone from both sides is dropped by the run (`forget_link`), and deleting a job deletes its state |
 
-## 7. Backup and restore
+## 8. Backup and restore
 
 A logical dump is enough; there is no on-disk state outside this database.
 
@@ -185,7 +263,7 @@ Keep `ENCRYPTION_KEY` safe and **together** with the dump: without it the tokens
 and notification secrets in it cannot be decrypted (everything else stays usable,
 but the accounts must be reconnected and the channel secrets re-entered).
 
-## 8. Queries an operator actually needs
+## 9. Queries an operator actually needs
 
 ```sql
 -- what is scheduled next
@@ -200,6 +278,17 @@ FROM sync_runs ORDER BY id DESC LIMIT 20;
 SELECT r.id, r.started_at, i.action, i.path, i.evidence
 FROM sync_items i JOIN sync_runs r ON r.id = i.run_id
 WHERE i.path LIKE 'docs/%' ORDER BY i.id DESC LIMIT 50;
+
+-- the last twenty calendar runs of one job (event counters, no bytes)
+SELECT id, job_name, status, trigger, started_at, events_scanned,
+       events_created, events_updated, events_deleted, events_skipped,
+       conflicts, errors
+FROM calendar_runs WHERE job_id = 7 ORDER BY id DESC LIMIT 20;
+
+-- why a specific event behaved the way it did
+SELECT r.id, r.started_at, i.action, i.uid, i.summary, i.evidence
+FROM calendar_run_items i JOIN calendar_runs r ON r.id = i.run_id
+WHERE r.job_id = 7 AND i.summary LIKE '%standup%' ORDER BY i.id DESC LIMIT 50;
 
 -- accounts whose token died
 SELECT id, provider, email, status, last_error FROM connected_accounts WHERE status <> 'connected';
@@ -230,7 +319,7 @@ SELECT id, name, prefix, scopes, expires_at, revoked_at, last_used_at, last_used
 FROM api_tokens ORDER BY id DESC;
 ```
 
-## 9. Troubleshooting
+## 10. Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|

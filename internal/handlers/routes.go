@@ -46,6 +46,22 @@ func (s *Server) registerRoutes(router *gin.Engine) {
 		accounts.GET("/:id/drives/:drive/items", s.handleAccountItems)
 		accounts.GET("/:id/sites", s.handleAccountSites)
 		accounts.POST("/:id/sites/resolve", s.handleResolveSite)
+		accounts.GET("/:id/calendars", s.handleAccountCalendars)
+
+		calendars := secured.Group("/calendars")
+		calendars.GET("", s.handleListCalendars)
+		calendars.POST("", s.handleCreateCalendar)
+		// The feed preview is registered before the `:id` routes: Gin would
+		// otherwise match "feed-preview" as an id.
+		calendars.POST("/feed-preview", s.handleCalendarFeedPreview)
+		calendars.GET("/:id", s.handleGetCalendar)
+		calendars.PUT("/:id", s.handleUpdateCalendar)
+		calendars.DELETE("/:id", s.handleDeleteCalendar)
+		calendars.POST("/:id/run", s.handleRunCalendar)
+		calendars.POST("/:id/cancel", s.handleCancelCalendar)
+		calendars.GET("/:id/preview", s.handleCalendarPreview)
+		calendars.GET("/:id/runs", s.handleCalendarRuns)
+		calendars.GET("/:id/runs/:runId", s.handleCalendarRun)
 
 		jobs := secured.Group("/jobs")
 		jobs.GET("", s.handleListJobs)

@@ -46,10 +46,13 @@ and protected by the signed `state` parameter instead.
   reaches a URL without being narrowed, the provider refuses to send it instead
   of failing with a `500`.
 * **Lists are bounded** — `limit` is clamped (`runs` and `audits` 50/200, run
-  items 500/1000, audit entries 10000, items 100/1000); `GET /api/runs` supports
-  `job_id` and `status` filters, the status filter applies to the returned page.
+  items 500/1000, audit entries 10000, items 100/1000, calendar runs 20/200,
+  calendar run items 200/1000); `GET /api/runs` supports `job_id` and `status`
+  filters, the status filter applies to the returned page.
 * **Secrets** — no endpoint ever returns a token, a client secret, a channel
-  secret (masked as `********`) or a SHA/HMAC. `/api/settings/raw` hides every
+  secret (masked as `********`), a SHA/HMAC or the password of an `.ics`
+  subscription (write-only: an update that omits it keeps the stored one and
+  `clear_source_password` removes it). `/api/settings/raw` hides every
   `provider.*` key for the same reason.
 
 ## 2. Public endpoints
@@ -80,7 +83,7 @@ and protected by the signed `state` parameter instead.
 unit, currency?, rate_per_gib, custom}`. The `custom` document accepts
 `{label, inbound_label, outbound_label, operations_label, cost_label, unit}`;
 every omitted field keeps the default. The pricing is the report's only cost
-input: see §9 and [database.md](database.md) §8 for the queries behind it.
+input: see §11 and [database.md](database.md) §9 for the queries behind it.
 
 ## 4. Providers
 
@@ -131,6 +134,7 @@ history are kept (only `DELETE /api/accounts/:id` deletes them).
 | `DELETE` | `/api/accounts/:id` | `{id, deleted_jobs}` — the jobs using the account are deleted too |
 | `GET` | `/api/accounts/:id/drives` | `{drives:[{id,name,kind,owner}]}` — the account's own drive first (the one `GET /me/drive` names), then the roots shared with it. A Microsoft personal account (MSA) also exposes internal bookkeeping drives in `/me/drives` for which Graph refuses the root (`400 ObjectHandle is Invalid`), so those are dropped |
 | `GET` | `/api/accounts/:id/drives/:drive/items?folder_id=` | `{drive_id, folder_id, items:[{id,name,is_dir,size,modified_at,mime_type,hash,unsupported}]}` — folders first, then files, both alphabetical; `folder_id` defaults to the drive root |
+| `GET` | `/api/accounts/:id/calendars` | `{calendars:[{id,name,primary,time_zone?,read_only}]}` — the calendars of the account, for the calendar pickers. `read_only` marks a calendar the account may read but not write (a holiday calendar, a shared calendar without write access); the calendar engine refuses to write to one. Empty list for a provider without the capability |
 | `GET` | `/api/accounts/:id/sites?q=` | `{sites:[{id,name,kind,owner}]}` — SharePoint libraries (empty list for providers without the capability). `q` is a keyword; omitted (or empty) it lists every site the account can reach, and a value the server cannot search falls back to the tenant root site. A Microsoft **personal** account owns no site collection and Graph refuses `/sites` for it, so the answer is an empty list instead of an error |
 | `POST` | `/api/accounts/:id/sites/resolve` | body `{"url": "https://tenant.sharepoint.com/sites/marketing"}` → `{sites:[{id,name,kind,owner}]}` — the default library of that site, the manual fallback of the folder picker. `400` when the value is not a SharePoint URL/site id, `404` when the account cannot reach it, `424` for a provider without the capability |
 
@@ -230,7 +234,97 @@ never seen is **new**, so it travels and is never read as a deletion. The state
 starts empty after an upgrade: a folder deleted before the first run that recorded
 it is mirrored once, and from then on the deletion propagates.
 
-## 7. Runs
+## 7. Calendar jobs
+
+`calendarView` = every `calendar_jobs` column (`id, name, source_kind,
+source_account_id, source_calendar_id, source_calendar_name, source_url,
+source_username, source_etag, source_last_modified, source_fetched_at,
+destination_account_id, destination_calendar_id, destination_calendar_name,
+direction, conflict_policy, delete_missing, past_days, future_days,
+interval_minutes, enabled, last_run_at, next_run_at, last_status, last_error,
+created_at, updated_at`) plus `running: boolean`. The feed **password** is not a
+column of the view: it is write-only and never serialised.
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/calendars` | `{calendars:[calendarView]}` |
+| `POST` | `/api/calendars` | body below → **201** `calendarView` |
+| `GET` | `/api/calendars/:id` | `calendarView` |
+| `PUT` | `/api/calendars/:id` | replaces the job as a whole, recomputes `next_run_at` |
+| `DELETE` | `/api/calendars/:id` | cancels a run in flight → `{id, cancelled}` |
+| `POST` | `/api/calendars/:id/run` | **202** `{job_id, run}` — `409 busy` while a run of the job is in flight |
+| `POST` | `/api/calendars/:id/cancel` | `{job_id, cancelled}` — idempotent |
+| `GET` | `/api/calendars/:id/preview` | dry run, writes nothing: `{job_id, window_start, window_end, source_listed, destination_listed, events_scanned, plan:[{uid, summary, start_at, action, evidence}]}` |
+| `GET` | `/api/calendars/:id/runs?limit=` | `{runs:[calendarRun]}` (default 20, max 200) |
+| `GET` | `/api/calendars/:id/runs/:runId` | `{run, items:[calendarRunItem]}` (default 200, max 1000); `404` when the run belongs to another job |
+| `POST` | `/api/calendars/feed-preview` | fetches an `.ics` before a job exists: `{url, username?, password?, past_days?, future_days?}` → `{etag?, last_modified?, window_start, window_end, events, recurring, cancelled, sample:[{uid, summary, start_at, end_at, all_day, recurring}]}` |
+
+Create/update payload (an account → account job):
+
+```json
+{
+  "name": "Work ↔ Personal",
+  "source_kind": "google",
+  "source_account_id": 1,
+  "source_calendar_id": "primary",
+  "source_calendar_name": "Personal",
+  "destination_account_id": 2,
+  "destination_calendar_id": "AAMkAGI2…",
+  "destination_calendar_name": "Calendar",
+  "direction": "bidirectional",
+  "conflict_policy": "newest_wins",
+  "delete_missing": false,
+  "past_days": 30,
+  "future_days": 365,
+  "interval_minutes": 60,
+  "enabled": true
+}
+```
+
+An `.ics` subscription sends `source_kind: "ics"` and the feed columns instead
+of an account:
+
+```json
+{
+  "name": "Team feed",
+  "source_kind": "ics",
+  "source_url": "https://calendar.example.com/team.ics",
+  "source_username": "sync",
+  "source_password": "s3cret",
+  "clear_source_password": false,
+  "destination_account_id": 2,
+  "destination_calendar_id": "primary",
+  "destination_calendar_name": "Team",
+  "interval_minutes": 120
+}
+```
+
+Validation performed by the handler: `name` required (`1–191` characters),
+`source_kind` ∈ `google|microsoft|ics` (default `google`), `direction` ∈
+`bidirectional|one_way` (default `bidirectional`, and forced to `one_way` for an
+`ics` job), `conflict_policy` ∈ `newest_wins|source_wins|destination_wins|skip`
+(default `newest_wins`), `past_days` `0–730` (default `30`), `future_days`
+`1–1825` (default `365`), `interval_minutes` `0–10080` (`0` = manual only).
+Both accounts must exist **and** their providers must implement the calendar
+capability, and a job that names the same account *and* calendar on both ends is
+refused (`the source and the destination cannot be the same calendar`). An empty
+`source_calendar_id` or `destination_calendar_id` means *the account's primary
+calendar*, resolved at run time.
+
+An `ics` URL must be absolute `http(s)` with a host, must not embed
+credentials, and must be publicly routable unless the instance sets
+`CALENDAR_ALLOW_PRIVATE_TARGETS=true`; anything else is `400 validation` and no
+request leaves the server. `source_password` is stored AES-256-GCM sealed, an
+update that omits it keeps the stored value, and `clear_source_password: true`
+removes it. Display names are clamped to their column widths (`191`/`512`), and
+the stored names travel back so a row renders without a provider call.
+
+`direction` and `conflict_policy` mean what they mean for a file job, with one
+calendar-specific rule: a `one_way` job reports a destination-side edit as
+`unchanged` instead of reverting it, and an `.ics` source is never written back.
+See [calendars.md](calendars.md) §4–§5 for the full decision table.
+
+## 8. Runs
 
 | Method | Path | Notes |
 |---|---|---|
@@ -240,9 +334,9 @@ it is mirrored once, and from then on the deletion propagates.
 
 `runView` = the `sync_runs` row plus `running`; `runItemView` =
 `{id, action, path, size, evidence?, created_at}`; `trafficEntry` is the traffic
-one run moved through one account (see §9).
+one run moved through one account (see §11).
 
-## 8. Audits
+## 9. Audits
 
 A content audit lists a provider folder tree to a chosen depth and stores the
 resulting report. It is an **async job** like a sync run: the start answers
@@ -304,7 +398,7 @@ The CSV columns are
 mime_type`, prefixed with a UTF-8 BOM so a spreadsheet opens accented paths
 correctly.
 
-## 9. Notifications
+## 10. Notifications
 
 | Method | Path | Payload / answer |
 |---|---|---|
@@ -329,7 +423,7 @@ correctly.
 
 Field schemas, secrets and delivery semantics: [notifications.md](notifications.md).
 
-## 9. Billing and API tokens
+## 11. Billing and API tokens
 
 ### Billing
 
@@ -382,7 +476,7 @@ bucket,day,month,account_id,account_email,run_id,job_id,inbound,outbound,operati
 * Authentication is `Authorization: Bearer sync_…` or `X-API-Key: sync_…`; see
   [authentication.md](authentication.md) §6.
 
-## 10. Maintenance
+## 12. Maintenance
 
 | Method | Path | Payload / answer |
 |---|---|---|
@@ -393,7 +487,7 @@ bucket,day,month,account_id,account_email,run_id,job_id,inbound,outbound,operati
 | `POST` | `/api/maintenance/audits/prune` | `{keep}` (default 50, 1…10000) → `{keep, pruned:true}` |
 | `POST` | `/api/maintenance/purge` | `{target}` ∈ `all` \| `jobs` \| `audits` \| `billing`, optional `{days}` → `PurgeOutcome` |
 
-## 11. Worked examples
+## 13. Worked examples
 
 ```bash
 # health (no session needed)
@@ -422,7 +516,7 @@ curl -s -b jar.txt -H 'Content-Type: application/json' \
 curl -s -b jar.txt -o audit-1.csv https://sync.example.com/api/audits/1/export
 ```
 
-## 12. Contract with the SPA
+## 14. Contract with the SPA
 
 The SPA consumes exactly these shapes through `web/src/lib/api.ts`: typed
 wrappers per endpoint, `codeOf(error)`/`messageOf(error)` to read `code`/`error`

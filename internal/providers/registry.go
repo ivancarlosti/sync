@@ -55,6 +55,19 @@ func (r *Registry) Names() []models.ProviderName {
 	return names
 }
 
+// CalendarFor returns the CalendarProvider implementation of a provider, if any.
+// It is the calendar engine's half of Get: a provider that only implements the
+// file interface is registered and usable for files but cannot be listed as a
+// calendar source.
+func (r *Registry) CalendarFor(name models.ProviderName) (CalendarProvider, bool) {
+	provider, err := r.Get(name)
+	if err != nil {
+		return nil, false
+	}
+	calendars, ok := provider.(CalendarProvider)
+	return calendars, ok
+}
+
 // SiteBrowserFor returns the SiteBrowser implementation of a provider, if any.
 func (r *Registry) SiteBrowserFor(name models.ProviderName) (SiteBrowser, bool) {
 	provider, err := r.Get(name)

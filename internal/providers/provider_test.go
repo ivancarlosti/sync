@@ -97,11 +97,12 @@ func TestInformationalPermissionsDoNotGateACapability(t *testing.T) {
 	table := []Permission{
 		{Capability: CapabilityFiles, Title: "files", Scope: "files.read"},
 		{Capability: CapabilityFiles, Title: "files", Scope: "offline_access", Informational: true},
+		{Capability: CapabilityCalendars, Title: "calendars", Scope: "calendars.read"},
 	}
 	if !HasCapability(table, []string{"files.read"}, CapabilityFiles) {
 		t.Fatal("a grant without the informational scope was reported as incomplete")
 	}
-	if len(MissingCapabilities(table, []string{"files.read"})) != 0 {
+	if len(MissingCapabilities(table, []string{"files.read", "calendars.read"})) != 0 {
 		t.Fatal("a complete grant was reported as missing a capability")
 	}
 	if HasCapability(table, []string{"offline_access"}, CapabilityFiles) {
@@ -183,11 +184,12 @@ func TestApplicablePermissionsSplitsByAccountKind(t *testing.T) {
 	table := []Permission{
 		{Capability: CapabilityFiles, Title: "files", Scope: "files.read"},
 		{Capability: CapabilityFiles, Title: "files", Scope: "https://graph.microsoft.com/Sites.ReadWrite.All", Kinds: []AccountKind{AccountKindWork}},
+		{Capability: CapabilityCalendars, Title: "calendars", Scope: "calendars.read"},
 	}
 
 	applicable, notApplicable := ApplicablePermissions(table, AccountKindPersonal)
-	if len(applicable) != 1 || applicable[0].Scope != "files.read" {
-		t.Fatalf("applicable = %+v, want the one scope every kind can hold", applicable)
+	if len(applicable) != 2 || applicable[0].Scope != "files.read" || applicable[1].Scope != "calendars.read" {
+		t.Fatalf("applicable = %+v, want the scopes every kind can hold", applicable)
 	}
 	if len(notApplicable) != 1 || notApplicable[0].Scope != "https://graph.microsoft.com/Sites.ReadWrite.All" {
 		t.Fatalf("notApplicable = %+v, want the work-only scope", notApplicable)
@@ -196,9 +198,9 @@ func TestApplicablePermissionsSplitsByAccountKind(t *testing.T) {
 	// files keeps being judged by its applicable half: it is granted as soon as
 	// its only grantable scope is, even though the work-only scope is out of
 	// reach for this account kind.
-	report := ReportCapabilities(models.ProviderMicrosoft, applicable, notApplicable, []string{"files.read"})
-	if fmt.Sprint(report.Granted) != fmt.Sprint([]Capability{CapabilityFiles}) {
-		t.Fatalf("granted = %v, want files", report.Granted)
+	report := ReportCapabilities(models.ProviderMicrosoft, applicable, notApplicable, []string{"files.read", "calendars.read"})
+	if fmt.Sprint(report.Granted) != fmt.Sprint([]Capability{CapabilityFiles, CapabilityCalendars}) {
+		t.Fatalf("granted = %v, want files and calendars", report.Granted)
 	}
 	if len(report.NotApplicable) != 0 {
 		t.Fatalf("notApplicable = %v, want none: the capability is reachable through OneDrive", report.NotApplicable)
@@ -209,8 +211,8 @@ func TestApplicablePermissionsSplitsByAccountKind(t *testing.T) {
 
 	// Without that scope files is missing — not out of reach.
 	report = ReportCapabilities(models.ProviderMicrosoft, applicable, notApplicable, nil)
-	if fmt.Sprint(report.Missing) != fmt.Sprint([]Capability{CapabilityFiles}) {
-		t.Fatalf("missing = %v, want files", report.Missing)
+	if fmt.Sprint(report.Missing) != fmt.Sprint([]Capability{CapabilityFiles, CapabilityCalendars}) {
+		t.Fatalf("missing = %v, want files and calendars", report.Missing)
 	}
 }
 
@@ -235,6 +237,7 @@ func TestApplicablePermissionsKeepsUnknownKindsWhole(t *testing.T) {
 	table := []Permission{
 		{Capability: CapabilityFiles, Title: "files", Scope: "files.read"},
 		{Capability: CapabilityFiles, Title: "files", Scope: "files.write", Kinds: []AccountKind{AccountKindWork}},
+		{Capability: CapabilityCalendars, Title: "calendars", Scope: "calendars.read"},
 	}
 	applicable, notApplicable := ApplicablePermissions(table, AccountKindUnknown)
 	if fmt.Sprint(applicable) != fmt.Sprint(table) {
@@ -243,12 +246,12 @@ func TestApplicablePermissionsKeepsUnknownKindsWhole(t *testing.T) {
 	if len(notApplicable) != 0 {
 		t.Fatalf("notApplicable = %+v, want none", notApplicable)
 	}
-	report := ReportCapabilities(models.ProviderMicrosoft, applicable, notApplicable, []string{"files.read", "files.write"})
+	report := ReportCapabilities(models.ProviderMicrosoft, applicable, notApplicable, []string{"files.read", "files.write", "calendars.read"})
 	if len(report.NotApplicable) != 0 || len(report.Missing) != 0 {
-		t.Fatalf("report = %+v, want only granted files", report)
+		t.Fatalf("report = %+v, want every declared capability granted", report)
 	}
-	if fmt.Sprint(report.Granted) != fmt.Sprint([]Capability{CapabilityFiles}) {
-		t.Fatalf("granted = %v, want files", report.Granted)
+	if fmt.Sprint(report.Granted) != fmt.Sprint([]Capability{CapabilityFiles, CapabilityCalendars}) {
+		t.Fatalf("granted = %v, want files and calendars", report.Granted)
 	}
 	if !AppliesToKind(Permission{Scope: "files.read", Kinds: []AccountKind{AccountKindWork}}, AccountKindUnknown) {
 		t.Fatal("a work-only scope does not apply to the unknown kind")

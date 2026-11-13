@@ -45,6 +45,19 @@ type SiteResolver interface {
     ResolveSite(ctx, creds, tokens, location string) (Drive, error)
 }
 
+// Optional capability: providers that can read and write calendars. It is a
+// separate interface from Provider on purpose: the sync engine only needs the
+// file half, the calendar engine only needs this one, and a provider that cannot
+// do calendars simply does not implement it (see registry.go). Checked with
+// providers.CalendarsReadable.
+type CalendarProvider interface {
+    Calendars(ctx, creds, tokens) ([]Calendar, error)
+    CalendarEvents(ctx, creds, tokens, calendarID string, window CalendarWindow) ([]CalendarEvent, error)
+    CreateCalendarEvent(ctx, creds, tokens, calendarID string, input CalendarEventInput) (*CalendarEvent, error)
+    UpdateCalendarEvent(ctx, creds, tokens, calendarID, eventID string, input CalendarEventInput) (*CalendarEvent, error)
+    DeleteCalendarEvent(ctx, creds, tokens, calendarID, eventID string) error
+}
+
 // Optional capability: providers that publish their permission table. The table
 // is the single source of truth for Scopes(), the setup guide and the capability
 // badges of the accounts screen.
@@ -74,9 +87,10 @@ type OrgIdentifier interface {
     OrgIDOf(tokens *Tokens) string
 }
 
-// Capability values: files, users, groups, members, domains, orgunits, roles,
-// licenses, logs. helpers: Catalog / ScopesOf / CapabilitiesOf / MissingCapabilities /
-// HasCapability.
+// Capability values: files, calendars. (The catalogue is ProviderCapabilities,
+// in display order; files covers browsing and transferring files, calendars
+// covers listing and writing calendars.) helpers: Catalog / ScopesOf /
+// CapabilitiesOf / MissingCapabilities / HasCapability / DeclaresCapability.
 //
 // Authorization refusals the operator can act on are returned as *AuthError
 // ({Provider, Code, Description}); IsConsentRequired reports the ones that mean
@@ -99,6 +113,29 @@ Key types:
   synchronised root), `Hash` is the provider checksum (Google `md5Checksum`,
   Graph `quickXorHash`) and may be empty.
 * `DriveRoot = "root"` is the well known id of a drive's root for both providers.
+* Calendar types: `Calendar{ID, Name, Primary, TimeZone, ReadOnly}`,
+  `CalendarWindow{Start, End}` (half-open, like every range query),
+  `CalendarEvent{ID, UID, Summary, Description, Location, Start, End, AllDay,
+  TimeZone, UpdatedAt, Recurring, Cancelled, Organizer, Attendees}` and
+  `CalendarEventInput{UID, Summary, Description, Location, Start, End, AllDay,
+  TimeZone, Attendees}`. `Start`/`End` are absolute instants; an all-day event is
+  reported at midnight of its first day in `TimeZone` with an exclusive end, and
+  is written back the same way so the round trip does not shift the day.
+  `UpdatedAt` is the **event** stamp (it feeds `newest_wins`), not the sync time.
+* `providers.EventFingerprint(event)` / `InputFingerprint(input)` — the content
+  identity the calendar engine compares between runs: summary, description,
+  location, start, end, all-day flag, the sorted lower-cased attendee list and
+  the recurring flag, hashed with SHA-256. The provider id and the modification
+  stamp are deliberately excluded, because providers bump those on no-op writes.
+  `InputFingerprint` is what a freshly written event is expected to list as, so a
+  provider that normalises a value does not look like a conflict next run.
+* `providers.CalendarEventUID(seed)` — derives the iCalendar UID of a copied
+  event from a stable seed (`<20 bytes hex>@sync.local`) instead of letting each
+  provider mint its own, which is what keeps a Google copy and a Microsoft copy of
+  the same event recognisable when a later run pairs the calendars the other way.
+* `providers.LoadZone(name)` — resolves an IANA zone name and falls back to UTC:
+  a payload with an explicit offset stays correct in a container without a zone
+  database, and Graph may store a Windows zone name.
 * **Remote identifiers are guarded before they reach a URL.** Google matches
   every id it interpolates — item, folder, parent and drive id — against
   `^[A-Za-z0-9_-]{1,512}$`
@@ -207,8 +244,8 @@ What the registration has to expose:
 
 | Provider | Redirect URI to register | APIs / permissions |
 |---|---|---|
-| Google | `APP_URL/api/oauth/google/callback` | Drive API enabled; the identity and Drive scopes of the permission table (`openid`, `userinfo.email`, `userinfo.profile`, `drive`); the client ID allow-listed in Admin console → Security → API controls |
-| Microsoft | `APP_URL/api/oauth/microsoft/callback` | the delegated permissions of the permission table (`offline_access`, `openid`, `profile`, `email`, `User.Read`, `Files.ReadWrite.All`, `Sites.ReadWrite.All`); the tenant administrator can grant `Sites.ReadWrite.All` once for the whole directory |
+| Google | `APP_URL/api/oauth/google/callback` | Drive **and** Calendar APIs enabled; the identity, Drive and Calendar scopes of the permission table (`openid`, `userinfo.email`, `userinfo.profile`, `drive`, `https://www.googleapis.com/auth/calendar`); the client ID allow-listed in Admin console → Security → API controls |
+| Microsoft | `APP_URL/api/oauth/microsoft/callback` | the delegated permissions of the permission table (`offline_access`, `openid`, `profile`, `email`, `User.Read`, `Files.ReadWrite.All`, `Sites.ReadWrite.All`, `Calendars.ReadWrite`); the tenant administrator can grant `Sites.ReadWrite.All` once for the whole directory |
 
 Both flows are shown with `prompt=consent`, so a reconnection always returns a
 refresh token; Google also uses `access_type=offline` and `include_granted_scopes`.
@@ -234,6 +271,12 @@ prefix stripped (`copy: "permissions"` — `User.Read`, `Files.ReadWrite.All`, �
 | Progress while uploading | resumable upload for large files | upload session for large files (`upload.go`) |
 | Account kind | n/a — a Google account is a Google account | `personal` (an MSA) vs `work`, read from the `tid` claim (or the tenant segment of `iss`) of the access token, falling back to the own drive's `driveType` when the token carries no readable claim (`account_kind.go`). Stored on the account row as `kind` and reported as `account_kind`, it decides which permissions are applicable to the account (`Permission.Kinds`, `providers.ApplicablePermissions`) |
 | Organisation (`org_id`) | the hosted domain (`hd` claim of the ID token) read at connection (`google.go`), lower-cased; a consumer account has none, and Google tokens are opaque so there is nothing to re-read later | the `tid` claim of the token (its `iss` tenant segment when `tid` is missing), `providers.OrgIdentifier.OrgIDOf` (`account_kind.go`); the consumer tenant and an unreadable token answer none. Stored on the account row as `org_id` and reported as `org_id` |
+| Calendar list | `calendarList.list` (`maxResults=250`, every page). Ids are `primary`, an email address (`…@group.calendar.google.com`) or a holiday calendar (`en.usa#holiday@group.v.calendar.google.com`), matched against `^[A-Za-z0-9._%+#@-]{1,512}$` before reaching a URL; `accessRole` (`reader`/`freeBusyReader`) becomes `read_only`, `timeZone` is reported | `/me/calendars` (`$top=100` + paging). `canEdit: false` becomes `read_only`; a calendar without the property is assumed writable (Graph's own default) and `isDefaultCalendar` becomes `Primary` |
+| Calendar listing | `events.list` with `timeMin`/`timeMax`, `singleEvents=false` (a series master comes back as one event, flagged by `recurrence`/`recurringEventId`) and `showDeleted=false`; `maxResults=2500` per page, every page | `/me/calendars/{id}/calendarView` with `startDateTime`/`endDateTime`, which **expands** a series into the instances that fall inside the window; `$top=250` per page, every page. A calendar that no longer exists answers `ErrNotFound` |
+| Calendar write | `POST`/`PUT`/`DELETE …/events` with `sendUpdates=none` (a synced copy never e-mails the guests), `iCalUID` sent on create; a returned event is read back into the normalised shape | `POST`/`PATCH`/`DELETE /me/calendars/{id}/events`, body only with the fields the engine manages (a conference link or a reminder the user configured keeps its value); **no** `/send` call, so guests are not invited |
+| Recurrence / cancellation | `recurrence` or `recurringEventId` → `Recurring`; `status: cancelled` → `Cancelled` | `recurrence`, `seriesMasterId` or a `type` other than `singleInstance` → `Recurring`; `isCancelled` → `Cancelled` |
+| Modification stamp | `updated` (RFC 3339) → `UpdatedAt`, which feeds `newest_wins` | Graph does not expose an event modification stamp in this SDK version, so `UpdatedAt` stays zero: `newest_wins` never guesses and reports the pair as a `conflict` instead of writing |
+| Calendar id refused | an id outside the calendar alphabet, or an event id outside `^[A-Za-z0-9_-]{1,900}$` → `providers.ErrInvalidIdentifier` → `400 validation`, no request leaves the server | the same guard through `calendarIDPattern` (`internal/providers/microsoft/calendar.go`), so a stored value cannot steer a Graph path |
 
 Both providers answer `IsNotFound(err) == true` for a remote item that vanished,
 which is how a deletion detected during a run is distinguished from a failure.
@@ -281,6 +324,19 @@ problem (403), and never confuses the two.
   with a SharePoint library of the same work account. The API refuses only the two
   locations collapsing into one folder, and a folder nested inside the other in the
   direction the job copies (`400 validation`, see `docs/api.md` §6).
+* **Calendars** — one row per calendar job: name, source (`google`, `microsoft`
+  or `ics` with the feed host), the stored calendar names of both ends, the
+  direction, last status/error, `next_run_at`, and the *Sync now* / *Cancel* /
+  *Preview* / *History* / *Delete* actions. A row whose accounts lost their
+  permission shows the same `reconnect` state a file job does.
+* **Calendar editor** — the source tab lists the calendars of the chosen account
+  through `GET /api/accounts/:id/calendars`; a calendar the account may only read
+  is tagged and cannot be a destination, and a calendar the account no longer
+  lists stays selectable under its stored name. A provider without the calendar
+  half is not offered at all (`providers.CalendarsReadable`). Choosing the `.ics`
+  source swaps the account pickers for the feed URL, the optional HTTP Basic
+  credentials and *Check subscription* (`POST /api/calendars/feed-preview`), and
+  pins the direction to *one way*.
 * **Admin > Providers** — client id, client secret, redirect URI, tenant
   (Microsoft), the current `source`, the exact redirect URI to paste into the
   provider console and the tenant-wide consent state (Microsoft).
@@ -300,6 +356,12 @@ problem (403), and never confuses the two.
 | `412 reconnect` on every call | refresh token revoked/expired | reconnect the account (same remote account → same row, jobs preserved) |
 | `412 consent_required` when connecting | the permissions were refused, or the Microsoft admin consent is missing | collect the setup guide (`Admin > Setup guide`), fix the console, retry |
 | capability badges marked in red on an account | the account was connected before those permissions were requested | reconnect the account |
+| the `calendars` badge is red, or a calendar job answers `… does not support calendars` | the account was connected before the calendar scopes existed, or the provider has no calendar half | reconnect the account (jobs and history survive); a provider without the capability cannot be a calendar source |
+| Google: every calendar call answers `403` | the Calendar API is not enabled for the project, or the `calendar` scope was not granted at connection | enable *Google Calendar API* in the cloud console, then reconnect |
+| Microsoft: `ErrorAccessDenied` on a calendar call | `Calendars.ReadWrite` was not granted (or the admin consent is missing) | grant it and reconnect |
+| Google: every calendar in the destination picker is read-only | the account only has `reader` / `freeBusyReader` access to them | pick a calendar the account can write to |
+| calendar runs pile up `conflicts` without writing anything | a Microsoft end publishes no event modification stamp, so `newest_wins` cannot pick a side | use `source_wins` (or `destination_wins` on a bidirectional job) |
+| guests are never invited to a synced copy | the attendee list is copied, but neither provider is asked to notify anybody (`sendUpdates=none`, no `/send`) | expected: a synced copy is a copy, not a meeting request — the invitation travels with the organiser's own copy |
 | Microsoft: the *files* badge is red right after connecting, and reconnecting changes nothing | the grant is missing a **Graph** permission — `User.Read`, `Files.ReadWrite.All` or `Sites.ReadWrite.All`. The four OpenID Connect scopes are `informational` and never gate the badge (Entra does not report them back) | grant the missing Graph permission (admin consent for the tenant), then reconnect |
 | SharePoint libraries missing | `Sites.ReadWrite.All` not granted, no admin consent, or the library belongs to a site the signed-in user cannot reach | grant the scope and reconnect; the picker also accepts a pasted SharePoint URL (the manual fallback of the site field) |
 | SharePoint missing on a **personal** Microsoft account, with the "only one OneDrive" hint | an MSA has no site collection at all: its directory holds no `Microsoft.FileServices` address and Graph answers `/sites` with *This API is not supported for MSA accounts* | nothing to fix — the API answers an empty list instead of an error, and an intra-account job (OneDrive → OneDrive) covers what the account does have |

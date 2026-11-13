@@ -45,12 +45,16 @@ const (
 // against the same database only causes jobs to be attempted twice (each
 // attempt is guarded by the per-job lease of SyncService).
 type Scheduler struct {
-	store    *Store
-	engine   *SyncService
-	tokens   *TokenManager
-	notifier *Notifier
-	purge *PurgeService
-	now   func() time.Time
+	store  *Store
+	engine *SyncService
+	// calendars is the calendar half of the schedule loop. It is optional so a
+	// scheduler can be built (and tested) without one, and the file engine keeps
+	// working when the calendar engine is not wired.
+	calendars *CalendarService
+	tokens    *TokenManager
+	notifier  *Notifier
+	purge     *PurgeService
+	now       func() time.Time
 
 	scheduleEvery time.Duration
 	tokenEvery    time.Duration
@@ -59,8 +63,8 @@ type Scheduler struct {
 
 	mu      sync.Mutex
 	started bool
-	stop     chan struct{}
-	wg       sync.WaitGroup
+	stop    chan struct{}
+	wg      sync.WaitGroup
 }
 
 // NewScheduler builds the scheduler with the default intervals.
@@ -80,6 +84,12 @@ func NewScheduler(store *Store, engine *SyncService, tokens *TokenManager, notif
 	}
 }
 
+// SetCalendars attaches the calendar engine so the schedule loop also starts due
+// calendar jobs. It is a setter instead of a constructor argument because the
+// scheduler predates the calendar engine and a build without one must keep
+// working (see cmd/server).
+func (s *Scheduler) SetCalendars(calendars *CalendarService) { s.calendars = calendars }
+
 // Bootstrap prepares the periodic work at start-up: it closes the runs a
 // restart interrupted and gives every scheduled job a next_run_at, so a
 // container that restarts often still keeps its schedule.
@@ -88,6 +98,11 @@ func (s *Scheduler) Bootstrap(ctx context.Context) error {
 		return err
 	} else if closed > 0 {
 		slog.Warn("closed the runs interrupted by a restart", "runs", closed)
+	}
+	if closed, err := s.store.FailInterruptedCalendarRuns(ctx, s.now()); err != nil {
+		return err
+	} else if closed > 0 {
+		slog.Warn("closed the calendar runs interrupted by a restart", "runs", closed)
 	}
 	if closed, err := s.store.FailInterruptedAudits(ctx, s.now()); err != nil {
 		return err
@@ -112,6 +127,24 @@ func (s *Scheduler) Bootstrap(ctx context.Context) error {
 			slog.Warn("scheduling a job failed", "job", job.ID, "name", job.Name, "error", err)
 		}
 	}
+
+	calendars, err := s.store.ListCalendarJobs(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range calendars {
+		job := calendars[i]
+		next := NextCalendarRunAt(s.now(), &job)
+		if next == nil {
+			continue
+		}
+		if job.NextRunAt != nil && !job.NextRunAt.Before(*next) {
+			continue
+		}
+		if err := s.store.ScheduleCalendarJob(ctx, job.ID, next); err != nil {
+			slog.Warn("scheduling a calendar job failed", "job", job.ID, "name", job.Name, "error", err)
+		}
+	}
 	return nil
 }
 
@@ -131,6 +164,7 @@ func (s *Scheduler) Start(ctx context.Context) error {
 		defer s.wg.Done()
 		s.loop(ctx, "schedule", s.scheduleEvery, func(ctx context.Context) {
 			s.RunDue(ctx)
+			s.RunDueCalendars(ctx)
 		})
 	}()
 	go func() {
@@ -218,6 +252,46 @@ func (s *Scheduler) skipSlot(ctx context.Context, job *models.SyncJob) {
 	}
 }
 
+// RunDueCalendars starts every calendar job whose schedule elapsed and returns
+// how many runs were launched. It is the calendar half of the schedule loop and
+// does nothing when no calendar engine is attached. It is exported like RunDue so
+// the API can force a pass and tests can drive it deterministically.
+func (s *Scheduler) RunDueCalendars(ctx context.Context) int {
+	if s.calendars == nil {
+		return 0
+	}
+	jobs, err := s.store.DueCalendarJobs(ctx, s.now())
+	if err != nil {
+		slog.Error("listing the due calendar jobs failed", "error", err)
+		return 0
+	}
+	started := 0
+	for i := range jobs {
+		job := jobs[i]
+		run, err := s.calendars.StartIfIdle(ctx, job.ID, models.TriggerScheduled)
+		if err != nil {
+			slog.Error("starting a scheduled calendar run failed", "job", job.ID, "name", job.Name, "error", err)
+			s.skipCalendarSlot(ctx, &job)
+			continue
+		}
+		if run == nil {
+			s.skipCalendarSlot(ctx, &job)
+			continue
+		}
+		started++
+		slog.Info("scheduled calendar run started", "job", job.ID, "name", job.Name, "run", run.ID)
+	}
+	return started
+}
+
+// skipCalendarSlot is skipSlot for a calendar job.
+func (s *Scheduler) skipCalendarSlot(ctx context.Context, job *models.CalendarJob) {
+	next := s.now().Add(time.Duration(job.IntervalMinutes) * time.Minute)
+	if err := s.store.ScheduleCalendarJob(ctx, job.ID, &next); err != nil {
+		slog.Warn("pushing the next run of a calendar job failed", "job", job.ID, "error", err)
+	}
+}
+
 // RefreshTokens renews the access tokens that expire inside the refresh window
 // and returns how many accounts were refreshed.
 func (s *Scheduler) RefreshTokens(ctx context.Context) int {
@@ -246,6 +320,16 @@ func (s *Scheduler) RunRetention(ctx context.Context) PurgeResult {
 // enabled scheduled job and nil for a job that is disabled or manual only. The
 // job handlers use it whenever an interval or the enabled flag changes.
 func NextRunAt(now time.Time, job *models.SyncJob) *time.Time {
+	if job == nil || !job.Enabled || job.IntervalMinutes <= 0 {
+		return nil
+	}
+	next := now.Add(time.Duration(job.IntervalMinutes) * time.Minute)
+	return &next
+}
+
+// NextCalendarRunAt is NextRunAt for a calendar job: the same schedule semantics,
+// so both job families answer the dashboard the same way.
+func NextCalendarRunAt(now time.Time, job *models.CalendarJob) *time.Time {
 	if job == nil || !job.Enabled || job.IntervalMinutes <= 0 {
 		return nil
 	}

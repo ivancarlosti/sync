@@ -49,6 +49,9 @@ func (p *Provider) Permissions() []providers.Permission {
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("User.Read")},
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("Files.ReadWrite.All")},
 		{Capability: providers.CapabilityFiles, Title: "files", Scope: graphScope("Sites.ReadWrite.All"), Kinds: workAccounts},
+		// Calendars.ReadWrite is available to a personal account too, so the row
+		// carries no Kinds: the calendar engine works on both families.
+		{Capability: providers.CapabilityCalendars, Title: "calendars", Scope: graphScope("Calendars.ReadWrite")},
 	}
 }
 

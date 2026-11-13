@@ -39,6 +39,13 @@
   conflict policy (`newest_wins`, `source_wins`, `destination_wins`, `skip`),
   exclude globs (`*.tmp`, `cache/**`), optional deletion propagation and a
   schedule (from manual-only up to weekly).
+* **Calendar sync** — pair a Google Calendar with a Microsoft 365 one (either
+  direction) or mirror a public or password-protected `.ics` subscription into a
+  writable calendar. Events are paired by iCalendar UID and compared by content
+  fingerprint, so a run over an unchanged calendar costs two listings and no
+  writes; every run records a per-event decision. Recurring series are skipped
+  (never expanded), a feed is fetched with `ETag`/`Last-Modified` validators and
+  its password is stored as ciphertext. See [docs/calendars.md](docs/calendars.md).
 * **Full audit trail** — every run stores counters and a per-file decision with
   the reason (`evidence`), which is what the Runs screen and
   `GET /api/runs/:id/items` show.
@@ -285,6 +292,7 @@ Details, conventions and the test layout: [docs/development.md](docs/development
 | [oauth.md](docs/oauth.md) | provider flows, PKCE, token storage/refresh, redirect URIs, tenant-wide consent |
 | [app-registration.md](docs/app-registration.md) | guided app registration for Google Workspace and Microsoft Entra, permissions, consent, troubleshooting |
 | [providers.md](docs/providers.md) | provider interface, capabilities, app registration, troubleshooting |
+| [calendars.md](docs/calendars.md) | calendar jobs: pairing rules, conflicts, `.ics` feeds, scheduling, API, limits |
 | [notifications.md](docs/notifications.md) | channel schemas, events, placeholders, secrets, delivery semantics |
 | [api.md](docs/api.md) | endpoint reference with payloads, error codes and examples |
 | [development.md](docs/development.md) | toolchain, commands, tests, how to extend, CI pipeline |

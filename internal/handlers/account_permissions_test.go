@@ -25,8 +25,17 @@ const (
 )
 
 // msaGrant is the scope set a personal Microsoft account really receives: the
-// OneDrive scopes and the four OpenID Connect ones Entra ID never reports back.
+// OneDrive scopes, the calendar scope and the four OpenID Connect ones Entra ID
+// never reports back.
 const msaGrant = "https://graph.microsoft.com/User.Read " +
+	"https://graph.microsoft.com/Files.ReadWrite.All " +
+	"https://graph.microsoft.com/Calendars.ReadWrite " +
+	"offline_access openid profile email"
+
+// msaLegacyGrant is the same grant without the calendar scope: it is what an
+// account connected before calendar sync existed holds, so the only capability a
+// reconnect can still add is `calendars`.
+const msaLegacyGrant = "https://graph.microsoft.com/User.Read " +
 	"https://graph.microsoft.com/Files.ReadWrite.All offline_access openid profile email"
 
 // accountJWT shapes claims into a JWT-shaped access token: the classifier reads
@@ -47,6 +56,13 @@ func accountJWT(t *testing.T, claims map[string]any) string {
 // column existed (or before the provider reported one).
 func saveMicrosoftAccount(t *testing.T, deps Deps, access, kind, org string) {
 	t.Helper()
+	saveMicrosoftAccountWithScopes(t, deps, access, kind, org, msaGrant)
+}
+
+// saveMicrosoftAccountWithScopes is saveMicrosoftAccount with an explicit grant,
+// which is how a connection made before a scope was requested is reproduced.
+func saveMicrosoftAccountWithScopes(t *testing.T, deps Deps, access, kind, org, scopes string) {
+	t.Helper()
 	box := services.NewSecretBox(deps.Config.EncryptionKeyBytes())
 	sealed, err := box.Encrypt(access)
 	if err != nil {
@@ -62,7 +78,7 @@ func saveMicrosoftAccount(t *testing.T, deps Deps, access, kind, org string) {
 		Email:             "operator@outlook.com",
 		AccessToken:       sealed,
 		RefreshToken:      refresh,
-		Scopes:            msaGrant,
+		Scopes:            scopes,
 		Status:            "connected",
 		ExpiresAt:         fixedNow.Add(time.Hour),
 		Kind:              kind,
@@ -88,32 +104,53 @@ func TestPersonalAccountsNeverAskToReconnectForDirectoryPermissions(t *testing.T
 		// never reported one.
 		kind     string
 		wantKind string
-		// wantAllMissing expects the pre-existing report of an account no signal
-		// could classify: every capability missing, none not applicable. The
-		// other cases expect the seven directory capabilities to be reported as
-		// not applicable instead of missing.
-		wantAllMissing bool
+		// scopes is the grant stored with the connection; empty means the grant
+		// a connection made today receives.
+		scopes string
+		// wantCapabilities is the granted list, in the display order of the
+		// vocabulary.
+		wantCapabilities []providers.Capability
+		// wantMissing is the actionable remainder: the capabilities a reconnect
+		// could still add. A personal account is never missing a directory
+		// capability, whether it was classified or not.
+		wantMissing []providers.Capability
 	}{
 		{
-			name:     "a personal account connected before kinds existed, classified from its token",
-			claims:   map[string]any{"tid": msaTenant},
-			wantKind: string(providers.AccountKindPersonal),
+			name:             "a personal account connected before kinds existed, classified from its token",
+			claims:           map[string]any{"tid": msaTenant},
+			wantKind:         string(providers.AccountKindPersonal),
+			wantCapabilities: []providers.Capability{providers.CapabilityFiles, providers.CapabilityCalendars},
 		},
 		{
-			name:     "a personal account already classified by its connection",
-			kind:     string(providers.AccountKindPersonal),
-			wantKind: string(providers.AccountKindPersonal),
+			name:             "a personal account already classified by its connection",
+			kind:             string(providers.AccountKindPersonal),
+			wantKind:         string(providers.AccountKindPersonal),
+			wantCapabilities: []providers.Capability{providers.CapabilityFiles, providers.CapabilityCalendars},
 		},
 		{
-			name:           "a work account keeps the report it always had",
-			claims:         map[string]any{"tid": workTenant},
-			wantKind:       string(providers.AccountKindWork),
-			wantAllMissing: true,
+			// The grant of a connection made before calendar sync existed. The
+			// only thing a reconnect adds is the calendar capability: the
+			// directory rows stay out of the report, because a personal account
+			// can never hold them.
+			name:             "a personal account connected before the calendar scope ignores it",
+			kind:             string(providers.AccountKindPersonal),
+			wantKind:         string(providers.AccountKindPersonal),
+			scopes:           msaLegacyGrant,
+			wantCapabilities: []providers.Capability{providers.CapabilityFiles},
+			wantMissing:      []providers.Capability{providers.CapabilityCalendars},
 		},
 		{
-			name:           "an unclassifiable account keeps the report it always had",
-			wantKind:       "",
-			wantAllMissing: true,
+			name:        "a work account keeps the report it always had",
+			claims:      map[string]any{"tid": workTenant},
+			wantKind:    string(providers.AccountKindWork),
+			scopes:      msaLegacyGrant,
+			wantMissing: providers.CapabilitiesFor(models.ProviderMicrosoft),
+		},
+		{
+			name:        "an unclassifiable account keeps the report it always had",
+			wantKind:    "",
+			scopes:      msaLegacyGrant,
+			wantMissing: providers.CapabilitiesFor(models.ProviderMicrosoft),
 		},
 	}
 
@@ -128,7 +165,11 @@ func TestPersonalAccountsNeverAskToReconnectForDirectoryPermissions(t *testing.T
 			if testCase.claims != nil {
 				access = accountJWT(t, testCase.claims)
 			}
-			saveMicrosoftAccount(t, deps, access, testCase.kind, "")
+			scopes := testCase.scopes
+			if scopes == "" {
+				scopes = msaGrant
+			}
+			saveMicrosoftAccountWithScopes(t, deps, access, testCase.kind, "", scopes)
 
 			recorder := call(t, server, http.MethodGet, "/api/accounts", nil)
 			requireStatus(t, recorder, http.StatusOK)
@@ -146,20 +187,14 @@ func TestPersonalAccountsNeverAskToReconnectForDirectoryPermissions(t *testing.T
 			if len(view.NotApplicableCapabilities) != 0 {
 				t.Fatalf("not_applicable_capabilities = %v, want none", view.NotApplicableCapabilities)
 			}
-			if testCase.wantAllMissing {
-				if !view.NeedsReconnect ||
-					fmt.Sprint(view.MissingCapabilities) != fmt.Sprint(providers.CapabilitiesFor(models.ProviderMicrosoft)) {
-					t.Fatalf("missing = %v (needs_reconnect=%v), want every capability",
-						view.MissingCapabilities, view.NeedsReconnect)
-				}
-				return
+			if fmt.Sprint(view.MissingCapabilities) != fmt.Sprint(testCase.wantMissing) {
+				t.Fatalf("missing = %v, want %v", view.MissingCapabilities, testCase.wantMissing)
 			}
-
-			if view.NeedsReconnect || len(view.MissingCapabilities) != 0 {
-				t.Fatalf("a personal account is asked to reconnect for %v", view.MissingCapabilities)
+			if view.NeedsReconnect != (len(testCase.wantMissing) > 0) {
+				t.Fatalf("needs_reconnect = %v, want %v", view.NeedsReconnect, len(testCase.wantMissing) > 0)
 			}
-			if fmt.Sprint(view.Capabilities) != fmt.Sprint([]providers.Capability{providers.CapabilityFiles}) {
-				t.Fatalf("capabilities = %v, want only files", view.Capabilities)
+			if testCase.wantCapabilities != nil && fmt.Sprint(view.Capabilities) != fmt.Sprint(testCase.wantCapabilities) {
+				t.Fatalf("capabilities = %v, want %v", view.Capabilities, testCase.wantCapabilities)
 			}
 		})
 	}

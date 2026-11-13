@@ -80,6 +80,7 @@ connections, one hour lifetime, ten minutes idle timeout.
 | `KEYCLOAK_REDIRECT_URI` | `APP_URL/api/auth/callback` | Derived when empty. Register it as a valid redirect URI in Keycloak. |
 | `KEYCLOAK_ACCOUNTS` | — | Allow-list, space or comma separated: `*` (everyone), `you@example.com`, `example.com` or `@example.com` (whole domain). An empty list denies every login. |
 | `NOTIFY_ALLOW_PRIVATE_TARGETS` | `false` | Lets a `webhook` notification channel point at an address that is not publicly routable. A channel is stored in the database and delivered by the worker inside this container, so with the default the destination has to be a public address: `http://127.0.0.1:3000/…`, `http://db:3306/…`, `http://169.254.169.254/…` and a name that resolves to a loopback, private (RFC 1918 / `fc00::/7`), link-local, carrier-grade NAT (`100.64.0.0/10`, Tailscale) or otherwise reserved address are all refused. Set `true` to deliver to your own network (Gotify, ntfy, Home Assistant, another container, a Tailscale address). See [notifications.md](notifications.md). |
+| `CALENDAR_ALLOW_PRIVATE_TARGETS` | `false` | Lets an `.ics` calendar subscription point at an address that is not publicly routable. The URL of a job is stored in the database and fetched by this container, so with the default it has to be a public address: loopback, RFC 1918 / `fc00::/7`, link-local, carrier-grade NAT (`100.64.0.0/10`, Tailscale), NAT64, documentation/benchmark/reserved ranges and the cloud metadata endpoint (`169.254.169.254`) are all refused — the host name is checked before the request and the address is checked again when the connection is dialled. Set `true` to subscribe to an internal feed (an `.ics` served by another container, an intranet server, a Tailscale host). See [calendars.md](calendars.md) §6. |
 
 The Keycloak client needs a second URI besides the redirect one: **Valid post
 logout redirect URIs** must contain `APP_URL` (or `+`, which reuses the valid
@@ -172,10 +173,11 @@ Google Drive; the same applies to Microsoft 365.
 
 | What | Where | Effect |
 |---|---|---|
-| default locale / theme, default interval, run timeout | Admin > Settings (`PUT /api/settings`) | validated (`0–10080` min interval, `1–1440` min timeout) and stored in `settings`; applied to visitors without their own choice |
+| default locale / theme, default interval, run timeout | Admin > Settings (`PUT /api/settings`) | validated (`0–10080` min interval, `1–1440` min timeout) and stored in `settings`; applied to visitors without their own choice, and the timeout bounds a file run and a calendar run alike |
 | retention of runs, audit reports, traffic days | Admin > Settings (`PUT /api/settings`) | validated (`1–3650` days) and applied by the retention loop on its next pass; *Purge now* applies it immediately |
 | provider OAuth client (client id, secret, redirect URI, tenant) | Admin > Providers (`PUT /api/providers/:provider`) | the secret is encrypted (`v1:`) and overrides the environment; `DELETE` clears the override |
 | job schedule, direction, conflict policy, excludes, deletions | job editor (`PUT /api/jobs/:id`) | stored on the job; `next_run_at` is recomputed immediately |
+| calendar job window, direction, conflict policy, deletions, schedule | calendar editor (`PUT /api/calendars/:id`) | stored on the job; `next_run_at` is recomputed immediately, and an `.ics` job is kept `one_way` |
 
 ## 11. Troubleshooting
 

@@ -23,9 +23,10 @@ internal/version       build metadata injected with -ldflags
 internal/crypto        AES-256-GCM, HMAC-SHA256, PKCE (standard library only)
 internal/database      GORM connection, DSN, AutoMigrate, settings repository
 internal/models        GORM entities + every enum vocabulary (also the API contract)
-internal/providers     Provider interface, registry, google/, microsoft/
+internal/providers     Provider + CalendarProvider interfaces, registry, google/, microsoft/
+internal/ical          .ics fetcher (validators, private-target guard) and RFC 5545 parser
 internal/services      Store, AuthService, OAuthService, TokenManager, SettingsService,
-                       SyncService (engine), AuditService, Scheduler,
+                       SyncService (engine), CalendarService (engine), AuditService, Scheduler,
                        Notifier, ProviderSettings, SecretBox
 internal/notify        senders: smtp, webhook, shoutrrr (no storage knowledge)
 internal/handlers      routing, session, validation, error → HTTP mapping, SPA fallback
@@ -106,8 +107,9 @@ states. The committed files are re-encoded through an 8-bit adaptive palette
 
 ```bash
 go test ./...                 # ~45 s, everything
-go test ./internal/services/  # the sync engine, tokens, notifications
+go test ./internal/services/  # the sync and calendar engines, tokens, notifications
 go test ./internal/handlers/  # the API surface, with an in-memory database
+go test ./internal/ical/      # .ics parser and the URL/private-target guard
 go test ./internal/notify/    # senders against a local HTTP server
 ```
 

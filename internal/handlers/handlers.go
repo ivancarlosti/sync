@@ -52,6 +52,8 @@ type Deps struct {
 	Sync *services.SyncService
 	// Audit starts, cancels and reports content audits.
 	Audit *services.AuditService
+	// Calendars starts, cancels and reports calendar sync runs.
+	Calendars *services.CalendarService
 	// Scheduler is used to force a scheduling pass or a token refresh.
 	Scheduler *services.Scheduler
 	// Purge applies the retention policy on demand (Admin > Settings > Purge).
@@ -128,6 +130,8 @@ func (d Deps) validate() error {
 		return errors.New("handlers: Sync is required")
 	case d.Audit == nil:
 		return errors.New("handlers: Audit is required")
+	case d.Calendars == nil:
+		return errors.New("handlers: Calendars is required")
 	case d.Scheduler == nil:
 		return errors.New("handlers: Scheduler is required")
 	case d.Purge == nil:

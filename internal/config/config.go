@@ -127,6 +127,10 @@ type Config struct {
 	// address that is not publicly routable (a LAN target, another container, a
 	// Tailscale address). See docs/notifications.md.
 	NotifyAllowPrivateTargets bool
+	// CalendarAllowPrivateTargets lets an .ics subscription point at an address
+	// that is not publicly routable (an internal calendar server, another
+	// container, a Tailscale address). See docs/calendars.md.
+	CalendarAllowPrivateTargets bool
 	// Dev enables Vite's dev-server proxy target for `npm run dev` (API only).
 	Dev bool
 
@@ -191,7 +195,10 @@ func Load() (*Config, error) {
 		// Webhook destinations are refused when they are not publicly routable,
 		// unless the operator says otherwise.
 		NotifyAllowPrivateTargets: envBool("NOTIFY_ALLOW_PRIVATE_TARGETS", false),
-		Dev:                       envBool("APP_DEV", false),
+		// A subscription feed is fetched by the server, so it is subject to the
+		// same policy as a webhook target.
+		CalendarAllowPrivateTargets: envBool("CALENDAR_ALLOW_PRIVATE_TARGETS", false),
+		Dev:                         envBool("APP_DEV", false),
 	}
 
 	cfg.derive()

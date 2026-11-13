@@ -149,6 +149,7 @@ func run() error {
 	deps.Scheduler.Stop()
 	deps.Sync.Wait()
 	deps.Audit.Wait()
+	deps.Calendars.Wait()
 	slog.Info("bye")
 	return nil
 }
@@ -170,6 +171,9 @@ func build(cfg *config.Config, settings *database.Settings) handlers.Deps {
 	appSettings := services.NewSettingsService(cfg, settings)
 	syncService := services.NewSyncService(store, tokens, appSettings, notifier)
 	auditService := services.NewAuditService(store, tokens)
+	calendarService := services.NewCalendarService(store, tokens, appSettings, notifier, box, cfg.CalendarAllowPrivateTargets)
+	scheduler := services.NewScheduler(store, syncService, tokens, notifier)
+	scheduler.SetCalendars(calendarService)
 
 	return handlers.Deps{
 		Config:      cfg,
@@ -185,7 +189,8 @@ func build(cfg *config.Config, settings *database.Settings) handlers.Deps {
 		Notifier:    notifier,
 		Sync:        syncService,
 		Audit:       auditService,
-		Scheduler:   services.NewScheduler(store, syncService, tokens, notifier),
+		Calendars:   calendarService,
+		Scheduler:   scheduler,
 		Purge:       services.NewPurgeService(store),
 		Assets:      web.Dist(),
 		Info:        version.Get(),
