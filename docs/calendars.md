@@ -187,6 +187,7 @@ the engine needs are implemented.
 | Aspect | Behaviour |
 |---|---|
 | schemes | `http` and `https` only; the URL must be absolute and carry a host |
+| url shape | an allow-list pattern pins the exact string handed to the HTTP client — absolute `http(s)`, a host name or a bracketed IPv6 literal, an optional port — so a non-http scheme, a relative path, credentials in the authority part, a space or a control character is refused before anything is dialled |
 | credentials | the URL must **not** embed them — the dedicated username/password fields are sent as `Authorization: Basic …`, and only when a username is set |
 | conditional GET | `If-None-Match` / `If-Modified-Since` from the last successful fetch; a `304` skips the parse and the writes |
 | repair path | a `304` is only final when the destination still matches the recorded state. When an event the operator deleted in the destination needs to be recreated, the feed is fetched once more without validators, so the cheap path stays cheap and the repair path correct |

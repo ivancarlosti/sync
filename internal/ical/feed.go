@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +94,16 @@ type Result struct {
 	NotModified  bool
 }
 
+// feedURLPattern is the only shape a stored subscription may have: an absolute
+// http(s) URL whose host is a bracketed IPv6 literal or a host name, with an
+// optional port and an optional path, query and fragment. A non-http scheme
+// (`file:`, `javascript:`), a relative path, credentials in the authority part
+// (`https://user:secret@host/feed.ics`), a missing host, a malformed name and any
+// space or control character — the last one also keeps a newline from splitting
+// the request line — are refused. It mirrors webhookURLPattern in
+// internal/notify, which faces the same problem.
+var feedURLPattern = regexp.MustCompile(`^https?://(?:\[[0-9A-Fa-f:.]+\]|[a-zA-Z0-9_](?:[a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?(?:\.[a-zA-Z0-9_](?:[a-zA-Z0-9_-]{0,61}[a-zA-Z0-9_])?)*\.?)(?::[0-9]{1,5})?(?:[/?#][^[:space:][:cntrl:]]*)?$`)
+
 // ValidateURL applies the checks a stored subscription has to pass before it is
 // saved: an absolute http(s) URL with a host, no embedded credentials (the
 // dedicated fields exist for those) and a literal address that is publicly
@@ -116,6 +127,12 @@ func ValidateURL(target string, allowPrivate bool) (*url.URL, error) {
 	if parsed.User != nil {
 		return nil, fmt.Errorf("%w: the URL must not carry credentials", ErrInvalidURL)
 	}
+	// The same allow-list the fetcher applies right before it builds the request:
+	// applied here as well, a subscription whose shape can never be dialled is
+	// refused while the operator saves the job instead of on its first run.
+	if !feedURLPattern.MatchString(trimmed) {
+		return nil, fmt.Errorf("%w: the URL must be an absolute http:// or https:// URL with a host, without credentials, spaces or control characters", ErrInvalidURL)
+	}
 	if host := parsed.Hostname(); host != "" && !allowPrivate {
 		if ip := net.ParseIP(host); ip != nil && !isPublicTarget(ip) {
 			return nil, fmt.Errorf("%w: %s", ErrPrivateTarget, host)
@@ -134,9 +151,18 @@ var clients = sync.OnceValues(func() (*http.Client, *http.Client) {
 // server answer of 304 is reported as NotModified instead of an error, which is
 // what makes an unchanged subscription cost one conditional request.
 func Fetch(ctx context.Context, sub Subscription) (Result, error) {
-	parsed, err := ValidateURL(sub.URL, sub.AllowPrivate)
-	if err != nil {
+	target := strings.TrimSpace(sub.URL)
+	if _, err := ValidateURL(target, sub.AllowPrivate); err != nil {
 		return Result{}, err
+	}
+	// The pattern is applied to the very value handed to
+	// http.NewRequestWithContext below: a subscription URL is a stored setting,
+	// so this is the point where an arbitrary destination is narrowed to an
+	// absolute http(s) URL. It also has to stay in this function — a security
+	// scanner recognises an allow-list pattern used as a guard on the request
+	// URL, but only while the guard and the use are in the same function.
+	if !feedURLPattern.MatchString(target) {
+		return Result{}, fmt.Errorf("%w: the subscription URL must be an absolute http:// or https:// URL with a host, without credentials, spaces or control characters", ErrInvalidURL)
 	}
 	strict, relaxed := clients()
 	client := strict
@@ -146,7 +172,7 @@ func Fetch(ctx context.Context, sub Subscription) (Result, error) {
 
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %v", ErrInvalidURL, err)
 	}

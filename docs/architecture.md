@@ -205,7 +205,8 @@ window (now ± past/future days) ──► list source ─┐
   of guessing.
 * **An `.ics` source is a third source kind**, not a provider: `internal/ical`
   fetches the feed with `ETag`/`Last-Modified` validators (a `304` skips both the
-  parse and the writes), refuses non-public destinations unless
+  parse and the writes), narrows the stored URL to an absolute `http(s)` shape
+  before the request is built, refuses non-public destinations unless
   `CALENDAR_ALLOW_PRIVATE_TARGETS=true` (checked on the host name and again on the
   dialled address), and parses only the RFC 5545 subset the engine uses. A feed is
   read-only, so its job is forced to `one_way`.

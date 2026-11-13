@@ -1,6 +1,7 @@
 package ical
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -192,5 +193,56 @@ func TestValidateURLRefusesWhatTheFetcherMustNotDial(t *testing.T) {
 	}
 	if _, err := ValidateURL("http://127.0.0.1:8080/feed.ics", true); err != nil {
 		t.Fatalf("an operator-allowed private target was refused: %v", err)
+	}
+}
+
+// TestFeedURLPatternPinsTheShapeOfAStoredSubscription covers the allow-list the
+// fetcher applies to the exact string it hands to the HTTP client: the scheme,
+// the host, the port and the absence of credentials, spaces and control
+// characters. ValidateURL answers the same questions for a different reason (a
+// stored value has to be saveable), so both are asserted here.
+func TestFeedURLPatternPinsTheShapeOfAStoredSubscription(t *testing.T) {
+	accepted := []string{
+		"https://calendar.example.com/feed.ics",
+		"https://calendar.example.com:8443/feed.ics?token=abc&size=large",
+		"http://127.0.0.1:8080/feed.ics",
+		"https://[2001:db8::1]/feed.ics",
+		"https://example.com",
+	}
+	for _, target := range accepted {
+		if !feedURLPattern.MatchString(target) {
+			t.Fatalf("feedURLPattern refused %q", target)
+		}
+	}
+	refused := []string{
+		"",
+		"webcal://calendar.example.com/feed.ics",
+		"file:///etc/passwd",
+		"/relative.ics",
+		"https://user:secret@calendar.example.com/feed.ics",
+		"https://calendar.example.com/feed.ics\r\nX-Injected: 1",
+		"https://calendar.example.com/fe ed.ics",
+	}
+	for _, target := range refused {
+		if feedURLPattern.MatchString(target) {
+			t.Fatalf("feedURLPattern accepted %q", target)
+		}
+	}
+}
+
+// TestFetchRefusesAShapeItMustNotDial keeps the guard honest at the call site: a
+// URL that only the pattern refuses is reported instead of being dialled, and
+// the save path (ValidateURL) refuses it for the same reason.
+func TestFetchRefusesAShapeItMustNotDial(t *testing.T) {
+	for _, target := range []string{
+		"https://calendar.example.com/fe ed.ics",
+		"https://calendar.example.com/feed.ics\r\nX-Injected: 1",
+	} {
+		if _, err := ValidateURL(target, false); !errors.Is(err, ErrInvalidURL) {
+			t.Fatalf("ValidateURL(%q) error = %v, want %v", target, err, ErrInvalidURL)
+		}
+		if _, err := Fetch(context.Background(), Subscription{URL: target}); !errors.Is(err, ErrInvalidURL) {
+			t.Fatalf("Fetch(%q) error = %v, want %v", target, err, ErrInvalidURL)
+		}
 	}
 }
