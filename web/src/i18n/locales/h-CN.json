@@ -635,7 +635,7 @@
       "subtitle": "创建 Sync 所需的 OAuth 应用，并使用它申请的完整权限。",
       "providers": "提供方",
       "intro": {
-        "google": "在 Cloud 控制台中配置 Google Drive 只需几分钟：创建项目、启用 Drive API 并创建一个 OAuth 客户端。",
+        "google": "在 Cloud 控制台中配置 Google Drive 和 Calendar 只需几分钟：创建项目、启用 Drive 和 Calendar API，并创建一个 OAuth 客户端。",
         "microsoft": "在 Microsoft Entra 中注册一个应用、创建一个客户端密码，并可选地为整个目录授予一次管理员同意。"
       },
       "statusReady": "OAuth 客户端已配置。",
@@ -664,7 +664,7 @@
       "docs": "阅读完整指南",
       "loadError": "无法加载设置指南。",
       "warnings": {
-        "api_enablement": "Drive API 必须与 OAuth 客户端位于同一项目并已启用，否则首次调用会因权限错误而失败。",
+        "api_enablement": "Drive API 必须与 OAuth 客户端位于同一项目并已启用，日历任务还需启用 Calendar API，否则首次调用会因权限错误而失败。",
         "consent_screen_type": "仍处于测试模式的外部同意屏幕仅对你发布为测试用户的账号有效，其刷新令牌会在七天后过期。",
         "tenant_scope": "使用多租户应用注册即可连接多个目录：租户 ID 保持 common，每个目录的管理员为该目录授予一次同意，此处显示的同意来自最后完成流程的目录。",
         "work_accounts_only": "SharePoint 库权限无法授予个人 Microsoft 账户：个人账户只能连接 OneDrive。"
@@ -679,25 +679,29 @@
             "title": "启用 Drive API",
             "body": "在该项目中启用 Google Drive API。在其所属 API 未启用前，相应权限会失败。"
           },
+          "calendar_api": {
+            "title": "启用 Google Calendar API",
+            "body": "在同一项目中启用 Google Calendar API。只有日历同步会调用它，仅同步文件的实例可以跳过此步骤，稍后再启用。"
+          },
           "consent": {
             "title": "配置 OAuth 同意屏幕",
-            "body": "为 Workspace 域选择“内部”（无需 Google 验证），或选择“外部”并将账户发布为测试用户。添加 Sync 请求的身份和 Drive 权限范围。"
+            "body": "在 Google Auth Platform 中，为 Workspace 域选择“内部”（无需 Google 验证），或选择“外部”并将账户发布为测试用户。Sync 请求的身份、Drive 和 Calendar 权限范围将在下方的“数据访问”步骤中添加。"
           },
           "client": {
             "title": "创建 OAuth 客户端",
-            "body": "凭据 > 创建凭据 > OAuth 客户端 ID > Web 应用。将客户端 ID 与客户端密码复制到本实例的凭据中。"
+            "body": "Google Auth Platform > 客户端 > 创建客户端 > OAuth 客户端 ID > Web 应用。将客户端 ID 与客户端密码复制到本实例的凭据中。"
           },
           "redirect": {
             "title": "添加已获授权的重定向 URI",
-            "body": "在同一个客户端中，将下方 URL 添加到已获授权的重定向 URI 并保存。这里多一个或少一个字符是最常见的登记失败原因。"
+            "body": "打开该客户端，将下方 URL 添加到已获授权的重定向 URI 并保存。这里多一个或少一个字符是最常见的登记失败原因。"
           },
           "permissions": {
             "title": "添加所需权限",
-            "body": "在同意屏幕要求填写范围的位置粘贴下方列表。Sync 会一次性申请全部权限，因此今天建立的连接在升级后依然有效。"
+            "body": "Google Auth Platform > 数据访问 > 添加或移除权限范围，然后粘贴下方列表。Sync 会一次性申请全部权限，因此今天建立的连接在升级后依然有效。"
           },
           "connect": {
             "title": "连接账户",
-            "body": "连接需要同步 Drive 的 Google 账户。Sync 以该账户身份运行，停止使用本实例后请撤销其授权。"
+            "body": "连接需要同步 Drive 和日历的 Google 账户。Sync 以该账户身份运行，停止使用本实例后请撤销其授权。"
           }
         },
         "microsoft": {

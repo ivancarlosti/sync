@@ -635,7 +635,7 @@
       "subtitle": "Create the OAuth application Sync needs, with the exact permissions it requests.",
       "providers": "Provider",
       "intro": {
-        "google": "Google Drive takes a few minutes in the Cloud console: create a project, enable the Drive API and one OAuth client.",
+        "google": "Google Drive and Calendar take a few minutes in the Cloud console: create a project, enable the Drive and Calendar APIs and one OAuth client.",
         "microsoft": "One application registration in Microsoft Entra, one client secret and, optionally, one tenant-wide admin consent."
       },
       "statusReady": "The OAuth client is configured.",
@@ -664,7 +664,7 @@
       "docs": "Read the full guide",
       "loadError": "The setup guide could not be loaded.",
       "warnings": {
-        "api_enablement": "The Drive API must be enabled in the same project as the OAuth client, otherwise the first call fails with a permission error.",
+        "api_enablement": "The Drive API must be enabled in the same project as the OAuth client, and so must the Calendar API for calendar jobs, otherwise the first call fails with a permission error.",
         "consent_screen_type": "An External consent screen still in testing mode only works for the accounts you published as test users, and its refresh tokens expire after seven days.",
         "tenant_scope": "Connect several directories with a multi-tenant app registration: keep the tenant id as common, every directory administrator consents once for their own directory, and the consent shown here is the one of the last directory that completed the flow.",
         "work_accounts_only": "The SharePoint library permission cannot be granted to personal Microsoft accounts: a personal account connects with OneDrive only."
@@ -679,25 +679,29 @@
             "title": "Enable the Drive API",
             "body": "Enable the Google Drive API in that project. A permission fails until the API it belongs to is enabled."
           },
+          "calendar_api": {
+            "title": "Enable the Google Calendar API",
+            "body": "Enable the Google Calendar API in the same project. Only calendar synchronisation dials it, so a files-only instance can skip this step and come back later."
+          },
           "consent": {
             "title": "Configure the OAuth consent screen",
-            "body": "Choose Internal for a Workspace domain (no Google verification), or External with your accounts published as test users. Add the identity and Drive scopes Sync requests."
+            "body": "In the Google Auth Platform choose Internal for a Workspace domain (no Google verification), or External with your accounts published as test users. The identity, Drive and Calendar scopes Sync requests are added in the data access step below."
           },
           "client": {
             "title": "Create the OAuth client",
-            "body": "Credentials > Create credentials > OAuth client ID > Web application. Copy the client id and the client secret into the credentials of this instance."
+            "body": "Google Auth Platform > Clients > Create client > OAuth client ID > Web application. Copy the client id and the client secret into the credentials of this instance."
           },
           "redirect": {
             "title": "Add the authorised redirect URI",
-            "body": "In the same client, add the URL below to the authorised redirect URIs and save. A missing or extra character here is the most common registration failure."
+            "body": "Open that client, add the URL below to the authorised redirect URIs and save. A missing or extra character here is the most common registration failure."
           },
           "permissions": {
             "title": "Add the requested permissions",
-            "body": "Paste the list below where the consent screen asks for scopes. Sync requests them all at once, so a connection made today stays valid after an upgrade."
+            "body": "Google Auth Platform > Data access > Add or remove scopes, then paste the list below. Sync requests them all at once, so a connection made today stays valid after an upgrade."
           },
           "connect": {
             "title": "Connect an account",
-            "body": "Connect the Google account whose Drive should be synchronised. Sync acts as that account, so revoke its consent when you stop using the instance."
+            "body": "Connect the Google account whose Drive and calendars should be synchronised. Sync acts as that account, so revoke its consent when you stop using the instance."
           }
         },
         "microsoft": {

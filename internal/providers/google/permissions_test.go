@@ -65,13 +65,22 @@ func TestEveryScopeIsAUserGrant(t *testing.T) {
 	}
 }
 
-// TestConsoleURLsCoverTheGuideSteps pins the API enablement pages the guide links
-// to, so a removed key is caught before the UI renders an empty href.
+// TestConsoleURLsCoverTheGuideSteps pins the console pages the guide links to,
+// so a removed key or a console route Google retired is caught before the UI
+// renders a dead link.
 func TestConsoleURLsCoverTheGuideSteps(t *testing.T) {
 	links := New().ConsoleURLs()
-	for _, key := range []string{"drive_api"} {
-		if !strings.HasPrefix(links[key], "https://console.cloud.google.com/") {
-			t.Fatalf("console link %q is missing or not a Cloud console URL: %q", key, links[key])
+	want := map[string]string{
+		"drive_api":     "/apis/library/drive.googleapis.com",
+		"calendar_api":  "/apis/library/calendar-json.googleapis.com",
+		"auth_overview": "/auth/overview",
+		"auth_clients":  "/auth/clients",
+		"auth_scopes":   "/auth/scopes",
+	}
+	for key, path := range want {
+		link := links[key]
+		if !strings.HasPrefix(link, "https://console.cloud.google.com"+path) {
+			t.Fatalf("console link %q = %q, want the page %q", key, link, path)
 		}
 	}
 }

@@ -50,8 +50,20 @@ func (p *Provider) Permissions() []providers.Permission {
 // ConsoleURLs implements providers.ScopeCatalog. The API enablement pages are
 // part of the permission contract — a scope whose API is not enabled fails at
 // call time — so they are declared next to the scopes rather than in the guide.
+// The OAuth pages are the Google Auth Platform routes: the credentials list
+// Google used to serve under /apis/credentials no longer holds the consent
+// configuration, the clients or the scope list.
 func (p *Provider) ConsoleURLs() map[string]string {
 	return map[string]string{
-		"drive_api": "https://console.cloud.google.com/apis/library/drive.googleapis.com",
+		// API enablement: Drive feeds the file half, Calendar the calendar half.
+		// The Calendar service id is calendar-json.googleapis.com, not
+		// calendar.googleapis.com.
+		"drive_api":    "https://console.cloud.google.com/apis/library/drive.googleapis.com",
+		"calendar_api": "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com",
+		// Google Auth Platform: consent screen/audience, OAuth clients and the
+		// data-access (scope) page.
+		"auth_overview": "https://console.cloud.google.com/auth/overview",
+		"auth_clients":  "https://console.cloud.google.com/auth/clients",
+		"auth_scopes":   "https://console.cloud.google.com/auth/scopes",
 	}
 }

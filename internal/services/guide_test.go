@@ -107,6 +107,45 @@ func TestGuideDescribesBothProviders(t *testing.T) {
 	}
 }
 
+// TestGoogleGuideLinksTheCurrentConsolePages pins the console routes of the
+// Google walkthrough: scopes live on the Google Auth Platform data-access page,
+// clients (and their redirect URIs) on the clients page, and the Calendar API
+// has its own enablement step so a calendars installation knows what to turn on.
+func TestGoogleGuideLinksTheCurrentConsolePages(t *testing.T) {
+	guide, _ := guideFixture(t)
+	built, err := guide.Guide(context.Background(), models.ProviderGoogle)
+	if err != nil {
+		t.Fatalf("Guide(google) error = %v", err)
+	}
+	byID := map[string]GuideStep{}
+	for _, step := range built.Steps {
+		byID[step.ID] = step
+		if strings.Contains(step.URL, "/apis/credentials") {
+			t.Errorf("step %q still links to the legacy credentials page: %q", step.ID, step.URL)
+		}
+	}
+
+	calendar, ok := byID["calendar_api"]
+	if !ok {
+		t.Fatal("the walkthrough does not ask to enable the Calendar API")
+	}
+	if !calendar.Optional {
+		t.Error("the Calendar API step must be optional for a files-only setup")
+	}
+	if !strings.Contains(calendar.URL, "calendar-json.googleapis.com") {
+		t.Errorf("the Calendar API step links to %q", calendar.URL)
+	}
+	if got := byID["permissions"].URL; !strings.HasSuffix(got, "/auth/scopes") {
+		t.Errorf("the permissions step links to %q, want the data-access page", got)
+	}
+	if got := byID["client"].URL; !strings.HasSuffix(got, "/auth/clients") {
+		t.Errorf("the client step links to %q, want the clients page", got)
+	}
+	if got := byID["consent"].URL; !strings.HasSuffix(got, "/auth/overview") {
+		t.Errorf("the consent step links to %q, want the Google Auth Platform overview", got)
+	}
+}
+
 // TestGuideUnknownProvider pins that an unknown provider is a 404 and not an
 // empty walkthrough.
 func TestGuideUnknownProvider(t *testing.T) {

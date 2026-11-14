@@ -635,7 +635,7 @@
       "subtitle": "Créez l’application OAuth dont Sync a besoin, avec exactement les autorisations qu’il demande.",
       "providers": "Fournisseur",
       "intro": {
-        "google": "Google Drive demande quelques minutes dans la console Cloud : créez un projet, activez l'API Drive et un client OAuth.",
+        "google": "Google Drive et Calendar demandent quelques minutes dans la console Cloud : créez un projet, activez les API Drive et Calendar et un client OAuth.",
         "microsoft": "Une inscription d'application dans Microsoft Entra, un secret client et, éventuellement, un consentement administrateur pour tout l'annuaire."
       },
       "statusReady": "Le client OAuth est configuré.",
@@ -664,7 +664,7 @@
       "docs": "Lire le guide complet",
       "loadError": "Le guide de configuration n’a pas pu être chargé.",
       "warnings": {
-        "api_enablement": "L'API Drive doit être activée dans le même projet que le client OAuth, sinon le premier appel échoue avec une erreur d'autorisation.",
+        "api_enablement": "L'API Drive doit être activée dans le même projet que le client OAuth, et l'API Calendar aussi pour les tâches de calendrier, sinon le premier appel échoue avec une erreur d'autorisation.",
         "consent_screen_type": "Un écran de consentement Externe resté en mode test ne fonctionne que pour les comptes publiés comme utilisateurs tests, et ses jetons de rafraîchissement expirent au bout de sept jours.",
         "tenant_scope": "Connectez plusieurs annuaires avec une inscription multi-tenant : laissez l’id de tenant sur common, chaque administrateur d’annuaire accorde une fois pour le sien, et le consentement affiché ici est celui du dernier annuaire qui a terminé le parcours.",
         "work_accounts_only": "L'autorisation de bibliothèque SharePoint ne peut pas être accordée aux comptes Microsoft personnels : un compte personnel ne connecte que OneDrive."
@@ -679,25 +679,29 @@
             "title": "Activez l'API Drive",
             "body": "Activez l'API Google Drive dans ce projet. Une autorisation échoue tant que l'API correspondante n'est pas activée."
           },
+          "calendar_api": {
+            "title": "Activez l'API Google Calendar",
+            "body": "Activez l'API Google Calendar dans le même projet. Seule la synchronisation des calendriers l'appelle ; une instance limitée aux fichiers peut passer cette étape et revenir plus tard."
+          },
           "consent": {
             "title": "Configurez l’écran de consentement OAuth",
-            "body": "Choisissez Interne pour un domaine Workspace (sans vérification Google), ou Externe avec vos comptes publiés comme utilisateurs de test. Ajoutez les portées d'identité et Drive demandées par Sync."
+            "body": "Dans la plateforme Google Auth, choisissez Interne pour un domaine Workspace (sans vérification Google), ou Externe avec vos comptes publiés comme utilisateurs de test. Les portées d'identité, Drive et Calendar demandées par Sync s'ajoutent à l'étape d'accès aux données ci-dessous."
           },
           "client": {
             "title": "Créez le client OAuth",
-            "body": "Identifiants > Créer des identifiants > ID client OAuth > Application Web. Copiez l’ID client et le secret dans les identifiants de cette instance."
+            "body": "Plateforme Google Auth > Clients > Créer un client > ID client OAuth > Application Web. Copiez l’ID client et le secret dans les identifiants de cette instance."
           },
           "redirect": {
             "title": "Ajoutez l’URI de redirection autorisée",
-            "body": "Dans le même client, ajoutez l’URL ci-dessous aux URI de redirection autorisées puis enregistrez. Un caractère manquant ou en trop est l’erreur d’inscription la plus fréquente."
+            "body": "Ouvrez ce client, ajoutez l’URL ci-dessous aux URI de redirection autorisées puis enregistrez. Un caractère manquant ou en trop est l’erreur d’inscription la plus fréquente."
           },
           "permissions": {
             "title": "Ajoutez les autorisations demandées",
-            "body": "Collez la liste ci-dessous là où l’écran de consentement demande les portées. Sync les demande toutes d’un coup : une connexion faite aujourd’hui reste valable après une mise à jour."
+            "body": "Plateforme Google Auth > Accès aux données > Ajouter ou supprimer des portées, puis collez la liste ci-dessous. Sync les demande toutes d’un coup : une connexion faite aujourd’hui reste valable après une mise à jour."
           },
           "connect": {
             "title": "Connectez un compte",
-            "body": "Connectez le compte Google dont le Drive doit être synchronisé. Sync agit en tant que ce compte ; révoquez son consentement lorsque vous arrêtez d'utiliser l'instance."
+            "body": "Connectez le compte Google dont le Drive et les calendriers doivent être synchronisés. Sync agit en tant que ce compte ; révoquez son consentement lorsque vous arrêtez d'utiliser l'instance."
           }
         },
         "microsoft": {

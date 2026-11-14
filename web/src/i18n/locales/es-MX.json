@@ -635,7 +635,7 @@
       "subtitle": "Crea la aplicación OAuth que Sync necesita, con los permisos exactos que solicita.",
       "providers": "Proveedor",
       "intro": {
-        "google": "Google Drive toma unos minutos en la consola de Cloud: cree un proyecto, habilite la API de Drive y un cliente OAuth.",
+        "google": "Google Drive y Calendar toman unos minutos en la consola de Cloud: cree un proyecto, habilite las API de Drive y Calendar y un cliente OAuth.",
         "microsoft": "Un registro de aplicación en Microsoft Entra, un secreto de cliente y, opcionalmente, un consentimiento de administrador para todo el directorio."
       },
       "statusReady": "El cliente OAuth está configurado.",
@@ -664,7 +664,7 @@
       "docs": "Leer la guía completa",
       "loadError": "No se pudo cargar la guía de configuración.",
       "warnings": {
-        "api_enablement": "La API de Drive debe estar habilitada en el mismo proyecto que el cliente OAuth; de lo contrario, la primera llamada falla con un error de permisos.",
+        "api_enablement": "La API de Drive debe estar habilitada en el mismo proyecto que el cliente OAuth, y también la API de Calendar para las tareas de calendario; de lo contrario, la primera llamada falla con un error de permisos.",
         "consent_screen_type": "Una pantalla de consentimiento Externa aún en modo de prueba solo funciona para las cuentas que publicaste como usuarios de prueba, y sus tokens de actualización caducan a los siete días.",
         "tenant_scope": "Conecta varios directorios con un registro multiinquilino: deja el id de inquilino en common, cada administrador del directorio concede una vez para el suyo y el consentimiento que se ve aquí es el del último directorio que completó el proceso.",
         "work_accounts_only": "El permiso de biblioteca de SharePoint no se puede conceder a cuentas personales de Microsoft: una cuenta personal conecta solo OneDrive."
@@ -679,25 +679,29 @@
             "title": "Habilite la API de Drive",
             "body": "Habilite la API de Google Drive en ese proyecto. Un permiso falla hasta que se habilite la API a la que pertenece."
           },
+          "calendar_api": {
+            "title": "Habilita la API de Google Calendar",
+            "body": "Habilita la API de Google Calendar en el mismo proyecto. Solo la sincronización de calendarios la usa, así que una instancia que solo sincroniza archivos puede omitir este paso y volver después."
+          },
           "consent": {
             "title": "Configura la pantalla de consentimiento OAuth",
-            "body": "Elija Interno para un dominio de Workspace (sin verificación de Google), o Externo con sus cuentas publicadas como usuarios de prueba. Agregue los permisos de identidad y de Drive que Sync solicita."
+            "body": "En Google Auth Platform elija Interno para un dominio de Workspace (sin verificación de Google), o Externo con sus cuentas publicadas como usuarios de prueba. Los permisos de identidad, Drive y Calendar que solicita Sync se agregan en el paso de acceso a datos de abajo."
           },
           "client": {
             "title": "Crea el cliente OAuth",
-            "body": "Credenciales > Crear credenciales > ID de cliente de OAuth > Aplicación web. Copia el ID de cliente y el secreto en las credenciales de esta instancia."
+            "body": "Google Auth Platform > Clientes > Crear cliente > ID de cliente de OAuth > Aplicación web. Copia el ID de cliente y el secreto en las credenciales de esta instancia."
           },
           "redirect": {
             "title": "Agrega la URI de redireccionamiento autorizada",
-            "body": "En el mismo cliente, agrega la URL de abajo a las URI de redireccionamiento autorizadas y guarda. Un carácter de más o de menos aquí es el error de registro más común."
+            "body": "Abre ese cliente, agrega la URL de abajo a las URI de redireccionamiento autorizadas y guarda. Un carácter de más o de menos aquí es el error de registro más común."
           },
           "permissions": {
             "title": "Agrega los permisos solicitados",
-            "body": "Pega la lista de abajo donde la pantalla de consentimiento pide los ámbitos. Sync los solicita todos a la vez, así una conexión hecha hoy sigue siendo válida después de actualizar."
+            "body": "Google Auth Platform > Acceso a datos > Agregar o quitar permisos, luego pega la lista de abajo. Sync los solicita todos a la vez, así una conexión hecha hoy sigue siendo válida después de actualizar."
           },
           "connect": {
             "title": "Conecte una cuenta",
-            "body": "Conecte la cuenta de Google cuyo Drive se va a sincronizar. Sync actúa como esa cuenta, así que revoque su consentimiento cuando deje de usar la instancia."
+            "body": "Conecte la cuenta de Google cuyo Drive y calendarios se van a sincronizar. Sync actúa como esa cuenta, así que revoque su consentimiento cuando deje de usar la instancia."
           }
         },
         "microsoft": {

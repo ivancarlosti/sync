@@ -27,12 +27,13 @@ need.
 | Capability | Google scopes | Microsoft Graph scopes |
 |---|---|---|
 | `files` — browsing and transferring files | `drive`, `userinfo.email`, `userinfo.profile`, `openid` | `Files.ReadWrite.All`, `Sites.ReadWrite.All`, `User.Read`, `offline_access`, `openid`, `profile`, `email` |
+| `calendars` — mirroring calendars and events | `https://www.googleapis.com/auth/calendar` | `Calendars.ReadWrite` |
 
-Nothing else is requested: the sync engine only needs to browse and transfer
-files, and the identity scopes name the account. The whole table is requested from
-the first connection, in one authorization request ("one always-on scope set"), so
-a connection made today works after an upgrade instead of failing on a permission
-the token was never allowed to use.
+Both capabilities are requested from the first connection, in one authorization
+request ("one always-on scope set"), so a connection made today works after an
+upgrade instead of failing on a permission the token was never allowed to use.
+The identity scopes name the account, the files half browses and transfers Drive
+and OneDrive content, and the calendars half mirrors events.
 
 `GET /api/accounts` reports, per connected account, which capabilities the
 *stored* grant satisfies (`capabilities`) and which the current release asks for
@@ -54,8 +55,8 @@ Two things a permission does **not** buy:
   make the connected identity a site administrator; the signed-in user still has
   to be able to reach the site.
 * **An API.** Google scopes only work once the matching API is enabled in the
-  project (Drive API); a disabled API answers a permission error, not a "not
-  enabled" error.
+  project (Drive API for files, Calendar API for calendars); a disabled API
+  answers a permission error, not a "not enabled" error.
 
 ## 2. Google Workspace
 
@@ -63,33 +64,37 @@ Two things a permission does **not** buy:
 
 1. **Project** — <https://console.cloud.google.com/projectcreate>. Create a
    project dedicated to Sync (for example `sync-files`).
-2. **API** — enable the
+2. **APIs** — enable the
    [Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)
-   *in that project*. Nothing else is needed.
-3. **OAuth consent screen** (APIs & Services → OAuth consent screen):
+   and the
+   [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
+   *in that project*. Only the file half is dialled without the Calendar API, but
+   enabling both now keeps a calendar job from failing later with a `403`.
+3. **OAuth consent screen** (Google Auth Platform → Overview / Audience):
    * *Internal* for a Workspace domain: only the domain's accounts can authorise,
      and Google does not review the scopes. This is the recommended choice.
    * *External* works too, but while the app stays in *Testing* only the accounts
      published as test users can authorise it, and their refresh tokens expire
      after **seven days**. Publish the app to remove both limits.
-4. **Client** — Credentials → Create credentials → OAuth client ID → *Web
-   application*. Copy the **client id** and the **client secret** into
+4. **Client** — Google Auth Platform → Clients → Create client → OAuth client ID
+   → *Web application*. Copy the **client id** and the **client secret** into
    Admin > Providers (or the `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
    environment variables).
 5. **Redirect URI** — in the same client, add
    `APP_URL/api/oauth/google/callback` to *Authorised redirect URIs* (verbatim:
    the guide shows the exact value).
-6. **Permissions** — on the consent screen, open *Manually add scopes* and paste
-   the comma-separated list the guide offers (step 6 of **Admin > Setup guide**).
-   The identity and Drive scopes are non-sensitive, so an External app does not
-   need Google verification.
+6. **Permissions** — Google Auth Platform → Data access → *Add or remove scopes*,
+   then paste the comma-separated list the guide offers (step 7 of
+   **Admin > Setup guide**). The identity and Drive scopes are non-sensitive, so
+   an External app does not need Google verification.
 7. **API controls** — in the Admin console (Security → API controls → App access
    control) mark the client ID as *Trusted*, or add it to the allow-list of the
    organisational units that must be able to authorise it. Without this, a
    Workspace account can be refused the grant even though the consent screen was
    configured correctly.
-8. **Connect** — Accounts → *Connect Google Drive*. Any account whose Drive is to
-   be synchronised works; no administrator role is required.
+8. **Connect** — Accounts → *Connect Google Drive* (the same account also feeds
+   calendar jobs). Any account whose Drive and calendars are to be synchronised
+   works; no administrator role is required.
 
 ### 2.2 Notes
 
@@ -104,7 +109,8 @@ Two things a permission does **not** buy:
   grants is what Google reports back — and Sync reports the capabilities of that
   union.
 * The identity scopes let Sync name the connected account in the interface; the
-  `drive` scope is what browses and transfers files.
+  `drive` scope is what browses and transfers files, and the `calendar` scope
+  what lists and writes calendar events.
 
 ## 3. Microsoft 365
 
@@ -204,10 +210,10 @@ answers everything the screen renders:
 |---|---|
 | `configured` | an OAuth client is usable (environment or Admin > Providers) |
 | `redirect_uri` | the exact URL to register |
-| `console_urls` | the console deep links (`drive_api`, `entra_apps`, `entra_authentication`, `entra_credentials`, `entra_api_permissions`, `graph_permissions`) |
+| `console_urls` | the console deep links (`drive_api`, `calendar_api`, `auth_overview`, `auth_clients`, `auth_scopes`, `entra_apps`, `entra_authentication`, `entra_credentials`, `entra_api_permissions`, `graph_permissions`) |
 | `permissions[]` | the permission table: `capability`, `title` (i18n suffix), `scope`, `admin_consent`, `informational` (requested for the protocol, proves no capability — see §3.3), `kinds` (the account kinds that can hold the scope: absent means every kind, `["work"]` on the directory scopes and `Sites.ReadWrite.All`, which a personal Microsoft account can never be granted — see §1) |
-| `scopes[]` | the permission scopes in request order — the OAuth request joins them with a space (`scope` parameter); the guide renders them comma-separated, which is what the Google consent screen's *Manually add scopes* box expects |
-| `capabilities[]` | the capabilities the table unlocks (`providers.CapabilitiesFor`): `files`, shared by both providers |
+| `scopes[]` | the permission scopes in request order — the OAuth request joins them with a space (`scope` parameter); the guide renders them comma-separated, which is what the Google Auth Platform data-access page's *Add or remove scopes* box expects |
+| `capabilities[]` | the capabilities the permission table unlocks (`providers.CapabilitiesFor`): `files` and `calendars`, both shared by the two providers |
 | `admin_consent_required` | the provider has a tenant-wide consent step (Microsoft) |
 | `admin_consent` | `{tenant, client_id, at, granted}` of this instance |
 | `steps[]` | the ordered walkthrough: `id`, `url`, `copy` (`redirect_uri` / `scopes` / `permissions`), `action` (`admin_consent`), `optional` |

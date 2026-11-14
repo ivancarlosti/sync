@@ -151,12 +151,17 @@ func guideSteps(provider models.ProviderName, links map[string]string) []GuideSt
 		return []GuideStep{
 			// The project hosts the API enablement and the OAuth client.
 			{ID: "project", URL: "https://console.cloud.google.com/projectcreate"},
-			// Drive API for the sync.
+			// Drive API for the file half; the Calendar API feeds the calendar
+			// half, so a files-only installation can postpone it.
 			{ID: "apis", URL: links["drive_api"]},
-			{ID: "consent", URL: "https://console.cloud.google.com/apis/credentials/consent"},
-			{ID: "client", URL: "https://console.cloud.google.com/apis/credentials"},
-			{ID: "redirect", URL: "https://console.cloud.google.com/apis/credentials", Copy: GuideCopyRedirectURI},
-			{ID: "permissions", URL: "https://console.cloud.google.com/apis/credentials", Copy: GuideCopyScopes},
+			{ID: "calendar_api", URL: links["calendar_api"], Optional: true},
+			// Google moved the OAuth configuration to the Google Auth Platform:
+			// the consent screen lives in the overview, the clients (and their
+			// redirect URIs) under /auth/clients, the scopes under /auth/scopes.
+			{ID: "consent", URL: links["auth_overview"]},
+			{ID: "client", URL: links["auth_clients"]},
+			{ID: "redirect", URL: links["auth_clients"], Copy: GuideCopyRedirectURI},
+			{ID: "permissions", URL: links["auth_scopes"], Copy: GuideCopyScopes},
 			{ID: "connect"},
 		}
 	case models.ProviderMicrosoft:
