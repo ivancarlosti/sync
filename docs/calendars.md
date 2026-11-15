@@ -59,8 +59,9 @@ would reject every write.
 
 **Calendars → New** opens the same four step wizard as a file job: *details*
 (name, direction, conflict policy, enabled), *source*, *destination*, *options*
-(the listing window and the interval). *Next* validates only the tab it leaves,
-*Save* validates the whole form.
+(the listing window, the interval, the title decoration and the free/busy
+override). *Next* validates only the tab it leaves, *Save* validates the whole
+form.
 
 An `.ics` source adds three things to the *source* tab:
 
@@ -177,6 +178,49 @@ their own calendar is not thrown away.
   `delete_source`). A one-way job keeps the destination copy when the source
   side says the event is gone, because there is no writable source to prune.
 
+### Destination copy options
+
+Three per-job options shape the copy without touching either account's own
+calendar:
+
+| Field | Effect |
+|---|---|
+| `title_prefix` / `title_suffix` | the destination summary becomes `prefix + source summary + suffix`; each is trimmed and clamped to **64** runes by the API (`calendarDecorWidth`) |
+| `transparency_override` | `''` (keep the source value), `free` (`TRANSP:TRANSPARENT` / `showAs: free` / `transparency: transparent`) or `busy` — applied to the **destination** write only |
+
+Decoration is one-sided by construction: the prefix is written to the
+destination and stripped again before anything is written back to the source, so
+a `bidirectional` job does not push `[Work] Dentist` into the other account. The
+stripping only removes one copy of the configured prefix/suffix, and only from
+the matching end of the summary, so an event whose own title happens to start
+with the same text is not mangled.
+
+Because the stored destination copy is decorated while the source is not, a run
+must not read the marker as an edit. The pairing rule compares each side against
+what the **previous run recorded** (`calendar_event_links.source_fingerprint` /
+`destination_fingerprint`), and the recorded destination fingerprint is the one
+of the decorated copy the provider answered — so the decoration is stable and
+never becomes a conflict. On top of that the link keeps an
+`options_fingerprint` over the options in force. A pairing whose two sides agree
+but whose option fingerprint is stale is an `update_destination` with the
+evidence *the options of the pairing changed since the destination was written*,
+so a new (or cleared) prefix converges in a single run. A subscription answered
+`304 not modified` is re-fetched instead of ending the run while any recorded
+pairing in the window has a stale option fingerprint.
+
+`transparency` is deliberately **not** part of `providers.EventFingerprint`:
+adding it would have made every existing pairing look changed and rewritten
+every event on the first run after the upgrade. A free/busy override is applied
+when the event is written for another reason, and a job that only changes the
+override rewrites the destination through the option fingerprint above.
+
+A zone the provider does not know is normalised before a write: `ZoneName`
+canonicalises Windows labels (`W. Europe Standard Time` → `Europe/Berlin`) and
+accepts a leading `/`, and an unreadable label yields an **empty** name rather
+than an invalid one, so a write sends UTC instead of being rejected by Google
+("Invalid time zone"). Reads keep the instant and re-label it in the canonical
+zone (`InZone`), never shifting the wall clock.
+
 ## 6. iCalendar subscriptions
 
 The parser and the fetcher live in `internal/ical`; only the parts of RFC 5545
@@ -201,9 +245,15 @@ the engine needs are implemented.
 * `DTSTART`/`DTEND`, or `DTSTART` + `DURATION`; all-day `DATE` values stay
   all-day events (start at midnight, exclusive end, written back the same way so
   the round trip does not shift the day);
-* a `TZID` is resolved against the runtime zone database; a `VTIMEZONE` block is
-  not interpreted, and an unknown zone falls back to UTC instead of failing the
-  feed. A floating time is read in the destination calendar's zone;
+* a `TZID` is resolved against the runtime zone database through
+  `providers.ZoneName`, so a Windows label (`W. Europe Standard Time`) and a
+  globally-unique `TZID` (`/mozilla.org/20070129_1/Europe/Berlin`) both land on
+  the IANA zone they mean; a `VTIMEZONE` block is not interpreted, and an
+  unreadable zone falls back to UTC instead of failing the feed. A floating time
+  is read in the destination calendar's zone;
+* `TRANSP` is read as the free/busy flag (`TRANSPARENT` → transparent, absent or
+  `OPAQUE` → opaque) and written back to the destination as that provider's own
+  value, so a feed that marks events as free does not turn them into blockers;
 * `RRULE`, `RECURRENCE-ID` or a series master marks the event as recurring, and
   `STATUS:CANCELLED` as cancelled — both are counted and skipped, never copied;
 * at most **20000** events per feed (`MaxEvents`): a bigger subscription is

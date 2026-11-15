@@ -42,11 +42,15 @@ import {
 } from '@/lib/api';
 import { accountLabel } from '@/lib/accounts';
 import {
+  DECOR_WIDTH,
   ICS_MARKER,
   MAX_INTERVAL_MINUTES,
   calendarConflictOptions,
   calendarDirectionOptions,
+  calendarFreeBusyOptions,
   calendarScheduleLabel,
+  decoratedSummary,
+  freeBusyValue,
   newCalendarPayload,
   payloadFromJob,
   sourceKindOptions,
@@ -117,6 +121,20 @@ const stepIndex = computed(() => Math.max(0, (STEP_ORDER as readonly string[]).i
 const kinds = computed<SelectOption[]>(() => sourceKindOptions(t));
 const directions = computed<SelectOption[]>(() => calendarDirectionOptions(t, isFeed.value));
 const policies = computed<SelectOption[]>(() => calendarConflictOptions(t));
+const freeBusyChoices = computed<SelectOption[]>(() => calendarFreeBusyOptions(t));
+
+/**
+ * decoration is the example line the options tab shows under the prefix and
+ * suffix fields: the summary of an event nobody has, decorated the way the engine
+ * will decorate the real ones.
+ */
+const decoration = computed<string>(() =>
+  decoratedSummary(
+    draft.title_prefix,
+    draft.title_suffix,
+    t('calendars.decorExample'),
+  ),
+);
 
 /** A provider source can only point at an account of that provider. */
 const sourceAccountOptions = computed<SelectOption[]>(() =>
@@ -554,6 +572,13 @@ const conflictPolicy = computed({
   },
 });
 
+const freeBusy = computed({
+  get: () => draft.transparency_override,
+  set: (value: string | number) => {
+    draft.transparency_override = freeBusyValue(value);
+  },
+});
+
 // A message about a field goes away as soon as the operator fixes that field.
 watch(
   () => draft.name,
@@ -937,6 +962,54 @@ onMounted(load);
                 :disabled="saving"
                 :label="t('calendars.deleteMissing')"
               />
+            </div>
+
+            <!-- The copy options: they shape the destination only. -->
+            <div class="space-y-3 rounded-md border border-border p-3">
+              <div class="space-y-1">
+                <p class="text-sm font-medium">{{ t('calendars.copyTitle') }}</p>
+                <p class="text-xs text-muted-foreground">{{ t('calendars.copyHint') }}</p>
+              </div>
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-1.5">
+                  <Label for="calendar-title-prefix" :hint="t('calendars.titlePrefixHint')">
+                    {{ t('calendars.titlePrefix') }}
+                  </Label>
+                  <Input
+                    id="calendar-title-prefix"
+                    v-model="draft.title_prefix"
+                    :maxlength="DECOR_WIDTH"
+                    :placeholder="t('calendars.titlePrefixPlaceholder')"
+                    :disabled="saving"
+                  />
+                </div>
+                <div class="space-y-1.5">
+                  <Label for="calendar-title-suffix" :hint="t('calendars.titleSuffixHint')">
+                    {{ t('calendars.titleSuffix') }}
+                  </Label>
+                  <Input
+                    id="calendar-title-suffix"
+                    v-model="draft.title_suffix"
+                    :maxlength="DECOR_WIDTH"
+                    :placeholder="t('calendars.titleSuffixPlaceholder')"
+                    :disabled="saving"
+                  />
+                </div>
+              </div>
+              <p class="text-xs text-muted-foreground">{{ t('calendars.titlePreview') }}</p>
+              <p class="truncate rounded-md bg-muted px-2 py-1 text-xs">{{ decoration }}</p>
+              <div class="space-y-1.5">
+                <Label for="calendar-free-busy" :hint="t('calendars.freeBusyHint')">
+                  {{ t('calendars.freeBusy') }}
+                </Label>
+                <Select
+                  id="calendar-free-busy"
+                  v-model="freeBusy"
+                  :options="freeBusyChoices"
+                  :disabled="saving"
+                />
+                <p class="text-xs text-muted-foreground">{{ t('calendars.freeBusyExplain') }}</p>
+              </div>
             </div>
           </div>
         </Card>

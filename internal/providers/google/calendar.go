@@ -41,7 +41,7 @@ const calendarListFields = "items(id,summary,timeZone,primary,accessRole),nextPa
 // calendarEventFields is the event projection. The calendar view of an event
 // carries the recurrence markers, so a series master is recognisable without a
 // second read.
-const calendarEventFields = "items(id,status,summary,description,location,start,end,updated,iCalUID,recurringEventId,recurrence,organizer(email),attendees(email)),nextPageToken"
+const calendarEventFields = "items(id,status,summary,description,location,start,end,updated,transparency,iCalUID,recurringEventId,recurrence,organizer(email),attendees(email)),nextPageToken"
 
 // Calendars implements providers.CalendarProvider.
 func (p *Provider) Calendars(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens) ([]providers.Calendar, error) {
@@ -211,6 +211,7 @@ type googleEvent struct {
 	Start            *googleEventTime `json:"start,omitempty"`
 	End              *googleEventTime `json:"end,omitempty"`
 	Updated          string           `json:"updated,omitempty"`
+	Transparency     string           `json:"transparency,omitempty"`
 	ICalUID          string           `json:"iCalUID,omitempty"`
 	Recurrence       []string         `json:"recurrence,omitempty"`
 	RecurringEventID string           `json:"recurringEventId,omitempty"`
@@ -257,11 +258,14 @@ func googleEventFrom(raw googleEvent) (providers.CalendarEvent, error) {
 		End:         end,
 		AllDay:      allDay,
 		TimeZone:    zone,
-		UpdatedAt:   updated,
-		Recurring:   len(raw.Recurrence) > 0 || raw.RecurringEventID != "",
-		Cancelled:   raw.Status == "cancelled",
-		Organizer:   googlePersonEmail(raw.Organizer),
-		Attendees:   make([]string, 0, len(raw.Attendees)),
+		// Google omits `transparency` for a normal (busy) event, so an absent
+		// value is the busy default rather than "unknown".
+		Transparency: transparencyFromGoogle(raw.Transparency),
+		UpdatedAt:    updated,
+		Recurring:    len(raw.Recurrence) > 0 || raw.RecurringEventID != "",
+		Cancelled:    raw.Status == "cancelled",
+		Organizer:    googlePersonEmail(raw.Organizer),
+		Attendees:    make([]string, 0, len(raw.Attendees)),
 	}
 	if event.UID == "" {
 		event.UID = raw.ID
@@ -277,17 +281,22 @@ func googleEventFrom(raw googleEvent) (providers.CalendarEvent, error) {
 // googleEventTimeFrom decodes a start or end value. An all-day event carries a
 // DATE, which is midnight in the event zone; the zone defaults to UTC when the
 // provider did not name one the runtime can resolve.
+//
+// The zone it returns is always a canonical IANA name, never the raw label Google
+// stored: the value is written back to whichever provider the job copies into,
+// and Google refuses a payload whose start names a label it cannot read.
 func googleEventTimeFrom(value *googleEventTime) (time.Time, bool, string, error) {
 	if value == nil {
 		return time.Time{}, false, "", errors.New("google calendar: event without a start or end")
 	}
-	zone := providers.LoadZone(value.TimeZone)
+	zoneName := providers.ZoneName(value.TimeZone)
+	zone := providers.LoadZone(zoneName)
 	if value.Date != "" {
 		day, err := time.ParseInLocation("2006-01-02", value.Date, zone)
 		if err != nil {
 			return time.Time{}, false, "", err
 		}
-		return day, true, value.TimeZone, nil
+		return day, true, zoneName, nil
 	}
 	if value.DateTime == "" {
 		return time.Time{}, false, "", errors.New("google calendar: event time without a value")
@@ -296,30 +305,33 @@ func googleEventTimeFrom(value *googleEventTime) (time.Time, bool, string, error
 	if err != nil {
 		return time.Time{}, false, "", err
 	}
-	return moment, false, value.TimeZone, nil
+	return moment, false, zoneName, nil
 }
 
 // googleEventPayload builds the write body of a create or update. An all-day
 // event is sent as a DATE (never as a midnight instant, which would show up on
 // the wrong day for a reader in another zone), a timed event as an RFC 3339
-// date-time with the zone it was read in.
+// date-time rendered in the zone it is copied with.
+//
+// The zone is canonicalised here, at the edge of the request: this is the guard
+// that keeps a Windows label or a feed TZID out of `start.timeZone`, which Google
+// answers with "Invalid time zone definition for start time".
 func googleEventPayload(input providers.CalendarEventInput) googleEvent {
 	payload := googleEvent{
-		Summary:     input.Summary,
-		Description: input.Description,
-		Location:    input.Location,
-		ICalUID:     input.UID,
-	}
-	zone := input.TimeZone
-	if zone == "" {
-		zone = "UTC"
+		Summary:      input.Summary,
+		Description:  input.Description,
+		Location:     input.Location,
+		ICalUID:      input.UID,
+		Transparency: transparencyForGoogle(input.Transparency),
 	}
 	if input.AllDay {
 		payload.Start = &googleEventTime{Date: input.Start.Format("2006-01-02")}
 		payload.End = &googleEventTime{Date: input.End.Format("2006-01-02")}
 	} else {
-		payload.Start = &googleEventTime{DateTime: input.Start.Format(time.RFC3339), TimeZone: zone}
-		payload.End = &googleEventTime{DateTime: input.End.Format(time.RFC3339), TimeZone: zone}
+		start, zone := providers.InZone(input.Start, input.TimeZone)
+		end, _ := providers.InZone(input.End, input.TimeZone)
+		payload.Start = &googleEventTime{DateTime: start.Format(time.RFC3339), TimeZone: zone}
+		payload.End = &googleEventTime{DateTime: end.Format(time.RFC3339), TimeZone: zone}
 	}
 	for _, attendee := range input.Attendees {
 		if attendee = strings.TrimSpace(attendee); attendee != "" {
@@ -327,6 +339,22 @@ func googleEventPayload(input providers.CalendarEventInput) googleEvent {
 		}
 	}
 	return payload
+}
+
+// transparencyFromGoogle normalises the `transparency` of a listed event. The API
+// leaves the property out for a busy event, which is why the empty string is
+// reported as opaque.
+func transparencyFromGoogle(value string) string {
+	if providers.TransparencyName(value) == providers.TransparencyTransparent {
+		return providers.TransparencyTransparent
+	}
+	return providers.TransparencyOpaque
+}
+
+// transparencyForGoogle is what a write carries: an explicit free/busy choice, or
+// nothing at all so the provider keeps its own default.
+func transparencyForGoogle(value string) string {
+	return providers.TransparencyName(value)
 }
 
 func googlePersonEmail(person *googlePerson) string {

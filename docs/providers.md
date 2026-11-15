@@ -116,12 +116,17 @@ Key types:
 * Calendar types: `Calendar{ID, Name, Primary, TimeZone, ReadOnly}`,
   `CalendarWindow{Start, End}` (half-open, like every range query),
   `CalendarEvent{ID, UID, Summary, Description, Location, Start, End, AllDay,
-  TimeZone, UpdatedAt, Recurring, Cancelled, Organizer, Attendees}` and
-  `CalendarEventInput{UID, Summary, Description, Location, Start, End, AllDay,
-  TimeZone, Attendees}`. `Start`/`End` are absolute instants; an all-day event is
-  reported at midnight of its first day in `TimeZone` with an exclusive end, and
-  is written back the same way so the round trip does not shift the day.
-  `UpdatedAt` is the **event** stamp (it feeds `newest_wins`), not the sync time.
+  TimeZone, Transparency, UpdatedAt, Recurring, Cancelled, Organizer, Attendees}`
+  and `CalendarEventInput{UID, Summary, Description, Location, Start, End, AllDay,
+  TimeZone, Transparency, Attendees}`. `Start`/`End` are absolute instants; an
+  all-day event is reported at midnight of its first day in `TimeZone` with an
+  exclusive end, and is written back the same way so the round trip does not shift
+  the day. `UpdatedAt` is the **event** stamp (it feeds `newest_wins`), not the
+  sync time. `Transparency` is `opaque`/`transparent` (`TransparencyOpaque`,
+  `TransparencyTransparent`); `TransparencyName` narrows any provider label
+  (`free`, `busy`, `TRANSPARENT`…) onto that pair and answers `""` for anything
+  else, so an unknown value is omitted from a write instead of clearing the
+  provider's own default.
 * `providers.EventFingerprint(event)` / `InputFingerprint(input)` — the content
   identity the calendar engine compares between runs: summary, description,
   location, start, end, all-day flag, the sorted lower-cased attendee list and
@@ -133,9 +138,17 @@ Key types:
   event from a stable seed (`<20 bytes hex>@sync.local`) instead of letting each
   provider mint its own, which is what keeps a Google copy and a Microsoft copy of
   the same event recognisable when a later run pairs the calendars the other way.
-* `providers.LoadZone(name)` — resolves an IANA zone name and falls back to UTC:
-  a payload with an explicit offset stays correct in a container without a zone
-  database, and Graph may store a Windows zone name.
+* `providers.LoadZone(name)` / `InZone(moment, name)` / `ZoneName(name)` — the
+  zone boundary between a stored or parsed label and a provider payload.
+  `ZoneName` accepts an IANA name, a Windows zone name (what Graph and Outlook
+  publish, mapped through an alias table: `W. Europe Standard Time` →
+  `Europe/Berlin`) and an RFC 5545 globally-unique `TZID` (a leading `/` plus
+  vendor segments), strips surrounding quotes, and answers `""` for anything
+  the runtime cannot load — Google rejects an event whose `start.timeZone` it does
+  not know, so a write falls back to UTC rather than sending an invalid name.
+  `LoadZone` never fails (UTC), and `InZone` re-labels an instant without moving
+  the wall clock; both keep a payload with an explicit offset correct in a
+  container without a zone database.
 * **Remote identifiers are guarded before they reach a URL.** Google matches
   every id it interpolates — item, folder, parent and drive id — against
   `^[A-Za-z0-9_-]{1,512}$`

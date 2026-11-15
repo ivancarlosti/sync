@@ -32,7 +32,7 @@ var calendarIDPattern = regexp.MustCompile(`^[A-Za-z0-9._=+/-]{1,900}$`)
 // engine consumes, which also keeps a month of events a cheap listing.
 var calendarEventSelect = []string{
 	"id", "iCalUId", "subject", "body", "bodyPreview", "location", "start", "end",
-	"isAllDay", "isCancelled", "type", "seriesMasterId", "recurrence",
+	"isAllDay", "isCancelled", "type", "seriesMasterId", "recurrence", "showAs",
 	"organizer", "attendees",
 }
 
@@ -231,19 +231,20 @@ func eventFromGraph(event graphmodels.Eventable) (providers.CalendarEvent, error
 		zone = deref(startValue.GetTimeZone())
 	}
 	normalised := providers.CalendarEvent{
-		ID:          deref(event.GetId()),
-		UID:         deref(event.GetICalUId()),
-		Summary:     deref(event.GetSubject()),
-		Description: graphBody(event.GetBody()),
-		Location:    graphLocation(event.GetLocation()),
-		Start:       start,
-		End:         end,
-		AllDay:      allDay,
-		TimeZone:    zone,
-		Recurring:   graphRecurring(event),
-		Cancelled:   boolValue(event.GetIsCancelled()),
-		Organizer:   graphRecipient(event.GetOrganizer()),
-		Attendees:   make([]string, 0, len(event.GetAttendees())),
+		ID:           deref(event.GetId()),
+		UID:          deref(event.GetICalUId()),
+		Summary:      deref(event.GetSubject()),
+		Description:  graphBody(event.GetBody()),
+		Location:     graphLocation(event.GetLocation()),
+		Start:        start,
+		End:          end,
+		AllDay:       allDay,
+		TimeZone:     providers.ZoneName(zone),
+		Transparency: transparencyFromGraph(event.GetShowAs()),
+		Recurring:    graphRecurring(event),
+		Cancelled:    boolValue(event.GetIsCancelled()),
+		Organizer:    graphRecipient(event.GetOrganizer()),
+		Attendees:    make([]string, 0, len(event.GetAttendees())),
 	}
 	if normalised.UID == "" {
 		normalised.UID = normalised.ID
@@ -302,6 +303,16 @@ func eventPayload(input providers.CalendarEventInput) graphmodels.Eventable {
 	end.SetTimeZone(ptr(startZone))
 	payload.SetEnd(end)
 
+	// The free/busy flag is only written when the job asked for a value: a plain
+	// update would otherwise turn a destination event the operator marked as
+	// out-of-office or tentative back into a plain busy one.
+	switch providers.TransparencyName(input.Transparency) {
+	case providers.TransparencyTransparent:
+		payload.SetShowAs(ptr(graphmodels.FREE_FREEBUSYSTATUS))
+	case providers.TransparencyOpaque:
+		payload.SetShowAs(ptr(graphmodels.BUSY_FREEBUSYSTATUS))
+	}
+
 	for _, email := range input.Attendees {
 		if email = strings.TrimSpace(email); email == "" {
 			continue
@@ -318,19 +329,16 @@ func eventPayload(input providers.CalendarEventInput) graphmodels.Eventable {
 // graphTime renders an instant the way Graph expects it: a wall-clock value with
 // no offset plus the zone that value belongs to. An all-day event is always sent
 // as UTC midnight, because Graph interprets the date part in the named zone and a
-// zone shift would move the day. A zone the runtime cannot resolve falls back to
-// UTC, which keeps the instant correct even though it names a different zone.
+// zone shift would move the day. The zone is canonicalised here, at the edge of
+// the request: a Windows label stored by an earlier read, or a TZID of a feed, is
+// not a value Graph reliably reads back, and the graphEventTime round trip only
+// works when the label it wrote is one the runtime can load again.
 func graphTime(moment time.Time, allDay bool, zone string) (string, string) {
 	if allDay {
 		return moment.UTC().Format("2006-01-02T15:04:05"), "UTC"
 	}
-	if strings.TrimSpace(zone) == "" {
-		return moment.UTC().Format("2006-01-02T15:04:05"), "UTC"
-	}
-	if _, err := time.LoadLocation(zone); err != nil {
-		return moment.UTC().Format("2006-01-02T15:04:05"), "UTC"
-	}
-	return moment.In(providers.LoadZone(zone)).Format("2006-01-02T15:04:05"), zone
+	wall, name := providers.InZone(moment, zone)
+	return wall.Format("2006-01-02T15:04:05"), name
 }
 
 // graphEventTime decodes a Graph start or end value. Graph returns the wall-clock
@@ -376,6 +384,18 @@ func graphRecipient(recipient graphmodels.Recipientable) string {
 		return ""
 	}
 	return deref(recipient.GetEmailAddress().GetAddress())
+}
+
+// transparencyFromGraph collapses Graph's six-value `showAs` onto the two values
+// the engine shares with Google: only `free` reads as transparent, everything
+// else (busy, oof, tentative, workingElsewhere, an unset value) blocks the
+// calendar. The distinction is lost on a write back to Graph, which is why the
+// engine only overrides it when the job asks for a value.
+func transparencyFromGraph(showAs *graphmodels.FreeBusyStatus) string {
+	if showAs != nil && *showAs == graphmodels.FREE_FREEBUSYSTATUS {
+		return providers.TransparencyTransparent
+	}
+	return providers.TransparencyOpaque
 }
 
 // invalidCalendarIDError reports a calendar or event id this provider refuses to

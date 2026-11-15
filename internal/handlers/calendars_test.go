@@ -314,8 +314,47 @@ func TestCalendarJobValidation(t *testing.T) {
 	}
 }
 
-// mutate returns a copy of a payload with one key replaced, so a case only
-// spells out what it changes.
+// TestCalendarCopyOptions pins how the destination-only options are stored and
+// echoed: a prefix and suffix are trimmed and clamped, the free/busy override is
+// narrowed onto the closed set, and a value outside it is refused instead of being
+// silently dropped.
+func TestCalendarCopyOptions(t *testing.T) {
+	server, _, source, target := calendarServer(t)
+
+	body := mutate(calendarBody("Decorated", source, target), "title_prefix", "  [Work]  ")
+	body["title_suffix"] = "(via sync)"
+	body["transparency_override"] = " FREE "
+	recorder := call(t, server, http.MethodPost, "/api/calendars", body)
+	requireStatus(t, recorder, http.StatusCreated)
+	created := decodeJSON[calendarView](t, recorder)
+	if created.TitlePrefix != "[Work]" {
+		t.Fatalf("prefix = %q, want it trimmed", created.TitlePrefix)
+	}
+	if created.TitleSuffix != "(via sync)" {
+		t.Fatalf("suffix = %q", created.TitleSuffix)
+	}
+	if created.TransparencyOverride != string(models.CalendarFreeBusyFree) {
+		t.Fatalf("override = %q, want free", created.TransparencyOverride)
+	}
+
+	// The decoration is clamped to the width of the column instead of failing the
+	// save: a long marker is a typo, not a reason to lose the form.
+	long := strings.Repeat("x", calendarDecorWidth+20)
+	body = mutate(calendarBody("Decorated", source, target), "title_prefix", long)
+	recorder = call(t, server, http.MethodPost, "/api/calendars", body)
+	requireStatus(t, recorder, http.StatusCreated)
+	clamped := decodeJSON[calendarView](t, recorder)
+	if len([]rune(clamped.TitlePrefix)) != calendarDecorWidth {
+		t.Fatalf("prefix length = %d, want %d", len([]rune(clamped.TitlePrefix)), calendarDecorWidth)
+	}
+
+	// An unknown override is a mistake in the request, not a reason to write a
+	// value no provider understands.
+	body = mutate(calendarBody("x", source, target), "transparency_override", "free-ish")
+	recorder = call(t, server, http.MethodPost, "/api/calendars", body)
+	requireStatus(t, recorder, http.StatusBadRequest)
+}
+
 func mutate(body map[string]any, key string, value any) map[string]any {
 	copyOf := make(map[string]any, len(body))
 	for k, v := range body {

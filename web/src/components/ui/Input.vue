@@ -23,6 +23,8 @@ const props = withDefaults(
     min?: number | string;
     max?: number | string;
     step?: number | string;
+    /** maxlength caps the typed value, for a field the API clamps anyway. */
+    maxlength?: number | string;
     /** numeric aligns digits left-to-right under RTL locales. */
     numeric?: boolean;
     class?: string;
@@ -59,6 +61,7 @@ const value = computed<string | number>({
     :min="min"
     :max="max"
     :step="step"
+    :maxlength="maxlength"
     :class="
       cn(
         'flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-60',

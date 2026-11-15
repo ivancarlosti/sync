@@ -9,7 +9,7 @@
 import { type Composer } from 'vue-i18n';
 
 import { type SelectOption } from '@/components/ui/Select.vue';
-import type { CalendarJob, CalendarPayload } from '@/lib/api';
+import type { CalendarFreeBusy, CalendarJob, CalendarPayload } from '@/lib/api';
 import { CONFLICT_POLICIES } from '@/lib/jobs';
 
 /** SOURCE_KINDS is the closed set of `source_kind` values of the API. */
@@ -17,6 +17,15 @@ export const SOURCE_KINDS = ['google', 'microsoft', 'ics'] as const;
 
 /** CALENDAR_DIRECTIONS is the closed set of `direction` values of the API. */
 export const CALENDAR_DIRECTIONS = ['bidirectional', 'one_way'] as const;
+
+/** FREE_BUSY_VALUES is the closed set of `transparency_override` values. */
+export const FREE_BUSY_VALUES = ['', 'free', 'busy'] as const;
+
+/**
+ * DECOR_WIDTH mirrors `calendarDecorWidth` of the calendars handler: a prefix or
+ * suffix longer than this is clamped by the API.
+ */
+export const DECOR_WIDTH = 64;
 
 /** PLAN_ACTIONS is the vocabulary of the preview and of the run history. */
 export const PLAN_ACTIONS = [
@@ -68,6 +77,34 @@ export function calendarScheduleLabel(t: Composer['t'], minutes: number): string
   return minutes > 0 ? t('calendars.everyMinutes', { count: minutes }) : t('calendars.manualOnly');
 }
 
+/** freeBusyOptions lists the values of the free/busy override. */
+export function calendarFreeBusyOptions(t: Composer['t']): SelectOption[] {
+  return FREE_BUSY_VALUES.map((value) => ({
+    value,
+    label: value === '' ? t('calendars.freeBusy_keep') : t(`calendars.freeBusy_${value}`),
+  }));
+}
+
+/**
+ * decoratedSummary mirrors `eventOptions.decorate` of the engine: the parts joined
+ * by one space, with an empty summary dropping out instead of leaving a gap. The
+ * editor shows the result so the marker is chosen by looking at it rather than by
+ * guessing how it will read.
+ */
+export function decoratedSummary(prefix: string, suffix: string, summary: string): string {
+  const parts: string[] = [];
+  if (prefix.trim() !== '') parts.push(prefix.trim());
+  if (summary.trim() !== '') parts.push(summary.trim());
+  if (suffix.trim() !== '') parts.push(suffix.trim());
+  return parts.join(' ');
+}
+
+/** freeBusyValue narrows an untrusted value onto the closed set. */
+export function freeBusyValue(value: unknown): CalendarFreeBusy {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return text === 'free' || text === 'busy' ? text : '';
+}
+
 /** actionLabel translates a plan action, falling back to the raw identifier. */
 export function actionLabel(t: Composer['t'], te: Composer['te'], action: string): string {
   const key = `calendars.action_${action}`;
@@ -104,6 +141,9 @@ export function payloadFromJob(
     future_days: job.future_days,
     interval_minutes: job.interval_minutes,
     enabled: job.enabled,
+    title_prefix: job.title_prefix ?? '',
+    title_suffix: job.title_suffix ?? '',
+    transparency_override: freeBusyValue(job.transparency_override),
     ...overrides,
   };
 }
@@ -130,5 +170,8 @@ export function newCalendarPayload(): CalendarPayload {
     future_days: DEFAULT_FUTURE_DAYS,
     interval_minutes: 0,
     enabled: true,
+    title_prefix: '',
+    title_suffix: '',
+    transparency_override: '',
   };
 }

@@ -164,6 +164,8 @@ with no account at all.
 | `conflict_policy` | `VARCHAR(32)` | `newest_wins` \| `source_wins` \| `destination_wins` \| `skip` |
 | `delete_missing` | `BOOLEAN` | propagate a deletion instead of re-creating the event |
 | `past_days`, `future_days` | `INT` | listing window around *now*, default `30` / `365` |
+| `title_prefix`, `title_suffix` | `VARCHAR(64)` | decoration of the copy written into the destination; empty by default, and the source calendar never sees it |
+| `transparency_override` | `VARCHAR(16)` | `''` (keep the source value) \| `free` \| `busy` — forces the free/busy flag of the destination copy |
 | `interval_minutes`, `enabled` | `INT` / `BOOLEAN` | `0` = manual only, capped at `10080`; a new job is enabled |
 | `last_run_at`, `next_run_at` | `DATETIME` (nullable) | `next_run_at` is recomputed on every save and moved one interval past the start of every finished run; `NULL` for a manual-only or disabled job |
 | `last_status`, `last_error` | `VARCHAR(32)` / `TEXT` | summary of the last run |
@@ -180,6 +182,11 @@ pinned for the same reason as `source_etag`), both last known starts
 `last_synced_at`. The fingerprints make "which side moved since the last run"
 answerable without storing a copy of the event; the starts are what separate an
 event that travelled out of the listing window from one that was deleted.
+`options_fingerprint` (`VARCHAR(16)`) is the hash of the job options that shape
+the destination copy (`title_prefix`, `title_suffix`, `transparency_override`),
+empty for a job that never set one: a mismatch is what makes the engine rewrite
+an otherwise unchanged event once, since a decoration applied to one side only
+must not read as a conflict on every run.
 
 `calendar_runs` — one row per execution, the shape of `sync_runs` with event
 counters instead of file counters: `job_id` (indexed), `job_name`, `status`

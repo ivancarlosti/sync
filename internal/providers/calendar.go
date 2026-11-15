@@ -50,6 +50,12 @@ type CalendarEvent struct {
 	End         time.Time
 	AllDay      bool
 	TimeZone    string
+	// Transparency is the free/busy flag of the event (TransparencyOpaque or
+	// TransparencyTransparent). It is deliberately not part of EventFingerprint:
+	// adding a component would make every fingerprint stored before this field
+	// existed look like an edit on both sides, which the engine would answer
+	// with a rewrite of every paired event.
+	Transparency string
 	// UpdatedAt is the provider's last modification stamp. It feeds the
 	// newest_wins conflict rule, so it must be the event stamp, not the sync
 	// time.
@@ -79,7 +85,36 @@ type CalendarEventInput struct {
 	End         time.Time
 	AllDay      bool
 	TimeZone    string
-	Attendees   []string
+	// Transparency is the free/busy flag to write, in the vocabulary of
+	// providers.TransparencyName. An empty value leaves the provider default in
+	// place, which is what keeps an unrelated update from clearing a "free"
+	// marker the operator set on the destination calendar.
+	Transparency string
+	Attendees    []string
+}
+
+// The two free/busy values the providers share. Google spells its event
+// `transparency` exactly like this; Graph's `showAs` is mapped onto it by the
+// Microsoft half, so the engine never reads a provider vocabulary.
+const (
+	// TransparencyOpaque is a normal event: it blocks the calendar.
+	TransparencyOpaque = "opaque"
+	// TransparencyTransparent is an event that is shown as free.
+	TransparencyTransparent = "transparent"
+)
+
+// TransparencyName normalises a free/busy value, answering the empty string for
+// anything it does not recognise: an unknown label must not reach a payload,
+// where it would clear the provider's own default.
+func TransparencyName(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case TransparencyOpaque:
+		return TransparencyOpaque
+	case TransparencyTransparent:
+		return TransparencyTransparent
+	default:
+		return ""
+	}
 }
 
 // CalendarProvider is the calendar half of a provider. It is a separate
@@ -144,15 +179,16 @@ func InputFingerprint(input CalendarEventInput) string {
 // unchanged.
 func EventInputFrom(event CalendarEvent) CalendarEventInput {
 	return CalendarEventInput{
-		UID:         event.UID,
-		Summary:     event.Summary,
-		Description: event.Description,
-		Location:    event.Location,
-		Start:       event.Start,
-		End:         event.End,
-		AllDay:      event.AllDay,
-		TimeZone:    event.TimeZone,
-		Attendees:   append([]string(nil), event.Attendees...),
+		UID:          event.UID,
+		Summary:      event.Summary,
+		Description:  event.Description,
+		Location:     event.Location,
+		Start:        event.Start,
+		End:          event.End,
+		AllDay:       event.AllDay,
+		TimeZone:     event.TimeZone,
+		Transparency: event.Transparency,
+		Attendees:    append([]string(nil), event.Attendees...),
 	}
 }
 
@@ -191,18 +227,192 @@ func sortedLower(values []string) []string {
 	return lowered
 }
 
-// LoadZone resolves an IANA zone name without failing. Calendar payloads carry
-// a zone name next to a wall-clock time; when the runtime has no zone database
-// (a scratch container) or the name is a Windows one Graph stored, an explicit
-// UTC offset still stays correct, so callers fall back to UTC instead of failing
-// the listing.
+// LoadZone resolves a calendar zone without failing. Calendar payloads carry a
+// zone name next to a wall-clock time; when the runtime has no zone database (a
+// scratch container) or the name cannot be resolved, an explicit UTC offset still
+// stays correct, so callers fall back to UTC instead of failing the listing.
 func LoadZone(name string) *time.Location {
-	if name == "" {
+	canonical := ZoneName(name)
+	if canonical == "" {
 		return time.UTC
 	}
-	location, err := time.LoadLocation(name)
+	location, err := time.LoadLocation(canonical)
 	if err != nil {
 		return time.UTC
 	}
 	return location
+}
+
+// InZone renders an instant in a zone a provider will accept. The returned name
+// is always loadable by the runtime and is therefore always a name Google and
+// Microsoft can read: an unknown label (a Windows zone name Graph published, a
+// TZID of a feed) falls back to UTC, which keeps the instant right even though the
+// wall clock is rendered differently.
+func InZone(moment time.Time, name string) (time.Time, string) {
+	location := LoadZone(name)
+	if location == time.UTC {
+		return moment.UTC(), "UTC"
+	}
+	return moment.In(location), location.String()
+}
+
+// ZoneName normalises a zone label into an IANA name. It is the guard between a
+// stored or parsed label and a provider payload: Google refuses an event whose
+// start.timeZone it does not know ("Invalid time zone definition for start
+// time"), so nothing but a name the runtime can load may reach a write.
+//
+// Three shapes are accepted: an IANA name, a Windows zone name (what Microsoft
+// Graph and Outlook publish), and an RFC 5545 globally-unique TZID (a leading
+// `/` plus vendor path segments, as Mozilla exports). The empty string answers an
+// unresolvable label, and callers fall back to UTC.
+func ZoneName(name string) string {
+	label := strings.Trim(strings.TrimSpace(name), `"`)
+	if label == "" || strings.EqualFold(label, "local") {
+		// "Local" is a Go alias for the machine zone, not a zone a provider can
+		// read, and it changes meaning with the deployment.
+		return ""
+	}
+	for _, char := range label {
+		if char < 0x20 || char == 0x7f {
+			return ""
+		}
+	}
+	for _, candidate := range zoneCandidates(label) {
+		if location, err := time.LoadLocation(candidate); err == nil {
+			return location.String()
+		}
+	}
+	return ""
+}
+
+// zoneCandidates lists the names worth trying for one label, most specific first:
+// the alias table, the label itself, then the trailing path segments of a
+// globally-unique TZID.
+func zoneCandidates(label string) []string {
+	candidates := make([]string, 0, 4)
+	if mapped, ok := zoneAliases[strings.ToLower(label)]; ok {
+		candidates = append(candidates, mapped)
+	}
+	candidates = append(candidates, label)
+	if strings.HasPrefix(label, "/") {
+		segments := strings.Split(strings.TrimPrefix(label, "/"), "/")
+		for index := 0; index < len(segments); index++ {
+			candidates = append(candidates, strings.Join(segments[index:], "/"))
+		}
+	}
+	return candidates
+}
+
+// zoneAliases maps the Windows zone names Graph, Outlook and Exchange publish to
+// the IANA zone with the same rules. It is a deliberate subset: the zones an event
+// realistically carries, not every entry of the CLDR table.
+var zoneAliases = map[string]string{
+	"dateline standard time":          "Etc/GMT+12",
+	"utc-11":                          "Etc/GMT+11",
+	"hawaiian standard time":          "Pacific/Honolulu",
+	"alaskan standard time":           "America/Anchorage",
+	"pacific standard time":           "America/Los_Angeles",
+	"pacific standard time (mexico)":  "America/Tijuana",
+	"us mountain standard time":       "America/Phoenix",
+	"mountain standard time":          "America/Denver",
+	"mountain standard time (mexico)": "America/Chihuahua",
+	"central america standard time":   "America/Guatemala",
+	"central standard time":           "America/Chicago",
+	"central standard time (mexico)":  "America/Mexico_City",
+	"canada central standard time":    "America/Regina",
+	"sa pacific standard time":        "America/Bogota",
+	"eastern standard time":           "America/New_York",
+	"us eastern standard time":        "America/Indiana/Indianapolis",
+	"venezuela standard time":         "America/Caracas",
+	"atlantic standard time":          "America/Halifax",
+	"sa western standard time":        "America/La_Paz",
+	"pacific sa standard time":        "America/Santiago",
+	"newfoundland standard time":      "America/St_Johns",
+	"e. south america standard time":  "America/Sao_Paulo",
+	"sa eastern standard time":        "America/Cayenne",
+	"argentina standard time":         "America/Argentina/Buenos_Aires",
+	"greenwich standard time":         "Atlantic/Reykjavik",
+	"gmt standard time":               "Europe/London",
+	"azores standard time":            "Atlantic/Azores",
+	"cape verde standard time":        "Atlantic/Cape_Verde",
+	"morocco standard time":           "Africa/Casablanca",
+	"co-ordinated universal time":     "UTC",
+	"utc":                             "UTC",
+	"w. europe standard time":         "Europe/Berlin",
+	"central europe standard time":    "Europe/Budapest",
+	"romance standard time":           "Europe/Paris",
+	"central european standard time":  "Europe/Warsaw",
+	"gtb standard time":               "Europe/Bucharest",
+	"e. europe standard time":         "Europe/Chisinau",
+	"turkey standard time":            "Europe/Istanbul",
+	"israel standard time":            "Asia/Jerusalem",
+	"middle east standard time":       "Asia/Beirut",
+	"egypt standard time":             "Africa/Cairo",
+	"syria standard time":             "Asia/Damascus",
+	"west bank standard time":         "Asia/Hebron",
+	"russian standard time":           "Europe/Moscow",
+	"arabic standard time":            "Asia/Baghdad",
+	"arab standard time":              "Asia/Riyadh",
+	"arabian standard time":           "Asia/Dubai",
+	"iran standard time":              "Asia/Tehran",
+	"georgian standard time":          "Asia/Tbilisi",
+	"caucasus standard time":          "Asia/Yerevan",
+	"afghanistan standard time":       "Asia/Kabul",
+	"west asia standard time":         "Asia/Tashkent",
+	"pakistan standard time":          "Asia/Karachi",
+	"india standard time":             "Asia/Kolkata",
+	"sri lanka standard time":         "Asia/Colombo",
+	"nepal standard time":             "Asia/Kathmandu",
+	"central asia standard time":      "Asia/Almaty",
+	"central asian standard time":     "Asia/Almaty",
+	"bangladesh standard time":        "Asia/Dhaka",
+	"myanmar standard time":           "Asia/Yangon",
+	"se asia standard time":           "Asia/Bangkok",
+	"north asia standard time":        "Asia/Krasnoyarsk",
+	"n. central asia standard time":   "Asia/Novosibirsk",
+	"china standard time":             "Asia/Shanghai",
+	"singapore standard time":         "Asia/Singapore",
+	"taipei standard time":            "Asia/Taipei",
+	"w. australia standard time":      "Australia/Perth",
+	"cen. australia standard time":    "Australia/Adelaide",
+	"aus central standard time":       "Australia/Adelaide",
+	"aus central w. standard time":    "Australia/Eucla",
+	"aus eastern standard time":       "Australia/Sydney",
+	"e. australia standard time":      "Australia/Brisbane",
+	"tasmania standard time":          "Australia/Hobart",
+	"lord howe standard time":         "Australia/Lord_Howe",
+	"tokyo standard time":             "Asia/Tokyo",
+	"korea standard time":             "Asia/Seoul",
+	"west pacific standard time":      "Pacific/Port_Moresby",
+	"new zealand standard time":       "Pacific/Auckland",
+	"fiji standard time":              "Pacific/Fiji",
+	"tonga standard time":             "Pacific/Tongatapu",
+	"samoa standard time":             "Pacific/Apia",
+	"chatham islands standard time":   "Pacific/Chatham",
+	"norfolk standard time":           "Pacific/Norfolk",
+	"bougainville standard time":      "Pacific/Bougainville",
+	"line islands standard time":      "Pacific/Kiritimati",
+	"kamchatka standard time":         "Asia/Kamchatka",
+	"magadan standard time":           "Asia/Magadan",
+	"sakhalin standard time":          "Asia/Sakhalin",
+	"vladivostok standard time":       "Asia/Vladivostok",
+	"yalta standard time":             "Europe/Simferopol",
+	"kaliningrad standard time":       "Europe/Kaliningrad",
+	"saratov standard time":           "Europe/Saratov",
+	"volgograd standard time":         "Europe/Volgograd",
+	"astrakhan standard time":         "Europe/Astrakhan",
+	"omsk standard time":              "Asia/Omsk",
+	"tomsk standard time":             "Asia/Tomsk",
+	"transbaikal standard time":       "Asia/Chita",
+	"w. mongolia standard time":       "Asia/Hovd",
+	"ulaanbaatar standard time":       "Asia/Ulaanbaatar",
+	"utc-02":                          "Etc/GMT+2",
+	"utc-08":                          "Etc/GMT+8",
+	"utc-09":                          "Etc/GMT+9",
+	"utc-10":                          "Etc/GMT+10",
+	"utc+02":                          "Etc/GMT-2",
+	"utc+08":                          "Asia/Shanghai",
+	"utc+09":                          "Asia/Tokyo",
+	"utc+12":                          "Etc/GMT-12",
+	"utc+13":                          "Etc/GMT-13",
 }

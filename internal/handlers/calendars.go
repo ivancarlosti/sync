@@ -20,6 +20,10 @@ const (
 	calendarIDWidth   = 512
 	calendarURLWidth  = 1024
 	calendarUserWidth = 191
+	// calendarDecorWidth is the width of the title decoration columns. A prefix
+	// and a suffix together still leave room under the 255-character subject
+	// limit Graph enforces.
+	calendarDecorWidth = 64
 	// calendarMarkerICS is the synthetic source calendar id of a subscription:
 	// the model keeps one column for both kinds of source.
 	calendarMarkerICS = "ics"
@@ -61,6 +65,10 @@ type calendarInput struct {
 	DeleteMissing  bool   `json:"delete_missing"`
 	PastDays       int    `json:"past_days"`
 	FutureDays     int    `json:"future_days"`
+
+	TitlePrefix          string `json:"title_prefix"`
+	TitleSuffix          string `json:"title_suffix"`
+	TransparencyOverride string `json:"transparency_override"`
 
 	IntervalMinutes int   `json:"interval_minutes"`
 	Enabled         *bool `json:"enabled"`
@@ -139,6 +147,11 @@ func (s *Server) applyCalendarInput(c *gin.Context, input calendarInput, job *mo
 		return fmt.Errorf("%w: unknown conflict policy %q", services.ErrValidation, input.ConflictPolicy)
 	}
 
+	override := models.CalendarFreeBusy(strings.ToLower(strings.TrimSpace(input.TransparencyOverride)))
+	if !override.Valid() {
+		return fmt.Errorf("%w: unknown free/busy override %q", services.ErrValidation, input.TransparencyOverride)
+	}
+
 	job.Name = name
 	job.SourceKind = string(kind)
 	job.Direction = string(direction)
@@ -146,6 +159,9 @@ func (s *Server) applyCalendarInput(c *gin.Context, input calendarInput, job *mo
 	job.DeleteMissing = input.DeleteMissing
 	job.PastDays = clampInt(input.PastDays, calendarPastDefault, calendarPastDaysMin, calendarPastDaysMax)
 	job.FutureDays = clampInt(input.FutureDays, calendarFutureDefault, calendarFutureDaysMin, calendarFutureDaysMax)
+	job.TitlePrefix = calendarLabel(input.TitlePrefix, calendarDecorWidth)
+	job.TitleSuffix = calendarLabel(input.TitleSuffix, calendarDecorWidth)
+	job.TransparencyOverride = string(override)
 	job.IntervalMinutes = clampInt(input.IntervalMinutes, 0, 0, maxIntervalMinutes)
 	if input.Enabled != nil {
 		job.Enabled = *input.Enabled

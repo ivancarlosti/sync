@@ -781,6 +781,9 @@ func (e *calendarEngine) feedDrifted() bool {
 	if e.target == nil {
 		return true
 	}
+	if e.optionsDrifted() {
+		return true
+	}
 	for uid, link := range e.links {
 		event, listed := e.target.events[uid]
 		if !listed {
@@ -927,7 +930,21 @@ func (e *calendarEngine) one(ctx context.Context, uid string) {
 		return
 	}
 
-	e.apply(ctx, uid, in, decide(in))
+	e.apply(ctx, uid, in, e.rewriteForOptions(in, decide(in)))
+}
+
+// rewriteForOptions turns "nothing to do" into a destination rewrite when the copy
+// was written under other options than the job holds now. It is a no-op for every
+// other decision: a real edit already writes the destination, and therefore picks
+// the new options up on its own.
+func (e *calendarEngine) rewriteForOptions(in planInput, decision planDecision) planDecision {
+	if decision.Action != actionUnchanged {
+		return decision
+	}
+	if stale, evidence := e.staleOptions(in); stale {
+		return planDecision{Action: actionUpdateDest, Evidence: evidence}
+	}
+	return decision
 }
 
 // apply carries out one decision.
@@ -1039,9 +1056,7 @@ func (e *calendarEngine) write(ctx context.Context, side *calendarSide, input pr
 
 // createAt writes a new event on side from an event of the other side.
 func (e *calendarEngine) createAt(ctx context.Context, uid string, in planInput, side *calendarSide, from providers.CalendarEvent, decision planDecision) {
-	input := providers.EventInputFrom(from)
-	input.UID = destinationUID(uid)
-	written, err := e.write(ctx, side, input, "")
+	written, err := e.write(ctx, side, e.writeInput(uid, side, from), "")
 	if err != nil {
 		e.failed(uid, in, decision, err)
 		return
@@ -1057,9 +1072,7 @@ func (e *calendarEngine) updateAt(ctx context.Context, uid string, in planInput,
 		e.failed(uid, in, decision, errors.New("the event has no provider id to update"))
 		return
 	}
-	input := providers.EventInputFrom(from)
-	input.UID = destinationUID(uid)
-	written, err := e.write(ctx, side, input, eventID)
+	written, err := e.write(ctx, side, e.writeInput(uid, side, from), eventID)
 	if err != nil {
 		e.failed(uid, in, decision, err)
 		return
@@ -1148,6 +1161,9 @@ func (e *calendarEngine) remember(uid string, in planInput, written *writeResult
 				row.DestinationEventID = written.event.ID
 			}
 			row.DestFingerprint = written.fingerprint
+			// The copy now carries the options of this run: recording it is
+			// what keeps the next run from rewriting it again.
+			row.OptionsFingerprint = e.options().fingerprint
 			if !start.IsZero() {
 				row.DestinationStart = start.UTC()
 			}

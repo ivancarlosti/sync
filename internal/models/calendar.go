@@ -57,6 +57,43 @@ func (d CalendarDirection) Backward() bool {
 	return d == CalendarDirectionBidirectional
 }
 
+// CalendarFreeBusy is the closed set of values CalendarJob.TransparencyOverride
+// may hold: keep whatever the source says, or force the destination copy to be
+// shown as free or as busy.
+type CalendarFreeBusy string
+
+const (
+	// CalendarFreeBusyKeep applies no override.
+	CalendarFreeBusyKeep CalendarFreeBusy = ""
+	// CalendarFreeBusyFree shows the destination copy as free.
+	CalendarFreeBusyFree CalendarFreeBusy = "free"
+	// CalendarFreeBusyBusy shows the destination copy as busy.
+	CalendarFreeBusyBusy CalendarFreeBusy = "busy"
+)
+
+// Valid reports whether the value is a supported override.
+func (f CalendarFreeBusy) Valid() bool {
+	switch f {
+	case CalendarFreeBusyKeep, CalendarFreeBusyFree, CalendarFreeBusyBusy:
+		return true
+	default:
+		return false
+	}
+}
+
+// Transparency answers the provider-level value of the override, or the empty
+// string when the source value should win.
+func (f CalendarFreeBusy) Transparency() string {
+	switch f {
+	case CalendarFreeBusyFree:
+		return "transparent"
+	case CalendarFreeBusyBusy:
+		return "opaque"
+	default:
+		return ""
+	}
+}
+
 // CalendarJob is a durable calendar pairing: a source (provider calendar or
 // .ics feed) and a writable destination calendar, plus the schedule.
 //
@@ -102,6 +139,15 @@ type CalendarJob struct {
 	PastDays   int `gorm:"default:30" json:"past_days"`
 	FutureDays int `gorm:"default:365" json:"future_days"`
 
+	// TitlePrefix and TitleSuffix decorate the summary of the copy written into
+	// the destination. They belong to the pairing, not to the event: the source
+	// calendar never sees them, and a write back strips them again.
+	TitlePrefix string `gorm:"size:64" json:"title_prefix,omitempty"`
+	TitleSuffix string `gorm:"size:64" json:"title_suffix,omitempty"`
+	// TransparencyOverride forces the free/busy flag of the destination copy:
+	// "free" or "busy". An empty value keeps whatever the source says.
+	TransparencyOverride string `gorm:"size:16" json:"transparency_override,omitempty"`
+
 	IntervalMinutes int  `gorm:"default:0" json:"interval_minutes"`
 	Enabled         bool `gorm:"default:true" json:"enabled"`
 
@@ -135,6 +181,14 @@ type CalendarEventLink struct {
 	// The column is pinned to match the JSON name: the store's upsert updates it
 	// by name, and the naming strategy would shorten it to "dest_fingerprint".
 	DestFingerprint string `gorm:"column:destination_fingerprint;size:64" json:"destination_fingerprint"`
+
+	// OptionsFingerprint is the hash of the job options that shape the
+	// destination copy (the title decoration and the transparency override) as
+	// they were when the destination was last written. A change is what makes
+	// the engine rewrite an otherwise unchanged event once, and only once: the
+	// content fingerprints cannot carry the options, because a decoration is
+	// applied to one side only and would read as a conflict on every run.
+	OptionsFingerprint string `gorm:"size:16" json:"options_fingerprint,omitempty"`
 
 	// The last known start of both sides, in UTC. They tell an event that moved
 	// out of the listing window apart from one that was deleted.

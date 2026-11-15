@@ -416,6 +416,13 @@ export interface RunItem {
 export type CalendarSourceKind = 'google' | 'microsoft' | 'ics';
 
 /**
+ * CalendarFreeBusy is the closed set of `transparency_override` values: the empty
+ * string keeps whatever the source says, the other two force how the destination
+ * copy is shown.
+ */
+export type CalendarFreeBusy = '' | 'free' | 'busy';
+
+/**
  * CalendarJob is a pairing of two calendars plus its schedule: a source (a
  * provider calendar or an .ics subscription) and a writable destination. The
  * display names of both ends travel with the row, so the list renders without a
@@ -445,6 +452,13 @@ export interface CalendarJob {
   future_days: number;
   interval_minutes: number;
   enabled: boolean;
+  /**
+   * The copy options: they shape the destination copy only, so they are absent
+   * from a job that never set them.
+   */
+  title_prefix?: string;
+  title_suffix?: string;
+  transparency_override?: CalendarFreeBusy;
   /** running is the decoration the API adds when a run is in flight. */
   running: boolean;
   last_run_at?: string;
@@ -480,6 +494,10 @@ export interface CalendarPayload {
   future_days: number;
   interval_minutes: number;
   enabled: boolean;
+  /** The destination-only options: a decoration and the free/busy override. */
+  title_prefix: string;
+  title_suffix: string;
+  transparency_override: CalendarFreeBusy;
 }
 
 /** CalendarOption is one entry of the calendar picker of an account. */

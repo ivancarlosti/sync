@@ -241,9 +241,11 @@ source_account_id, source_calendar_id, source_calendar_name, source_url,
 source_username, source_etag, source_last_modified, source_fetched_at,
 destination_account_id, destination_calendar_id, destination_calendar_name,
 direction, conflict_policy, delete_missing, past_days, future_days,
+title_prefix, title_suffix, transparency_override,
 interval_minutes, enabled, last_run_at, next_run_at, last_status, last_error,
 created_at, updated_at`) plus `running: boolean`. The feed **password** is not a
-column of the view: it is write-only and never serialised.
+column of the view: it is write-only and never serialised, and the three copy
+options are omitted while empty (`omitempty`).
 
 | Method | Path | Notes |
 |---|---|---|
@@ -276,6 +278,9 @@ Create/update payload (an account → account job):
   "delete_missing": false,
   "past_days": 30,
   "future_days": 365,
+  "title_prefix": "[Work]",
+  "title_suffix": "",
+  "transparency_override": "",
   "interval_minutes": 60,
   "enabled": true
 }
@@ -304,7 +309,11 @@ Validation performed by the handler: `name` required (`1–191` characters),
 `bidirectional|one_way` (default `bidirectional`, and forced to `one_way` for an
 `ics` job), `conflict_policy` ∈ `newest_wins|source_wins|destination_wins|skip`
 (default `newest_wins`), `past_days` `0–730` (default `30`), `future_days`
-`1–1825` (default `365`), `interval_minutes` `0–10080` (`0` = manual only).
+`1–1825` (default `365`), `interval_minutes` `0–10080` (`0` = manual only),
+`title_prefix`/`title_suffix` at most `64` characters each (trimmed and clamped,
+so a longer marker is shortened instead of failing the save),
+`transparency_override` ∈ `""|free|busy` (a value outside the set is
+`400 validation` — `unknown free/busy override`).
 Both accounts must exist **and** their providers must implement the calendar
 capability, and a job that names the same account *and* calendar on both ends is
 refused (`the source and the destination cannot be the same calendar`). An empty

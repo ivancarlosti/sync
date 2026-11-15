@@ -22,6 +22,7 @@ DESCRIPTION:Line one\nLine two\, with a comma
 LOCATION:Room 1\; floor 2
 DTSTART:20260115T090000Z
 DTEND:20260115T091500Z
+TRANSP:TRANSPARENT
 LAST-MODIFIED:20260110T120000Z
 ORGANIZER;CN=Ana:mailto:ana@example.com
 ATTENDEE:mailto:bo@example.com
@@ -92,6 +93,9 @@ func TestParseReadsTheEventShapesAFeedUses(t *testing.T) {
 	if strings.Join(first.Attendees, ",") != "bo@example.com,cy@example.com" {
 		t.Fatalf("attendees = %v", first.Attendees)
 	}
+	if first.Transparency != "transparent" {
+		t.Fatalf("transparency = %q, want the TRANSP value", first.Transparency)
+	}
 
 	allDay := events[1]
 	if !allDay.AllDay {
@@ -99,6 +103,9 @@ func TestParseReadsTheEventShapesAFeedUses(t *testing.T) {
 	}
 	if !allDay.Start.Equal(time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)) || !allDay.End.Equal(time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("all-day range = %s .. %s", allDay.Start, allDay.End)
+	}
+	if allDay.Transparency != "opaque" {
+		t.Fatalf("an event without TRANSP was reported as %q, want opaque", allDay.Transparency)
 	}
 
 	local := events[2]
@@ -134,6 +141,66 @@ func TestParseDropsTheEventsOutsideTheWindow(t *testing.T) {
 	}
 	if len(events) != 1 || events[0].UID != "two@example.com" {
 		t.Fatalf("got %+v, want the all-day event of February only", events)
+	}
+}
+
+// TestParseReportsAZoneNameTheDestinationCanWrite covers the label a desktop
+// client exports: a Windows zone name as the TZID parameter. It has to leave the
+// parser as an IANA name, because that value is what a Google or Graph write is
+// given, and both refuse a name they do not know.
+func TestParseReportsAZoneNameTheDestinationCanWrite(t *testing.T) {
+	if _, err := time.LoadLocation("Europe/Berlin"); err != nil {
+		t.Skipf("the runtime has no zone database: %v", err)
+	}
+	feed := "BEGIN:VCALENDAR\n" +
+		"BEGIN:VEVENT\n" +
+		"UID:workshop@example.com\n" +
+		"SUMMARY:Workshop\n" +
+		"DTSTART;TZID=W. Europe Standard Time:20260301T100000\n" +
+		"DTEND;TZID=W. Europe Standard Time:20260301T110000\n" +
+		"END:VEVENT\n" +
+		"END:VCALENDAR\n"
+	events, err := Parse([]byte(feed), Options{})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].TimeZone != "Europe/Berlin" {
+		t.Fatalf("time zone = %q, want Europe/Berlin", events[0].TimeZone)
+	}
+	if !events[0].Start.Equal(time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("start = %s, want the instant the feed meant", events[0].Start)
+	}
+}
+
+// TestParseKeepsTheInstantOfAnUnreadableZone is the fallback the parser promises:
+// a TZID the runtime cannot resolve costs the zone name, never the event.
+func TestParseKeepsTheInstantOfAnUnreadableZone(t *testing.T) {
+	feed := "BEGIN:VCALENDAR\n" +
+		"BEGIN:VEVENT\n" +
+		"UID:odd@example.com\n" +
+		"SUMMARY:At an unknown zone\n" +
+		"DTSTART;TZID=Mars/Olympus:20260301T100000\n" +
+		"END:VEVENT\n" +
+		"END:VCALENDAR\n"
+	events, err := Parse([]byte(feed), Options{})
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+	if events[0].TimeZone != "" {
+		t.Fatalf("time zone = %q, want it dropped", events[0].TimeZone)
+	}
+	if !events[0].Start.Equal(time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)) {
+		t.Fatalf("start = %s, want the wall clock read as UTC", events[0].Start)
+	}
+	// A feed without DTEND still yields a usable range.
+	if events[0].End.Sub(events[0].Start) != time.Hour {
+		t.Fatalf("range = %s, want one hour", events[0].End.Sub(events[0].Start))
 	}
 }
 

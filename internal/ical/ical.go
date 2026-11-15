@@ -2,10 +2,11 @@
 //
 // Only the parts of RFC 5545 the calendar engine needs are implemented: one
 // VEVENT per event, DTSTART/DTEND (or DURATION), the text properties, the
-// recurrence markers (which the engine skips) and the modification stamp. A
-// VTIMEZONE block is not interpreted; a TZID is resolved against the runtime zone
-// database, which knows every zone a feed realistically names, and an unknown one
-// falls back to UTC instead of failing the feed.
+// free/busy flag (TRANSP), the recurrence markers (which the engine skips) and the
+// modification stamp. A VTIMEZONE block is not interpreted and not needed: a TZID
+// is resolved against the runtime zone database, normalised to the IANA name both
+// providers accept (a Windows label included), and an unknown one falls back to
+// UTC instead of failing the feed.
 package ical
 
 import (
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ivancarlosti/sync/internal/providers"
 )
 
 const (
@@ -53,6 +56,9 @@ type Event struct {
 	End         time.Time
 	AllDay      bool
 	TimeZone    string
+	// Transparency is the free/busy flag (TRANSP): providers.TransparencyOpaque
+	// unless the feed says TRANSPARENT.
+	Transparency string
 	// Recurring marks a master or an instance of a series (RRULE or
 	// RECURRENCE-ID). The engine skips both.
 	Recurring bool
@@ -161,18 +167,19 @@ func buildEvent(props map[string][]property, opts Options) (Event, bool) {
 	}
 
 	event := Event{
-		UID:         uid,
-		Summary:     text(first(props, "SUMMARY").value),
-		Description: text(first(props, "DESCRIPTION").value),
-		Location:    text(first(props, "LOCATION").value),
-		Start:       start,
-		End:         end,
-		AllDay:      allDay,
-		TimeZone:    zone,
-		Recurring:   hasAny(props, "RRULE", "RECURRENCE-ID"),
-		Cancelled:   strings.EqualFold(strings.TrimSpace(first(props, "STATUS").value), "CANCELLED"),
-		Organizer:   address(first(props, "ORGANIZER").value),
-		UpdatedAt:   stamp(props, opts.DefaultTimeZone),
+		UID:          uid,
+		Summary:      text(first(props, "SUMMARY").value),
+		Description:  text(first(props, "DESCRIPTION").value),
+		Location:     text(first(props, "LOCATION").value),
+		Start:        start,
+		End:          end,
+		AllDay:       allDay,
+		TimeZone:     zone,
+		Transparency: transparency(first(props, "TRANSP").value),
+		Recurring:    hasAny(props, "RRULE", "RECURRENCE-ID"),
+		Cancelled:    strings.EqualFold(strings.TrimSpace(first(props, "STATUS").value), "CANCELLED"),
+		Organizer:    address(first(props, "ORGANIZER").value),
+		UpdatedAt:    stamp(props, opts.DefaultTimeZone),
 	}
 	for _, attendee := range props["ATTENDEE"] {
 		if email := address(attendee.value); email != "" {
@@ -366,6 +373,11 @@ func stamp(props map[string][]property, fallbackZone string) time.Time {
 // (`20260102T100000Z`) and a local DATE-TIME with a TZID (or floating, in which
 // case the feed default applies). The zone is reported so a destination provider
 // can write the event back with the same wall clock the source published.
+//
+// The reported name is canonicalised: a feed may key a TZID that no provider
+// accepts (a Windows label, a vendor path). A label that cannot be mapped to an
+// IANA zone is reported as empty, which tells the writer to send the instant in
+// UTC instead of a name Google would refuse.
 func parseMoment(prop property, fallbackZone string) (time.Time, bool, string, error) {
 	raw := strings.TrimSpace(prop.value)
 	if raw == "" {
@@ -373,21 +385,18 @@ func parseMoment(prop property, fallbackZone string) (time.Time, bool, string, e
 	}
 	if strings.EqualFold(prop.params["VALUE"], "DATE") || len(raw) == 8 {
 		if parsed, err := time.ParseInLocation("20060102", raw, resolveZone(fallbackZone)); err == nil {
-			return parsed, true, "", nil
+			return parsed, true, providers.ZoneName(fallbackZone), nil
 		}
 	}
 	utc := strings.HasSuffix(raw, "Z")
 	trimmed := strings.TrimSuffix(raw, "Z")
-	zone := strings.TrimSpace(prop.params["TZID"])
-	if zone == "" {
-		zone = strings.TrimSpace(fallbackZone)
+	zone := providers.ZoneName(prop.params["TZID"])
+	if zone == "" && !utc {
+		zone = providers.ZoneName(fallbackZone)
 	}
 	location := resolveZone(zone)
 	if utc {
 		location = time.UTC
-	}
-	if location == nil {
-		location = resolveZone(fallbackZone)
 	}
 	for _, layout := range []string{"20060102T150405", "20060102T1504", "20060102T15"} {
 		if parsed, err := time.ParseInLocation(layout, trimmed, location); err == nil {
@@ -400,16 +409,21 @@ func parseMoment(prop property, fallbackZone string) (time.Time, bool, string, e
 	return time.Time{}, false, "", errors.New("ical: unreadable date value")
 }
 
+// transparency maps the RFC 5545 TRANSP property onto the shared vocabulary: an
+// event without TRANSP is opaque, which is what the RFC says a busy event is.
+func transparency(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "TRANSPARENT") {
+		return providers.TransparencyTransparent
+	}
+	return providers.TransparencyOpaque
+}
+
 // resolveZone loads a zone name, answering UTC for an empty or unknown one: a
-// feed must not fail because the runtime keyed a TZID differently.
+// feed must not fail because the runtime keyed a TZID differently. Normalisation
+// happens in providers.LoadZone, so a Windows label or a globally-unique TZID
+// still resolves to the zone it denotes.
 func resolveZone(name string) *time.Location {
-	if name == "" {
-		return time.UTC
-	}
-	if location, err := time.LoadLocation(name); err == nil {
-		return location
-	}
-	return time.UTC
+	return providers.LoadZone(name)
 }
 
 // parseDuration decodes the RFC 5545 duration form the engine cares about: an
