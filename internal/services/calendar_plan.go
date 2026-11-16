@@ -29,13 +29,17 @@ const (
 	actionForgetLink   calendarAction = "forget_link"
 	actionConflict     calendarAction = "conflict"
 	actionSkip         calendarAction = "skip"
+	// actionCancelDest removes one occurrence of a copied series from the
+	// destination. It is separate from actionDeleteDest because it targets an
+	// occurrence, not an event of its own.
+	actionCancelDest calendarAction = "cancel_destination"
 )
 
 // mutating reports whether the action changes a calendar. It decides whether a
 // decision is worth a run item and a counter.
 func (a calendarAction) mutating() bool {
 	switch a {
-	case actionCreateDest, actionUpdateDest, actionDeleteDest,
+	case actionCreateDest, actionUpdateDest, actionDeleteDest, actionCancelDest,
 		actionCreateSource, actionUpdateSource, actionDeleteSource:
 		return true
 	default:

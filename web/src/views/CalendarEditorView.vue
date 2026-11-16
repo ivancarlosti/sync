@@ -43,17 +43,28 @@ import {
 import { accountLabel } from '@/lib/accounts';
 import {
   DECOR_WIDTH,
+  FREE_BUSY_PRESETS,
+  FREE_BUSY_STATES,
   ICS_MARKER,
   MAX_INTERVAL_MINUTES,
   calendarConflictOptions,
   calendarDirectionOptions,
-  calendarFreeBusyOptions,
+  calendarFreeBusyPresetOptions,
+  calendarFreeBusyTargetOptions,
   calendarScheduleLabel,
+  calendarSeriesExceptionsOptions,
   decoratedSummary,
-  freeBusyValue,
+  encodeFreeBusyMap,
+  freeBusyMapFromJob,
+  freeBusyPresetMapping,
+  freeBusyState,
   newCalendarPayload,
+  parseFreeBusyMap,
   payloadFromJob,
+  seriesExceptionsValue,
   sourceKindOptions,
+  type FreeBusyMapping,
+  type FreeBusyPreset,
 } from '@/lib/calendars';
 import { asNumber, asText } from '@/lib/forms';
 import { formatDateTime } from '@/lib/format';
@@ -121,7 +132,57 @@ const stepIndex = computed(() => Math.max(0, (STEP_ORDER as readonly string[]).i
 const kinds = computed<SelectOption[]>(() => sourceKindOptions(t));
 const directions = computed<SelectOption[]>(() => calendarDirectionOptions(t, isFeed.value));
 const policies = computed<SelectOption[]>(() => calendarConflictOptions(t));
-const freeBusyChoices = computed<SelectOption[]>(() => calendarFreeBusyOptions(t));
+const freeBusyChoices = computed<SelectOption[]>(() => calendarFreeBusyTargetOptions(t));
+const freeBusyPresets = computed<SelectOption[]>(() => calendarFreeBusyPresetOptions(t));
+const seriesChoices = computed<SelectOption[]>(() => calendarSeriesExceptionsOptions(t));
+
+/** freeBusyRows is the five-row grid, in the order the API documents them. */
+const freeBusyRows = computed(() =>
+  FREE_BUSY_STATES.map((state) => ({
+    state,
+    label: t(`calendars.freeBusyState_${state}`),
+  })),
+);
+
+/** freeBusyMapping is the mapping of the draft, decoded for the grid. */
+const freeBusyMapping = computed<FreeBusyMapping>(() => parseFreeBusyMap(draft.free_busy_map));
+
+/** freeBusyTarget answers the destination state the grid shows for one row. */
+function freeBusyTarget(state: string): string {
+  return freeBusyMapping.value[state as keyof FreeBusyMapping] ?? 'same';
+}
+
+/** setFreeBusyTarget writes one row back into the canonical mapping. */
+function setFreeBusyTarget(state: string, value: string | number): void {
+  const mapping: FreeBusyMapping = { ...freeBusyMapping.value };
+  const target = freeBusyState(asText(value));
+  if (!target || target === state) {
+    delete mapping[state as keyof FreeBusyMapping];
+  } else {
+    mapping[state as keyof FreeBusyMapping] = target;
+  }
+  draft.free_busy_map = encodeFreeBusyMap(mapping);
+}
+
+/** applyFreeBusyPreset replaces the whole grid with one of the presets. */
+const freeBusyPreset = ref<string>('keep');
+function applyFreeBusyPreset(value: string | number): void {
+  const chosen = asText(value);
+  const preset = (FREE_BUSY_PRESETS as readonly string[]).includes(chosen)
+    ? (chosen as FreeBusyPreset)
+    : 'keep';
+  draft.free_busy_map = encodeFreeBusyMap(freeBusyPresetMapping(preset));
+  // The control is a one-shot menu, not a stored value: the grid below is what
+  // holds the state, so it snaps back to "No change" once it has been applied.
+  freeBusyPreset.value = 'keep';
+}
+
+const seriesExceptions = computed({
+  get: () => seriesExceptionsValue(draft.series_exceptions),
+  set: (value: string | number) => {
+    draft.series_exceptions = seriesExceptionsValue(asText(value));
+  },
+});
 
 /**
  * decoration is the example line the options tab shows under the prefix and
@@ -257,6 +318,11 @@ async function load(): Promise<void> {
     }
     const job = await calendarsApi.get(id.value);
     Object.assign(draft, payloadFromJob(job));
+    // The editor works on the effective mapping: the grid shows what the engine
+    // will apply, which includes the expansion of the deprecated single override.
+    // The list, on the other hand, sends the stored map untouched, so toggling a
+    // job does not materialise an option nobody edited.
+    draft.free_busy_map = encodeFreeBusyMap(freeBusyMapFromJob(job));
     draft.source_password = '';
     draft.clear_source_password = false;
     if (job.source_account_id) {
@@ -569,13 +635,6 @@ const conflictPolicy = computed({
   get: () => draft.conflict_policy,
   set: (value: string | number) => {
     draft.conflict_policy = asText(value);
-  },
-});
-
-const freeBusy = computed({
-  get: () => draft.transparency_override,
-  set: (value: string | number) => {
-    draft.transparency_override = freeBusyValue(value);
   },
 });
 
@@ -999,16 +1058,53 @@ onMounted(load);
               <p class="text-xs text-muted-foreground">{{ t('calendars.titlePreview') }}</p>
               <p class="truncate rounded-md bg-muted px-2 py-1 text-xs">{{ decoration }}</p>
               <div class="space-y-1.5">
-                <Label for="calendar-free-busy" :hint="t('calendars.freeBusyHint')">
+                <Label for="calendar-free-busy-preset" :hint="t('calendars.freeBusyHint')">
                   {{ t('calendars.freeBusy') }}
                 </Label>
                 <Select
-                  id="calendar-free-busy"
-                  v-model="freeBusy"
-                  :options="freeBusyChoices"
+                  id="calendar-free-busy-preset"
+                  v-model="freeBusyPreset"
+                  :options="freeBusyPresets"
                   :disabled="saving"
+                  @update:model-value="applyFreeBusyPreset"
                 />
                 <p class="text-xs text-muted-foreground">{{ t('calendars.freeBusyExplain') }}</p>
+              </div>
+              <div class="space-y-2">
+                <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {{ t('calendars.freeBusyMapTitle') }}
+                </p>
+                <div class="space-y-2">
+                  <div
+                    v-for="row in freeBusyRows"
+                    :key="row.state"
+                    class="grid items-center gap-2 sm:grid-cols-[1fr_1fr]"
+                  >
+                    <Label :for="`calendar-free-busy-${row.state}`">{{ row.label }}</Label>
+                    <Select
+                      :id="`calendar-free-busy-${row.state}`"
+                      :model-value="freeBusyTarget(row.state)"
+                      :options="freeBusyChoices"
+                      :disabled="saving"
+                      @update:model-value="(value) => setFreeBusyTarget(row.state, value)"
+                    />
+                  </div>
+                </div>
+                <p class="text-xs text-muted-foreground">{{ t('calendars.freeBusyMapHint') }}</p>
+              </div>
+              <div class="space-y-1.5">
+                <Label for="calendar-series-exceptions" :hint="t('calendars.seriesExceptionsHint')">
+                  {{ t('calendars.seriesExceptions') }}
+                </Label>
+                <Select
+                  id="calendar-series-exceptions"
+                  v-model="seriesExceptions"
+                  :options="seriesChoices"
+                  :disabled="saving"
+                />
+                <p class="text-xs text-muted-foreground">
+                  {{ t('calendars.seriesExceptionsExplain') }}
+                </p>
               </div>
             </div>
           </div>

@@ -355,6 +355,46 @@ func TestCalendarCopyOptions(t *testing.T) {
 	requireStatus(t, recorder, http.StatusBadRequest)
 }
 
+// TestCalendarFreeBusyMapAndSeriesOptions pins the payload of the per-state
+// mapping: it is stored canonically (only the entries that change something, keys
+// sorted), a label no provider knows is refused, and the series option is narrowed
+// onto its closed set.
+func TestCalendarFreeBusyMapAndSeriesOptions(t *testing.T) {
+	server, _, source, target := calendarServer(t)
+
+	body := mutate(calendarBody("Mapped", source, target), "free_busy_map", `{"busy":"free","tentative":"busy","free":"free"}`)
+	body["series_exceptions"] = " SKIP "
+	recorder := call(t, server, http.MethodPost, "/api/calendars", body)
+	requireStatus(t, recorder, http.StatusCreated)
+	created := decodeJSON[calendarView](t, recorder)
+	if want := `{"busy":"free","tentative":"busy"}`; created.FreeBusyMap != want {
+		t.Fatalf("mapping = %q, want %q", created.FreeBusyMap, want)
+	}
+	if created.SeriesExceptions != string(models.CalendarSeriesSkip) {
+		t.Fatalf("series exceptions = %q, want skip", created.SeriesExceptions)
+	}
+
+	// A job that never set the options keeps empty columns, not "{}".
+	plain := call(t, server, http.MethodPost, "/api/calendars", calendarBody("Plain", source, target))
+	requireStatus(t, plain, http.StatusCreated)
+	bare := decodeJSON[calendarView](t, plain)
+	if bare.FreeBusyMap != "" || bare.SeriesExceptions != string(models.CalendarSeriesCopy) {
+		t.Fatalf("a job without options stored map %q and series %q", bare.FreeBusyMap, bare.SeriesExceptions)
+	}
+
+	// A state nobody knows would reach a payload and clear the destination's own
+	// marker, so it fails the save.
+	for _, raw := range []string{`{"holiday":"free"}`, `{"busy":"holiday"}`, `{`} {
+		invalid := mutate(calendarBody("Mapped", source, target), "free_busy_map", raw)
+		response := call(t, server, http.MethodPost, "/api/calendars", invalid)
+		requireStatus(t, response, http.StatusBadRequest)
+	}
+
+	unknownSeries := mutate(calendarBody("Mapped", source, target), "series_exceptions", "everything")
+	response := call(t, server, http.MethodPost, "/api/calendars", unknownSeries)
+	requireStatus(t, response, http.StatusBadRequest)
+}
+
 func mutate(body map[string]any, key string, value any) map[string]any {
 	copyOf := make(map[string]any, len(body))
 	for k, v := range body {

@@ -40,8 +40,8 @@ const calendarListFields = "items(id,summary,timeZone,primary,accessRole),nextPa
 
 // calendarEventFields is the event projection. The calendar view of an event
 // carries the recurrence markers, so a series master is recognisable without a
-// second read.
-const calendarEventFields = "items(id,status,summary,description,location,start,end,updated,transparency,iCalUID,recurringEventId,recurrence,organizer(email),attendees(email)),nextPageToken"
+// second read, and `originalStartTime` is what identifies an exception.
+const calendarEventFields = "items(id,status,summary,description,location,start,end,updated,transparency,iCalUID,recurringEventId,originalStartTime,recurrence,eventType,organizer(email),attendees(email)),nextPageToken"
 
 // Calendars implements providers.CalendarProvider.
 func (p *Provider) Calendars(ctx context.Context, _ providers.Credentials, tokens *providers.Tokens) ([]providers.Calendar, error) {
@@ -87,6 +87,7 @@ func (p *Provider) CalendarEvents(ctx context.Context, _ providers.Credentials, 
 		target = withParam(target, "timeMin", window.Start.UTC().Format(time.RFC3339))
 		target = withParam(target, "timeMax", window.End.UTC().Format(time.RFC3339))
 		target = withParam(target, "singleEvents", "false")
+		target = withParam(target, "showDeleted", "true")
 		target = withParam(target, "showDeleted", "false")
 		target = withParam(target, "maxResults", "2500")
 		target = withParam(target, "fields", calendarEventFields)
@@ -117,6 +118,11 @@ func (p *Provider) CreateCalendarEvent(ctx context.Context, _ providers.Credenti
 		return nil, invalidCalendarIdentifierError("calendar", calendarID)
 	}
 	client := p.client(tokens)
+	if strings.TrimSpace(input.SeriesID) != "" {
+		// An occurrence of a series already exists (its master generated it):
+		// there is nothing to create, only something to change.
+		return p.writeInstance(ctx, client, calendarID, input)
+	}
 	target := calendarBase + "/calendars/" + url.PathEscape(calendarID) + "/events"
 	target = withParam(target, "sendUpdates", "none")
 	var created googleEvent
@@ -141,6 +147,9 @@ func (p *Provider) UpdateCalendarEvent(ctx context.Context, _ providers.Credenti
 		return nil, invalidCalendarIdentifierError("event", eventID)
 	}
 	client := p.client(tokens)
+	if strings.TrimSpace(input.SeriesID) != "" {
+		return p.writeInstance(ctx, client, calendarID, input)
+	}
 	target := calendarBase + "/calendars/" + url.PathEscape(calendarID) + "/events/" + url.PathEscape(eventID)
 	target = withParam(target, "sendUpdates", "none")
 	var updated googleEvent
@@ -175,6 +184,77 @@ func (p *Provider) DeleteCalendarEvent(ctx context.Context, _ providers.Credenti
 		return fmt.Errorf("google calendar: cannot delete event %s: %w", eventID, err)
 	}
 	return nil
+}
+
+// writeInstance writes one occurrence of a series. Google identifies an
+// occurrence of a master through `events.instances?originalStart=`, so the engine
+// can target an occurrence it never listed: it only has to know the master and
+// the start the master gave the occurrence.
+func (p *Provider) writeInstance(ctx context.Context, client *http.Client, calendarID string, input providers.CalendarEventInput) (*providers.CalendarEvent, error) {
+	instanceID, err := p.resolveInstance(ctx, client, calendarID, input)
+	if err != nil {
+		return nil, err
+	}
+	target := calendarBase + "/calendars/" + url.PathEscape(calendarID) + "/events/" + url.PathEscape(instanceID)
+	target = withParam(target, "sendUpdates", "none")
+	var saved googleEvent
+	if err := p.doCalendarJSON(ctx, client, http.MethodPut, target, googleEventPayload(input), &saved); err != nil {
+		if p.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: google calendar occurrence %s of %s", providers.ErrNotFound, instanceID, input.SeriesID)
+		}
+		return nil, fmt.Errorf("google calendar: cannot write occurrence %s of %s: %w", instanceID, input.SeriesID, err)
+	}
+	event, err := googleEventFrom(saved)
+	if err != nil {
+		return nil, fmt.Errorf("google calendar: the occurrence %s cannot be read back: %w", instanceID, err)
+	}
+	return &event, nil
+}
+
+// resolveInstance answers the id of the occurrence of input.SeriesID that the rule
+// started at input.OriginalStart. An all-day occurrence is matched by its DATE,
+// which is what Google publishes for one; a timed occurrence by its instant. A
+// series whose instance list does not hold that occurrence yet answers
+// ErrNotFound, so the engine retries on the next run instead of guessing (and
+// writing the wrong occurrence of a series is worse than a retry).
+func (p *Provider) resolveInstance(ctx context.Context, client *http.Client, calendarID string, input providers.CalendarEventInput) (string, error) {
+	masterID := input.SeriesID
+	originalStart := input.OriginalStart
+	if !eventIdentifierPattern.MatchString(masterID) {
+		return "", invalidCalendarIdentifierError("event", masterID)
+	}
+	if originalStart.IsZero() {
+		return "", fmt.Errorf("%w: google calendar occurrence without an original start", providers.ErrNotFound)
+	}
+	target := calendarBase + "/calendars/" + url.PathEscape(calendarID) + "/events/" + url.PathEscape(masterID) + "/instances"
+	target = withParam(target, "originalStart", originalStart.UTC().Format(time.RFC3339))
+	target = withParam(target, "maxResults", "5")
+	target = withParam(target, "showDeleted", "true")
+	var page googleEventList
+	if err := p.doCalendarJSON(ctx, client, http.MethodGet, target, nil, &page); err != nil {
+		if p.IsNotFound(err) {
+			return "", fmt.Errorf("%w: google calendar series %s", providers.ErrNotFound, masterID)
+		}
+		return "", fmt.Errorf("google calendar: cannot list the occurrences of %s: %w", masterID, err)
+	}
+	wanted := originalStart.UTC()
+	wantedDate := originalStart.In(providers.LoadZone(input.TimeZone)).Format("2006-01-02")
+	for _, item := range page.Items {
+		if item.ID == "" || item.OriginalStart == nil {
+			continue
+		}
+		if input.AllDay && item.OriginalStart.Date != "" {
+			if item.OriginalStart.Date == wantedDate {
+				return item.ID, nil
+			}
+			continue
+		}
+		moment, _, _, err := googleEventTimeFrom(item.OriginalStart)
+		if err == nil && moment.Equal(wanted) {
+			return item.ID, nil
+		}
+	}
+	return "", fmt.Errorf("%w: google calendar occurrence of %s at %s", providers.ErrNotFound, masterID, wanted.Format(time.RFC3339))
 }
 
 // googleCalendarList is one page of calendarList.list.
@@ -215,6 +295,8 @@ type googleEvent struct {
 	ICalUID          string           `json:"iCalUID,omitempty"`
 	Recurrence       []string         `json:"recurrence,omitempty"`
 	RecurringEventID string           `json:"recurringEventId,omitempty"`
+	OriginalStart    *googleEventTime `json:"originalStartTime,omitempty"`
+	EventType        string           `json:"eventType,omitempty"`
 	Organizer        *googlePerson    `json:"organizer,omitempty"`
 	Attendees        []googlePerson   `json:"attendees,omitempty"`
 }
@@ -248,6 +330,22 @@ func googleEventFrom(raw googleEvent) (providers.CalendarEvent, error) {
 			updated = parsed
 		}
 	}
+	original := time.Time{}
+	if raw.OriginalStart != nil {
+		if moment, _, _, err := googleEventTimeFrom(raw.OriginalStart); err == nil {
+			original = moment
+		}
+	}
+	kind := providers.EventKindSingle
+	switch {
+	case len(raw.Recurrence) > 0:
+		kind = providers.EventKindMaster
+	case raw.RecurringEventID != "":
+		// A listing that does not expand the series returns the master and the
+		// occurrences somebody moved, edited or cancelled: each of those is an
+		// exception, whether or not it still carries a start.
+		kind = providers.EventKindException
+	}
 	event := providers.CalendarEvent{
 		ID:          raw.ID,
 		UID:         raw.ICalUID,
@@ -260,12 +358,16 @@ func googleEventFrom(raw googleEvent) (providers.CalendarEvent, error) {
 		TimeZone:    zone,
 		// Google omits `transparency` for a normal (busy) event, so an absent
 		// value is the busy default rather than "unknown".
-		Transparency: transparencyFromGoogle(raw.Transparency),
-		UpdatedAt:    updated,
-		Recurring:    len(raw.Recurrence) > 0 || raw.RecurringEventID != "",
-		Cancelled:    raw.Status == "cancelled",
-		Organizer:    googlePersonEmail(raw.Organizer),
-		Attendees:    make([]string, 0, len(raw.Attendees)),
+		FreeBusy:      freeBusyFromGoogle(raw),
+		UpdatedAt:     updated,
+		Recurring:     kind != providers.EventKindSingle,
+		Kind:          kind,
+		SeriesID:      raw.RecurringEventID,
+		OriginalStart: original,
+		Recurrence:    append([]string(nil), raw.Recurrence...),
+		Cancelled:     raw.Status == "cancelled",
+		Organizer:     googlePersonEmail(raw.Organizer),
+		Attendees:     make([]string, 0, len(raw.Attendees)),
 	}
 	if event.UID == "" {
 		event.UID = raw.ID
@@ -318,11 +420,17 @@ func googleEventTimeFrom(value *googleEventTime) (time.Time, bool, string, error
 // answers with "Invalid time zone definition for start time".
 func googleEventPayload(input providers.CalendarEventInput) googleEvent {
 	payload := googleEvent{
-		Summary:      input.Summary,
-		Description:  input.Description,
-		Location:     input.Location,
-		ICalUID:      input.UID,
-		Transparency: transparencyForGoogle(input.Transparency),
+		Summary:     input.Summary,
+		Description: input.Description,
+		Location:    input.Location,
+		ICalUID:     input.UID,
+	}
+	applyFreeBusy(&payload, input.FreeBusy)
+	if len(input.Recurrence) > 0 {
+		payload.Recurrence = googleRecurrence(input.Recurrence)
+	}
+	if input.Cancelled {
+		payload.Status = "cancelled"
 	}
 	if input.AllDay {
 		payload.Start = &googleEventTime{Date: input.Start.Format("2006-01-02")}
@@ -341,20 +449,72 @@ func googleEventPayload(input providers.CalendarEventInput) googleEvent {
 	return payload
 }
 
-// transparencyFromGoogle normalises the `transparency` of a listed event. The API
-// leaves the property out for a busy event, which is why the empty string is
-// reported as opaque.
-func transparencyFromGoogle(value string) string {
-	if providers.TransparencyName(value) == providers.TransparencyTransparent {
-		return providers.TransparencyTransparent
+// freeBusyFromGoogle normalises the free/busy state of a listed event. Google
+// spreads it over three properties: `status` says cancelled or tentative,
+// `eventType` says out-of-office (and focus time, which blocks like a busy
+// event), and `transparency` says free. The API leaves `transparency` out for a
+// busy event, which is why an absent value is the busy default.
+func freeBusyFromGoogle(raw googleEvent) providers.FreeBusy {
+	if raw.Status == "cancelled" {
+		return providers.FreeBusyCancelled
 	}
-	return providers.TransparencyOpaque
+	switch raw.EventType {
+	case "outOfOffice":
+		return providers.FreeBusyOutOfOffice
+	}
+	if raw.Status == "tentative" {
+		return providers.FreeBusyTentative
+	}
+	if providers.FreeBusyName(raw.Transparency) == providers.FreeBusyFree {
+		return providers.FreeBusyFree
+	}
+	return providers.FreeBusyBusy
 }
 
-// transparencyForGoogle is what a write carries: an explicit free/busy choice, or
-// nothing at all so the provider keeps its own default.
-func transparencyForGoogle(value string) string {
-	return providers.TransparencyName(value)
+// applyFreeBusy writes a free/busy state onto a payload. An empty state leaves
+// the payload untouched, so an unrelated update keeps the marker the operator set
+// on the destination calendar.
+func applyFreeBusy(payload *googleEvent, state providers.FreeBusy) {
+	switch providers.FreeBusyName(string(state)) {
+	case providers.FreeBusyFree:
+		payload.Transparency = "transparent"
+		payload.Status = "confirmed"
+	case providers.FreeBusyBusy:
+		payload.Transparency = "opaque"
+		payload.Status = "confirmed"
+	case providers.FreeBusyTentative:
+		payload.Transparency = "opaque"
+		payload.Status = "tentative"
+	case providers.FreeBusyOutOfOffice:
+		payload.Transparency = "opaque"
+		payload.Status = "confirmed"
+		payload.EventType = "outOfOffice"
+	case providers.FreeBusyWorkingElsewhere:
+		// Google has no third busy state: working elsewhere blocks the calendar
+		// like a plain busy event.
+		payload.Transparency = "opaque"
+		payload.Status = "confirmed"
+	case providers.FreeBusyCancelled:
+		payload.Status = "cancelled"
+	}
+}
+
+// googleRecurrence normalises the rule lines a write carries. The API expects the
+// RFC 5545 form with the property name in front, which is what a Microsoft or
+// .ics source does not always produce.
+func googleRecurrence(lines []string) []string {
+	normalized := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.Contains(line, ":") {
+			line = "RRULE:" + line
+		}
+		normalized = append(normalized, line)
+	}
+	return normalized
 }
 
 func googlePersonEmail(person *googlePerson) string {

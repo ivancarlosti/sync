@@ -87,33 +87,84 @@ func TestInZoneKeepsTheInstant(t *testing.T) {
 	}
 }
 
-// TestTransparencyNameNormalisesTheFreeBusyFlag keeps an unknown label from
-// reaching a payload, where it would clear the provider default instead of
-// reporting that the caller had nothing to say.
-func TestTransparencyNameNormalisesTheFreeBusyFlag(t *testing.T) {
-	cases := map[string]string{
-		"opaque":           TransparencyOpaque,
-		"OPAQUE":           TransparencyOpaque,
-		" transparent  ":   TransparencyTransparent,
-		"Transparent":      TransparencyTransparent,
-		"free":             "",
-		"busy":             "",
-		"workingElsewhere": "",
-		"":                 "",
+// TestFreeBusyNameNormalisesTheFreeBusyFlag keeps an unknown label from reaching
+// a payload, where it would clear the provider default instead of reporting that
+// the caller had nothing to say. The aliases are the spellings the providers and
+// the stored jobs still use.
+func TestFreeBusyNameNormalisesTheFreeBusyFlag(t *testing.T) {
+	cases := map[string]FreeBusy{
+		"opaque":            FreeBusyBusy,
+		"OPAQUE":            FreeBusyBusy,
+		" busy ":            FreeBusyBusy,
+		" transparent  ":    FreeBusyFree,
+		"Transparent":       FreeBusyFree,
+		"free":              FreeBusyFree,
+		"tentative":         FreeBusyTentative,
+		"oof":               FreeBusyOutOfOffice,
+		"out_of_office":     FreeBusyOutOfOffice,
+		"workingElsewhere":  FreeBusyWorkingElsewhere,
+		"working_elsewhere": FreeBusyWorkingElsewhere,
+		"cancelled":         FreeBusyCancelled,
+		"nonsense":          "",
+		"":                  "",
 	}
 	for value, want := range cases {
-		if got := TransparencyName(value); got != want {
-			t.Errorf("TransparencyName(%q) = %q, want %q", value, got, want)
+		if got := FreeBusyName(value); got != want {
+			t.Errorf("FreeBusyName(%q) = %q, want %q", value, got, want)
 		}
 	}
 }
 
-// TestEventInputFromCarriesTheFreeBusyFlag guards the hop from a listed event to
-// the body of a write: a flag that is not copied here is silently lost on every
-// copy the engine makes.
-func TestEventInputFromCarriesTheFreeBusyFlag(t *testing.T) {
-	input := EventInputFrom(CalendarEvent{Summary: "Standup", Transparency: TransparencyTransparent})
-	if input.Transparency != TransparencyTransparent {
-		t.Fatalf("transparency = %q, want %q", input.Transparency, TransparencyTransparent)
+// TestEventInputFromCarriesTheFreeBusyAndTheSeries guards the hop from a listed
+// event to the body of a write: anything that is not copied here is silently lost
+// on every copy the engine makes.
+func TestEventInputFromCarriesTheFreeBusyAndTheSeries(t *testing.T) {
+	original := time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)
+	input := EventInputFrom(CalendarEvent{
+		Summary:       "Standup",
+		FreeBusy:      FreeBusyFree,
+		Kind:          EventKindException,
+		OriginalStart: original,
+		Recurrence:    []string{"RRULE:FREQ=WEEKLY;BYDAY=MO"},
+		Cancelled:     true,
+	})
+	if input.FreeBusy != FreeBusyFree {
+		t.Fatalf("free/busy = %q, want %q", input.FreeBusy, FreeBusyFree)
+	}
+	if !input.Cancelled {
+		t.Fatal("the cancellation was not carried into the write")
+	}
+	if !input.OriginalStart.Equal(original) {
+		t.Fatalf("original start = %s", input.OriginalStart)
+	}
+	if len(input.Recurrence) != 1 || input.Recurrence[0] != "RRULE:FREQ=WEEKLY;BYDAY=MO" {
+		t.Fatalf("recurrence = %v", input.Recurrence)
+	}
+}
+
+// TestEventFingerprintCoversTheRuleOnlyWhenThereIsOne is what keeps the upgrade
+// from rewriting every paired event: a fingerprint of an event without a rule and
+// without an original start is the value it always had.
+func TestEventFingerprintCoversTheRuleOnlyWhenThereIsOne(t *testing.T) {
+	plain := CalendarEvent{Summary: "Standup", Start: time.Date(2026, 3, 1, 9, 0, 0, 0, time.UTC)}
+	base := EventFingerprint(plain)
+	if got := EventFingerprint(plain); got != base {
+		t.Fatalf("the fingerprint of an unchanged event moved: %q != %q", got, base)
+	}
+	reordered := plain
+	reordered.Recurrence = []string{"RRULE:FREQ=WEEKLY;BYDAY=MO"}
+	first := EventFingerprint(reordered)
+	reordered.Recurrence = []string{" rrule:freq=weekly;byday=mo "}
+	if got := EventFingerprint(reordered); got != first {
+		t.Fatalf("a re-cased rule changed the fingerprint: %q != %q", got, first)
+	}
+	reordered.Recurrence = []string{"RRULE:FREQ=DAILY"}
+	if got := EventFingerprint(reordered); got == first {
+		t.Fatal("a different rule kept the fingerprint")
+	}
+	exception := plain
+	exception.OriginalStart = time.Date(2026, 3, 8, 9, 0, 0, 0, time.UTC)
+	if got := EventFingerprint(exception); got == base {
+		t.Fatal("an exception was not told apart from a plain event")
 	}
 }

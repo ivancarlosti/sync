@@ -73,24 +73,55 @@ func TestGoogleEventPayloadSendsAnAllDayEventAsADate(t *testing.T) {
 	}
 }
 
-// TestGoogleEventPayloadOnlyOverridesTheFreeBusyFlagWhenAsked keeps an unrelated
-// update from clearing a "free" marker the operator set on the destination.
-func TestGoogleEventPayloadOnlyOverridesTheFreeBusyFlagWhenAsked(t *testing.T) {
+// TestGoogleEventPayloadOnlyWritesTheFreeBusyStateWhenAsked keeps an unrelated
+// update from clearing a marker the operator set on the destination calendar, and
+// pins how each of the five states is expressed: Google spreads them over
+// `transparency`, `status` and `eventType`.
+func TestGoogleEventPayloadOnlyWritesTheFreeBusyStateWhenAsked(t *testing.T) {
 	keep := googleEventPayload(providers.CalendarEventInput{Summary: "Standup"})
-	if keep.Transparency != "" {
-		t.Fatalf("transparency = %q, want an omitted value", keep.Transparency)
+	if keep.Transparency != "" || keep.Status != "" || keep.EventType != "" {
+		t.Fatalf("a write without a state carried %+v", keep)
 	}
-	free := googleEventPayload(providers.CalendarEventInput{Summary: "Standup", Transparency: providers.TransparencyTransparent})
+	free := googleEventPayload(providers.CalendarEventInput{Summary: "Standup", FreeBusy: providers.FreeBusyFree})
 	if free.Transparency != "transparent" {
 		t.Fatalf("transparency = %q, want transparent", free.Transparency)
 	}
-	busy := googleEventPayload(providers.CalendarEventInput{Summary: "Standup", Transparency: providers.TransparencyOpaque})
+	busy := googleEventPayload(providers.CalendarEventInput{Summary: "Standup", FreeBusy: providers.FreeBusyBusy})
 	if busy.Transparency != "opaque" {
 		t.Fatalf("transparency = %q, want opaque", busy.Transparency)
 	}
-	unknown := googleEventPayload(providers.CalendarEventInput{Summary: "Standup", Transparency: "free"})
-	if unknown.Transparency != "" {
-		t.Fatalf("an unknown flag reached the payload: %q", unknown.Transparency)
+	tentative := googleEventPayload(providers.CalendarEventInput{Summary: "Standup", FreeBusy: providers.FreeBusyTentative})
+	if tentative.Status != "tentative" {
+		t.Fatalf("status = %q, want tentative", tentative.Status)
+	}
+	away := googleEventPayload(providers.CalendarEventInput{Summary: "Standup", FreeBusy: providers.FreeBusyOutOfOffice})
+	if away.EventType != "outOfOffice" {
+		t.Fatalf("event type = %q, want outOfOffice", away.EventType)
+	}
+	cancelled := googleEventPayload(providers.CalendarEventInput{Summary: "Standup", FreeBusy: providers.FreeBusyCancelled})
+	if cancelled.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", cancelled.Status)
+	}
+	unknown := googleEventPayload(providers.CalendarEventInput{Summary: "Standup", FreeBusy: "nonsense"})
+	if unknown.Transparency != "" || unknown.Status != "" {
+		t.Fatalf("an unknown state reached the payload: %+v", unknown)
+	}
+}
+
+// TestGoogleEventPayloadWritesTheRuleAsTheApiExpectsIt pins the two shapes the
+// rule of a series reaches the API in: Google wants the property name in front,
+// which a Graph master does not carry.
+func TestGoogleEventPayloadWritesTheRuleAsTheApiExpectsIt(t *testing.T) {
+	payload := googleEventPayload(providers.CalendarEventInput{
+		Summary:    "Standup",
+		Recurrence: []string{"FREQ=WEEKLY;BYDAY=MO", "RRULE:FREQ=DAILY"},
+	})
+	if len(payload.Recurrence) != 2 || payload.Recurrence[0] != "RRULE:FREQ=WEEKLY;BYDAY=MO" || payload.Recurrence[1] != "RRULE:FREQ=DAILY" {
+		t.Fatalf("recurrence = %v", payload.Recurrence)
+	}
+	// A write that does not carry a rule leaves an existing one in place.
+	if got := googleEventPayload(providers.CalendarEventInput{Summary: "Standup"}); got.Recurrence != nil {
+		t.Fatalf("recurrence = %v, want none", got.Recurrence)
 	}
 }
 
@@ -129,20 +160,74 @@ func TestGoogleEventTimeFromReportsACanonicalZone(t *testing.T) {
 	}
 }
 
-// TestTransparencyFromGoogleReadsTheListedFlag pins the asymmetry of the API: it
+// TestFreeBusyFromGoogleReadsTheListedState pins the asymmetry of the API: it
 // omits `transparency` for a normal event, so an absent value is busy rather than
-// unknown.
-func TestTransparencyFromGoogleReadsTheListedFlag(t *testing.T) {
-	cases := map[string]string{
-		"":            providers.TransparencyOpaque,
-		"opaque":      providers.TransparencyOpaque,
-		"transparent": providers.TransparencyTransparent,
-		"Transparent": providers.TransparencyTransparent,
-		"nonsense":    providers.TransparencyOpaque,
+// unknown, and the other states live on `status` and `eventType`.
+func TestFreeBusyFromGoogleReadsTheListedState(t *testing.T) {
+	cases := []struct {
+		raw  googleEvent
+		want providers.FreeBusy
+	}{
+		{googleEvent{}, providers.FreeBusyBusy},
+		{googleEvent{Transparency: "opaque"}, providers.FreeBusyBusy},
+		{googleEvent{Transparency: "transparent"}, providers.FreeBusyFree},
+		{googleEvent{Transparency: "Transparent"}, providers.FreeBusyFree},
+		{googleEvent{Transparency: "nonsense"}, providers.FreeBusyBusy},
+		{googleEvent{Status: "tentative"}, providers.FreeBusyTentative},
+		{googleEvent{Status: "cancelled"}, providers.FreeBusyCancelled},
+		{googleEvent{EventType: "outOfOffice"}, providers.FreeBusyOutOfOffice},
+		{googleEvent{EventType: "focusTime"}, providers.FreeBusyBusy},
 	}
-	for value, want := range cases {
-		if got := transparencyFromGoogle(value); got != want {
-			t.Errorf("transparencyFromGoogle(%q) = %q, want %q", value, got, want)
+	for _, testCase := range cases {
+		if got := freeBusyFromGoogle(testCase.raw); got != testCase.want {
+			t.Errorf("freeBusyFromGoogle(%+v) = %q, want %q", testCase.raw, got, testCase.want)
 		}
+	}
+}
+
+// TestGoogleEventFromClassifiesASeries pins the read model the engine pairs on:
+// Google returns the master and the occurrences somebody edited, and the start
+// each exception replaced is what names it.
+func TestGoogleEventFromClassifiesASeries(t *testing.T) {
+	master, err := googleEventFrom(googleEvent{
+		ID:         "master",
+		ICalUID:    "series@example.com",
+		Start:      &googleEventTime{DateTime: "2026-03-02T09:00:00Z", TimeZone: "UTC"},
+		End:        &googleEventTime{DateTime: "2026-03-02T09:30:00Z", TimeZone: "UTC"},
+		Recurrence: []string{"RRULE:FREQ=WEEKLY;BYDAY=MO"},
+	})
+	if err != nil {
+		t.Fatalf("googleEventFrom() error = %v", err)
+	}
+	if master.Kind != providers.EventKindMaster || !master.Recurring {
+		t.Fatalf("kind = %q recurring = %t, want a master", master.Kind, master.Recurring)
+	}
+	if len(master.Recurrence) != 1 {
+		t.Fatalf("recurrence = %v", master.Recurrence)
+	}
+
+	exception, err := googleEventFrom(googleEvent{
+		ID:               "master_20260309T090000Z",
+		ICalUID:          "series@example.com",
+		Status:           "cancelled",
+		Start:            &googleEventTime{DateTime: "2026-03-09T09:00:00Z", TimeZone: "UTC"},
+		End:              &googleEventTime{DateTime: "2026-03-09T09:30:00Z", TimeZone: "UTC"},
+		RecurringEventID: "master",
+		OriginalStart:    &googleEventTime{DateTime: "2026-03-09T09:00:00Z", TimeZone: "UTC"},
+	})
+	if err != nil {
+		t.Fatalf("googleEventFrom() error = %v", err)
+	}
+	if exception.Kind != providers.EventKindException {
+		t.Fatalf("kind = %q, want an exception", exception.Kind)
+	}
+	if exception.SeriesID != "master" || !exception.Cancelled {
+		t.Fatalf("series = %q cancelled = %t", exception.SeriesID, exception.Cancelled)
+	}
+	if !exception.OriginalStart.Equal(time.Date(2026, 3, 9, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("original start = %s", exception.OriginalStart)
+	}
+	if exception.FreeBusy != providers.FreeBusyCancelled {
+		t.Fatalf("free/busy = %q, want cancelled", exception.FreeBusy)
 	}
 }

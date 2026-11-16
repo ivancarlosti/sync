@@ -9,7 +9,13 @@
 import { type Composer } from 'vue-i18n';
 
 import { type SelectOption } from '@/components/ui/Select.vue';
-import type { CalendarFreeBusy, CalendarJob, CalendarPayload } from '@/lib/api';
+import type {
+  CalendarFreeBusy,
+  CalendarFreeBusyState,
+  CalendarJob,
+  CalendarPayload,
+  CalendarSeriesExceptions,
+} from '@/lib/api';
 import { CONFLICT_POLICIES } from '@/lib/jobs';
 
 /** SOURCE_KINDS is the closed set of `source_kind` values of the API. */
@@ -18,8 +24,38 @@ export const SOURCE_KINDS = ['google', 'microsoft', 'ics'] as const;
 /** CALENDAR_DIRECTIONS is the closed set of `direction` values of the API. */
 export const CALENDAR_DIRECTIONS = ['bidirectional', 'one_way'] as const;
 
-/** FREE_BUSY_VALUES is the closed set of `transparency_override` values. */
+/** FREE_BUSY_VALUES is the closed set of the deprecated `transparency_override` values. */
 export const FREE_BUSY_VALUES = ['', 'free', 'busy'] as const;
+
+/**
+ * FREE_BUSY_STATES is the closed set of source states the free/busy mapping
+ * names, in the order the editor lists them: what a calendar shows an event as,
+ * plus `cancelled`, which is what a cancelled occurrence of a series reads as.
+ */
+export const FREE_BUSY_STATES: readonly CalendarFreeBusyState[] = [
+  'free',
+  'tentative',
+  'busy',
+  'out_of_office',
+  'cancelled',
+];
+
+/** SERIES_EXCEPTIONS is the closed set of `series_exceptions` values. */
+export const SERIES_EXCEPTIONS: readonly CalendarSeriesExceptions[] = ['copy', 'skip'];
+
+/** FREE_BUSY_PRESETS are the one-click transformations of the mapping grid. */
+export const FREE_BUSY_PRESETS = ['keep', 'all_free', 'all_busy', 'hide_cancelled'] as const;
+
+/** FreeBusyPreset is one of the presets the editor offers. */
+export type FreeBusyPreset = (typeof FREE_BUSY_PRESETS)[number];
+
+/**
+ * FreeBusyMapping is the per-source-state transformation the engine applies to
+ * the destination copy. A state that is absent (or maps to itself) is copied
+ * unchanged.
+ */
+export type FreeBusyMapping = Partial<Record<CalendarFreeBusyState, CalendarFreeBusyState>>;
+
 
 /**
  * DECOR_WIDTH mirrors `calendarDecorWidth` of the calendars handler: a prefix or
@@ -32,6 +68,7 @@ export const PLAN_ACTIONS = [
   'create_destination',
   'update_destination',
   'delete_destination',
+  'cancel_destination',
   'create_source',
   'update_source',
   'delete_source',
@@ -99,10 +136,133 @@ export function decoratedSummary(prefix: string, suffix: string, summary: string
   return parts.join(' ');
 }
 
-/** freeBusyValue narrows an untrusted value onto the closed set. */
+/** freeBusyValue narrows an untrusted value onto the deprecated closed set. */
 export function freeBusyValue(value: unknown): CalendarFreeBusy {
   const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
   return text === 'free' || text === 'busy' ? text : '';
+}
+
+/** freeBusyState narrows an untrusted value onto the five states. */
+export function freeBusyState(value: unknown): CalendarFreeBusyState | null {
+  const text = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  return (FREE_BUSY_STATES as readonly string[]).includes(text)
+    ? (text as CalendarFreeBusyState)
+    : null;
+}
+
+/** seriesExceptionsValue narrows an untrusted value onto the closed set. */
+export function seriesExceptionsValue(value: unknown): CalendarSeriesExceptions {
+  return value === 'skip' ? 'skip' : 'copy';
+}
+
+/**
+ * parseFreeBusyMap reads the canonical JSON a job stores. An entry that names a
+ * state onto itself is dropped, which is how the engine stores the mapping too.
+ */
+export function parseFreeBusyMap(raw: string | undefined): FreeBusyMapping {
+  if (!raw || raw.trim() === '') return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const mapping: FreeBusyMapping = {};
+    for (const state of FREE_BUSY_STATES) {
+      const target = freeBusyState(parsed[state]);
+      if (target && target !== state) mapping[state] = target;
+    }
+    return mapping;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * encodeFreeBusyMap mirrors `encodeFreeBusyMap` of the engine: only the entries
+ * that change something, keys sorted, so the payload the SPA sends is the string
+ * the API stores.
+ */
+export function encodeFreeBusyMap(mapping: FreeBusyMapping): string {
+  const encoded: Record<string, string> = {};
+  for (const state of [...FREE_BUSY_STATES].sort()) {
+    const target = mapping[state];
+    if (!target || target === state) continue;
+    encoded[state] = target;
+  }
+  return Object.keys(encoded).length === 0 ? '' : JSON.stringify(encoded);
+}
+
+/**
+ * freeBusyMapFromJob reads the mapping of a job, expanding the deprecated single
+ * override the way the engine does when no map was ever saved.
+ */
+export function freeBusyMapFromJob(
+  job: Pick<CalendarJob, 'free_busy_map' | 'transparency_override'>,
+): FreeBusyMapping {
+  const stored = parseFreeBusyMap(job.free_busy_map);
+  if (Object.keys(stored).length > 0) return stored;
+  const legacy = freeBusyValue(job.transparency_override);
+  if (!legacy) return {};
+  const mapping: FreeBusyMapping = {};
+  for (const state of FREE_BUSY_STATES) {
+    if (state !== 'cancelled') mapping[state] = legacy;
+  }
+  return mapping;
+}
+
+/**
+ * freeBusyPresetMapping is the mapping a preset produces. "Hide cancelled" sends
+ * a cancelled occurrence to free time, which is what keeps a dropped meeting
+ * visible as an opening in the other calendar instead of an invisible hole.
+ */
+export function freeBusyPresetMapping(preset: FreeBusyPreset): FreeBusyMapping {
+  switch (preset) {
+    case 'all_free':
+      return {
+        free: 'free',
+        tentative: 'free',
+        busy: 'free',
+        out_of_office: 'free',
+        cancelled: 'free',
+      };
+    case 'all_busy':
+      return {
+        free: 'busy',
+        tentative: 'busy',
+        busy: 'busy',
+        out_of_office: 'busy',
+        cancelled: 'busy',
+      };
+    case 'hide_cancelled':
+      return { cancelled: 'free' };
+    case 'keep':
+    default:
+      return {};
+  }
+}
+
+/** calendarFreeBusyTargetOptions lists the destination state of one mapping row. */
+export function calendarFreeBusyTargetOptions(t: Composer['t']): SelectOption[] {
+  return [
+    { value: 'same', label: t('calendars.freeBusy_same') },
+    ...FREE_BUSY_STATES.map((state) => ({
+      value: state,
+      label: t(`calendars.freeBusyState_${state}`),
+    })),
+  ];
+}
+
+/** calendarFreeBusyPresetOptions lists the presets of the mapping grid. */
+export function calendarFreeBusyPresetOptions(t: Composer['t']): SelectOption[] {
+  return FREE_BUSY_PRESETS.map((preset) => ({
+    value: preset,
+    label: t(`calendars.freeBusyPreset_${preset}`),
+  }));
+}
+
+/** calendarSeriesExceptionsOptions lists how much of a series travels. */
+export function calendarSeriesExceptionsOptions(t: Composer['t']): SelectOption[] {
+  return SERIES_EXCEPTIONS.map((value) => ({
+    value,
+    label: t(`calendars.seriesExceptions_${value}`),
+  }));
 }
 
 /** actionLabel translates a plan action, falling back to the raw identifier. */
@@ -144,6 +304,8 @@ export function payloadFromJob(
     title_prefix: job.title_prefix ?? '',
     title_suffix: job.title_suffix ?? '',
     transparency_override: freeBusyValue(job.transparency_override),
+    free_busy_map: job.free_busy_map ?? '',
+    series_exceptions: seriesExceptionsValue(job.series_exceptions),
     ...overrides,
   };
 }
@@ -173,5 +335,7 @@ export function newCalendarPayload(): CalendarPayload {
     title_prefix: '',
     title_suffix: '',
     transparency_override: '',
+    free_busy_map: '',
+    series_exceptions: 'copy',
   };
 }

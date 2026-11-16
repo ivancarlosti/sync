@@ -56,17 +56,37 @@ type Event struct {
 	End         time.Time
 	AllDay      bool
 	TimeZone    string
-	// Transparency is the free/busy flag (TRANSP): providers.TransparencyOpaque
-	// unless the feed says TRANSPARENT.
-	Transparency string
-	// Recurring marks a master or an instance of a series (RRULE or
-	// RECURRENCE-ID). The engine skips both.
+	// FreeBusy is the free/busy state: providers.FreeBusyCancelled when the feed
+	// says STATUS:CANCELLED, otherwise the TRANSP value (busy unless the feed
+	// says TRANSPARENT).
+	FreeBusy providers.FreeBusy
+	// Kind tells a single event apart from the master of a series and from a
+	// modified occurrence.
+	Kind EventKind
+	// Recurrence carries the rule lines of a master as the feed wrote them
+	// (RRULE, RDATE, EXDATE), which is what a copy writes on the other side.
+	Recurrence []string
+	// OriginalStart is the RECURRENCE-ID of an exception.
+	OriginalStart time.Time
+	// Recurring marks a master or an instance of a series. The engine copies a
+	// master and its exceptions, and ignores the plain occurrences a feed may
+	// list.
 	Recurring bool
 	Cancelled bool
 	Organizer string
 	Attendees []string
 	UpdatedAt time.Time
 }
+
+// EventKind is the iCalendar event kind the parser reports. It mirrors
+// providers.EventKind without importing that package's type into every caller.
+type EventKind string
+
+const (
+	EventKindSingle    EventKind = "single"
+	EventKindMaster    EventKind = "master"
+	EventKindException EventKind = "exception"
+)
 
 // property is one parsed content line: its value plus the parameters it carried.
 type property struct {
@@ -166,20 +186,37 @@ func buildEvent(props map[string][]property, opts Options) (Event, bool) {
 		}
 	}
 
+	cancelled := strings.EqualFold(strings.TrimSpace(first(props, "STATUS").value), "CANCELLED")
+	kind := EventKindSingle
+	switch {
+	case hasAny(props, "RRULE"):
+		kind = EventKindMaster
+	case hasAny(props, "RECURRENCE-ID"):
+		kind = EventKindException
+	}
+	original := time.Time{}
+	if len(props["RECURRENCE-ID"]) > 0 {
+		if moment, _, _, err := parseMoment(first(props, "RECURRENCE-ID"), opts.DefaultTimeZone); err == nil {
+			original = moment
+		}
+	}
 	event := Event{
-		UID:          uid,
-		Summary:      text(first(props, "SUMMARY").value),
-		Description:  text(first(props, "DESCRIPTION").value),
-		Location:     text(first(props, "LOCATION").value),
-		Start:        start,
-		End:          end,
-		AllDay:       allDay,
-		TimeZone:     zone,
-		Transparency: transparency(first(props, "TRANSP").value),
-		Recurring:    hasAny(props, "RRULE", "RECURRENCE-ID"),
-		Cancelled:    strings.EqualFold(strings.TrimSpace(first(props, "STATUS").value), "CANCELLED"),
-		Organizer:    address(first(props, "ORGANIZER").value),
-		UpdatedAt:    stamp(props, opts.DefaultTimeZone),
+		UID:           uid,
+		Summary:       text(first(props, "SUMMARY").value),
+		Description:   text(first(props, "DESCRIPTION").value),
+		Location:      text(first(props, "LOCATION").value),
+		Start:         start,
+		End:           end,
+		AllDay:        allDay,
+		TimeZone:      zone,
+		FreeBusy:      freeBusy(props, cancelled),
+		Kind:          kind,
+		Recurrence:    recurrenceLines(props),
+		OriginalStart: original,
+		Recurring:     kind != EventKindSingle,
+		Cancelled:     cancelled,
+		Organizer:     address(first(props, "ORGANIZER").value),
+		UpdatedAt:     stamp(props, opts.DefaultTimeZone),
 	}
 	for _, attendee := range props["ATTENDEE"] {
 		if email := address(attendee.value); email != "" {
@@ -409,13 +446,45 @@ func parseMoment(prop property, fallbackZone string) (time.Time, bool, string, e
 	return time.Time{}, false, "", errors.New("ical: unreadable date value")
 }
 
-// transparency maps the RFC 5545 TRANSP property onto the shared vocabulary: an
-// event without TRANSP is opaque, which is what the RFC says a busy event is.
-func transparency(value string) string {
-	if strings.EqualFold(strings.TrimSpace(value), "TRANSPARENT") {
-		return providers.TransparencyTransparent
+// freeBusy maps the RFC 5545 flags onto the shared vocabulary. `STATUS` wins over
+// `TRANSP`: a cancelled or tentative event says more about the time than the
+// transparency flag does. An event without TRANSP is busy, which is what the RFC
+// says the default is.
+func freeBusy(props map[string][]property, cancelled bool) providers.FreeBusy {
+	if cancelled {
+		return providers.FreeBusyCancelled
 	}
-	return providers.TransparencyOpaque
+	if strings.EqualFold(strings.TrimSpace(first(props, "STATUS").value), "TENTATIVE") {
+		return providers.FreeBusyTentative
+	}
+	if strings.EqualFold(strings.TrimSpace(first(props, "TRANSP").value), "TRANSPARENT") {
+		return providers.FreeBusyFree
+	}
+	return providers.FreeBusyBusy
+}
+
+// recurrenceLines renders the rule of a master back into content lines. The
+// TZID of an EXDATE is preserved: dropping it would move the skipped instant into
+// the calendar default zone.
+func recurrenceLines(props map[string][]property) []string {
+	lines := make([]string, 0, 3)
+	for _, name := range []string{"RRULE", "RDATE", "EXDATE"} {
+		for _, prop := range props[name] {
+			value := strings.TrimSpace(prop.value)
+			if value == "" {
+				continue
+			}
+			line := name + ":" + value
+			if tzid := strings.TrimSpace(prop.params["TZID"]); tzid != "" {
+				line = name + ";TZID=" + tzid + ":" + value
+			}
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	return lines
 }
 
 // resolveZone loads a zone name, answering UTC for an empty or unknown one: a

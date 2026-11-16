@@ -69,6 +69,8 @@ type calendarInput struct {
 	TitlePrefix          string `json:"title_prefix"`
 	TitleSuffix          string `json:"title_suffix"`
 	TransparencyOverride string `json:"transparency_override"`
+	FreeBusyMap          string `json:"free_busy_map"`
+	SeriesExceptions     string `json:"series_exceptions"`
 
 	IntervalMinutes int   `json:"interval_minutes"`
 	Enabled         *bool `json:"enabled"`
@@ -152,6 +154,19 @@ func (s *Server) applyCalendarInput(c *gin.Context, input calendarInput, job *mo
 		return fmt.Errorf("%w: unknown free/busy override %q", services.ErrValidation, input.TransparencyOverride)
 	}
 
+	mapping, err := services.NormalizeFreeBusyMap(input.FreeBusyMap)
+	if err != nil {
+		return fmt.Errorf("%w: %v", services.ErrValidation, err)
+	}
+
+	series := models.CalendarSeriesExceptions(strings.ToLower(strings.TrimSpace(input.SeriesExceptions)))
+	if series == "" {
+		series = models.CalendarSeriesCopy
+	}
+	if !series.Valid() {
+		return fmt.Errorf("%w: unknown series exception policy %q", services.ErrValidation, input.SeriesExceptions)
+	}
+
 	job.Name = name
 	job.SourceKind = string(kind)
 	job.Direction = string(direction)
@@ -162,6 +177,8 @@ func (s *Server) applyCalendarInput(c *gin.Context, input calendarInput, job *mo
 	job.TitlePrefix = calendarLabel(input.TitlePrefix, calendarDecorWidth)
 	job.TitleSuffix = calendarLabel(input.TitleSuffix, calendarDecorWidth)
 	job.TransparencyOverride = string(override)
+	job.FreeBusyMap = mapping
+	job.SeriesExceptions = string(series)
 	job.IntervalMinutes = clampInt(input.IntervalMinutes, 0, 0, maxIntervalMinutes)
 	if input.Enabled != nil {
 		job.Enabled = *input.Enabled

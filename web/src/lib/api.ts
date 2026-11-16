@@ -418,9 +418,24 @@ export type CalendarSourceKind = 'google' | 'microsoft' | 'ics';
 /**
  * CalendarFreeBusy is the closed set of `transparency_override` values: the empty
  * string keeps whatever the source says, the other two force how the destination
- * copy is shown.
+ * copy is shown. The field is deprecated in favour of `free_busy_map`, and kept
+ * so an existing job keeps doing what its operator configured.
  */
 export type CalendarFreeBusy = '' | 'free' | 'busy';
+
+/** CalendarFreeBusyState is one state the free/busy mapping may name. */
+export type CalendarFreeBusyState =
+  | 'free'
+  | 'tentative'
+  | 'busy'
+  | 'out_of_office'
+  | 'cancelled';
+
+/**
+ * CalendarSeriesExceptions is how much of a recurring series the job copies:
+ * the master and its modified/cancelled occurrences, or the master only.
+ */
+export type CalendarSeriesExceptions = 'copy' | 'skip';
 
 /**
  * CalendarJob is a pairing of two calendars plus its schedule: a source (a
@@ -459,6 +474,14 @@ export interface CalendarJob {
   title_prefix?: string;
   title_suffix?: string;
   transparency_override?: CalendarFreeBusy;
+  /**
+   * free_busy_map is the per-source-state transformation of the destination
+   * copy, as canonical JSON: {"busy":"free","tentative":"busy"}. A state the map
+   * does not mention is copied unchanged, so a job without options has none.
+   */
+  free_busy_map?: string;
+  /** series_exceptions is "copy" (the default) or "skip". */
+  series_exceptions?: CalendarSeriesExceptions;
   /** running is the decoration the API adds when a run is in flight. */
   running: boolean;
   last_run_at?: string;
@@ -494,10 +517,12 @@ export interface CalendarPayload {
   future_days: number;
   interval_minutes: number;
   enabled: boolean;
-  /** The destination-only options: a decoration and the free/busy override. */
+  /** The destination-only options: a decoration, the free/busy mapping and how much of a series travels. */
   title_prefix: string;
   title_suffix: string;
   transparency_override: CalendarFreeBusy;
+  free_busy_map: string;
+  series_exceptions: CalendarSeriesExceptions;
 }
 
 /** CalendarOption is one entry of the calendar picker of an account. */

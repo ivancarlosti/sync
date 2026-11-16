@@ -8,11 +8,13 @@ import (
 	"strings"
 	"time"
 
+	msgraphsdk "github.com/microsoftgraph/msgraph-sdk-go"
 	msgraphgocore "github.com/microsoftgraph/msgraph-sdk-go-core"
 	graphmodels "github.com/microsoftgraph/msgraph-sdk-go/models"
 	"github.com/microsoftgraph/msgraph-sdk-go/users"
 
 	"github.com/ivancarlosti/sync/internal/providers"
+	"github.com/ivancarlosti/sync/internal/recurrence"
 )
 
 // Compile time guard: the calendar engine discovers this half of the provider
@@ -33,7 +35,7 @@ var calendarIDPattern = regexp.MustCompile(`^[A-Za-z0-9._=+/-]{1,900}$`)
 var calendarEventSelect = []string{
 	"id", "iCalUId", "subject", "body", "bodyPreview", "location", "start", "end",
 	"isAllDay", "isCancelled", "type", "seriesMasterId", "recurrence", "showAs",
-	"organizer", "attendees",
+	"originalStart", "originalStartTimeZone", "organizer", "attendees",
 }
 
 // Calendars implements providers.CalendarProvider.
@@ -116,6 +118,24 @@ func (p *Provider) CalendarEvents(ctx context.Context, _ providers.Credentials, 
 	}); err != nil {
 		return nil, fmt.Errorf("microsoft graph: listing the events of %s failed: %w", calendarID, err)
 	}
+
+	// A calendar view expands a series and never returns the master itself, so
+	// the rule of every series an exception names is read on its own. A master
+	// that disappeared between the two calls is skipped: its exceptions are then
+	// skipped too, with the evidence the run reports.
+	masters := make(map[string]struct{}, 8)
+	for _, event := range events {
+		if event.Kind == providers.EventKindException && event.SeriesID != "" {
+			masters[event.SeriesID] = struct{}{}
+		}
+	}
+	for masterID := range masters {
+		master, err := p.seriesMaster(ctx, client, calendarID, masterID)
+		if err != nil {
+			continue
+		}
+		events = append(events, *master)
+	}
 	return events, nil
 }
 
@@ -131,7 +151,16 @@ func (p *Provider) CreateCalendarEvent(ctx context.Context, _ providers.Credenti
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
-	created, err := client.Me().Calendars().ByCalendarId(calendarID).Events().Post(ctx, eventPayload(input), nil)
+	if strings.TrimSpace(input.SeriesID) != "" {
+		// An occurrence of a series already exists (its master generated it):
+		// there is nothing to create, only something to change.
+		return p.writeInstance(ctx, client, calendarID, input)
+	}
+	payload, err := eventPayload(input)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft graph: %w", err)
+	}
+	created, err := client.Me().Calendars().ByCalendarId(calendarID).Events().Post(ctx, payload, nil)
 	if err != nil {
 		return nil, fmt.Errorf("microsoft graph: cannot create an event in %s: %w", calendarID, err)
 	}
@@ -157,7 +186,14 @@ func (p *Provider) UpdateCalendarEvent(ctx context.Context, _ providers.Credenti
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 
-	updated, err := client.Me().Calendars().ByCalendarId(calendarID).Events().ByEventId(eventID).Patch(ctx, eventPayload(input), nil)
+	if strings.TrimSpace(input.SeriesID) != "" {
+		return p.writeInstance(ctx, client, calendarID, input)
+	}
+	payload, err := eventPayload(input)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft graph: %w", err)
+	}
+	updated, err := client.Me().Calendars().ByCalendarId(calendarID).Events().ByEventId(eventID).Patch(ctx, payload, nil)
 	if err != nil {
 		if p.IsNotFound(err) {
 			return nil, fmt.Errorf("%w: microsoft event %s", providers.ErrNotFound, eventID)
@@ -231,20 +267,26 @@ func eventFromGraph(event graphmodels.Eventable) (providers.CalendarEvent, error
 		zone = deref(startValue.GetTimeZone())
 	}
 	normalised := providers.CalendarEvent{
-		ID:           deref(event.GetId()),
-		UID:          deref(event.GetICalUId()),
-		Summary:      deref(event.GetSubject()),
-		Description:  graphBody(event.GetBody()),
-		Location:     graphLocation(event.GetLocation()),
-		Start:        start,
-		End:          end,
-		AllDay:       allDay,
-		TimeZone:     providers.ZoneName(zone),
-		Transparency: transparencyFromGraph(event.GetShowAs()),
-		Recurring:    graphRecurring(event),
-		Cancelled:    boolValue(event.GetIsCancelled()),
-		Organizer:    graphRecipient(event.GetOrganizer()),
-		Attendees:    make([]string, 0, len(event.GetAttendees())),
+		ID:            deref(event.GetId()),
+		UID:           deref(event.GetICalUId()),
+		Summary:       deref(event.GetSubject()),
+		Description:   graphBody(event.GetBody()),
+		Location:      graphLocation(event.GetLocation()),
+		Start:         start,
+		End:           end,
+		AllDay:        allDay,
+		TimeZone:      providers.ZoneName(zone),
+		FreeBusy:      freeBusyFromGraph(event.GetShowAs()),
+		Recurring:     graphRecurring(event),
+		Kind:          graphKind(event),
+		SeriesID:      deref(event.GetSeriesMasterId()),
+		OriginalStart: graphOriginalStart(event),
+		Cancelled:     boolValue(event.GetIsCancelled()),
+		Organizer:     graphRecipient(event.GetOrganizer()),
+		Attendees:     make([]string, 0, len(event.GetAttendees())),
+	}
+	if rule, err := recurrence.FromGraph(event.GetRecurrence()); err == nil {
+		normalised.Recurrence = rule
 	}
 	if normalised.UID == "" {
 		normalised.UID = normalised.ID
@@ -257,26 +299,52 @@ func eventFromGraph(event graphmodels.Eventable) (providers.CalendarEvent, error
 	return normalised, nil
 }
 
-// graphRecurring reports whether the event belongs to a series, whether it is
-// the master or one of its occurrences: both are skipped by the engine because a
-// single occurrence cannot be copied without inventing a rule.
-func graphRecurring(event graphmodels.Eventable) bool {
+// graphKind classifies an event by its place in a series. Graph publishes the
+// classification itself, so a master, an expanded occurrence and an edited
+// occurrence of the same series are told apart without guessing.
+func graphKind(event graphmodels.Eventable) providers.EventKind {
+	if kind := event.GetTypeEscaped(); kind != nil {
+		switch *kind {
+		case graphmodels.SERIESMASTER_EVENTTYPE:
+			return providers.EventKindMaster
+		case graphmodels.EXCEPTION_EVENTTYPE:
+			return providers.EventKindException
+		case graphmodels.OCCURRENCE_EVENTTYPE:
+			return providers.EventKindOccurrence
+		}
+	}
 	if event.GetRecurrence() != nil {
-		return true
+		return providers.EventKindMaster
 	}
 	if deref(event.GetSeriesMasterId()) != "" {
-		return true
+		return providers.EventKindException
 	}
-	if kind := event.GetTypeEscaped(); kind != nil && *kind != graphmodels.SINGLEINSTANCE_EVENTTYPE {
-		return true
+	return providers.EventKindSingle
+}
+
+// graphRecurring reports whether the event belongs to a series, whether it is the
+// master or one of its occurrences.
+func graphRecurring(event graphmodels.Eventable) bool {
+	return graphKind(event) != providers.EventKindSingle
+}
+
+// graphOriginalStart is the start the master gave an occurrence. Graph publishes
+// it in UTC; it is the identity of an exception.
+func graphOriginalStart(event graphmodels.Eventable) time.Time {
+	if value := event.GetOriginalStart(); value != nil {
+		return value.UTC()
 	}
-	return false
+	return time.Time{}
 }
 
 // eventPayload builds the body of a create or update. Only the fields the engine
 // manages are set: a conference link or a reminder the user configured on the
 // destination calendar therefore keeps its value on a patch.
-func eventPayload(input providers.CalendarEventInput) graphmodels.Eventable {
+//
+// It answers an error when the rule of a series cannot be represented by Graph.
+// The caller reports that as a failed write instead of creating a single event
+// where a series was meant.
+func eventPayload(input providers.CalendarEventInput) (graphmodels.Eventable, error) {
 	payload := graphmodels.NewEvent()
 	payload.SetSubject(ptr(input.Summary))
 	payload.SetIsAllDay(ptr(input.AllDay))
@@ -306,11 +374,15 @@ func eventPayload(input providers.CalendarEventInput) graphmodels.Eventable {
 	// The free/busy flag is only written when the job asked for a value: a plain
 	// update would otherwise turn a destination event the operator marked as
 	// out-of-office or tentative back into a plain busy one.
-	switch providers.TransparencyName(input.Transparency) {
-	case providers.TransparencyTransparent:
-		payload.SetShowAs(ptr(graphmodels.FREE_FREEBUSYSTATUS))
-	case providers.TransparencyOpaque:
-		payload.SetShowAs(ptr(graphmodels.BUSY_FREEBUSYSTATUS))
+	if status, ok := graphShowAs(input.FreeBusy); ok {
+		payload.SetShowAs(&status)
+	}
+	if len(input.Recurrence) > 0 {
+		value, err := recurrence.ToGraph(input.Recurrence, input.Start, startZone)
+		if err != nil {
+			return nil, err
+		}
+		payload.SetRecurrence(value)
 	}
 
 	for _, email := range input.Attendees {
@@ -323,7 +395,123 @@ func eventPayload(input providers.CalendarEventInput) graphmodels.Eventable {
 		attendee.SetEmailAddress(address)
 		payload.SetAttendees(append(payload.GetAttendees(), attendee))
 	}
-	return payload
+	return payload, nil
+}
+
+// writeInstance writes one occurrence of a series. Graph identifies an occurrence
+// through the instance list of its master, because `originalStart` is the only
+// stable handle an occurrence has: the engine knows the master and the start the
+// rule gave the occurrence, and resolves the rest here.
+//
+// A cancellation has no writable representation on Graph (`isCancelled` is
+// read-only), so it deletes the occurrence, which is the same statement inside the
+// series.
+func (p *Provider) writeInstance(ctx context.Context, client *msgraphsdk.GraphServiceClient, calendarID string, input providers.CalendarEventInput) (*providers.CalendarEvent, error) {
+	instanceID, err := p.resolveInstance(ctx, client, calendarID, input)
+	if err != nil {
+		return nil, err
+	}
+	builder := client.Me().Calendars().ByCalendarId(calendarID).Events().ByEventId(instanceID)
+	if input.Cancelled {
+		if err := builder.Delete(ctx, nil); err != nil {
+			if p.IsNotFound(err) {
+				return nil, fmt.Errorf("%w: microsoft occurrence %s of %s", providers.ErrNotFound, instanceID, input.SeriesID)
+			}
+			return nil, fmt.Errorf("microsoft graph: cannot cancel occurrence %s of %s: %w", instanceID, input.SeriesID, err)
+		}
+		return &providers.CalendarEvent{ID: instanceID, UID: input.UID, Cancelled: true, Kind: providers.EventKindException}, nil
+	}
+	payload, err := eventPayload(input)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft graph: %w", err)
+	}
+	saved, err := builder.Patch(ctx, payload, nil)
+	if err != nil {
+		if p.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: microsoft occurrence %s of %s", providers.ErrNotFound, instanceID, input.SeriesID)
+		}
+		return nil, fmt.Errorf("microsoft graph: cannot write occurrence %s of %s: %w", instanceID, input.SeriesID, err)
+	}
+	event, err := eventFromGraph(saved)
+	if err != nil {
+		return nil, fmt.Errorf("microsoft graph: the occurrence %s cannot be read back: %w", instanceID, err)
+	}
+	return &event, nil
+}
+
+// resolveInstance answers the id of the occurrence of input.SeriesID whose original
+// start is the one the rule gave it. An all-day occurrence is also matched at the
+// UTC midnight of its wall date, because Graph publishes `originalStart` in UTC
+// and the instant a source stores for a midnight depends on its own zone.
+func (p *Provider) resolveInstance(ctx context.Context, client *msgraphsdk.GraphServiceClient, calendarID string, input providers.CalendarEventInput) (string, error) {
+	masterID := input.SeriesID
+	originalStart := input.OriginalStart
+	if !calendarIDPattern.MatchString(masterID) {
+		return "", invalidCalendarIDError("event", masterID)
+	}
+	if originalStart.IsZero() {
+		return "", fmt.Errorf("%w: microsoft occurrence without an original start", providers.ErrNotFound)
+	}
+	start := originalStart.UTC().Add(-24 * time.Hour).Format(time.RFC3339)
+	end := originalStart.UTC().Add(48 * time.Hour).Format(time.RFC3339)
+	page, err := client.Me().Calendars().ByCalendarId(calendarID).Events().ByEventId(masterID).Instances().Get(ctx,
+		&users.ItemCalendarsItemEventsItemInstancesRequestBuilderGetRequestConfiguration{
+			QueryParameters: &users.ItemCalendarsItemEventsItemInstancesRequestBuilderGetQueryParameters{
+				StartDateTime: &start,
+				EndDateTime:   &end,
+				Top:           ptr(int32(50)),
+				Select:        calendarEventSelect,
+			},
+		})
+	if err != nil {
+		if p.IsNotFound(err) {
+			return "", fmt.Errorf("%w: microsoft series %s", providers.ErrNotFound, masterID)
+		}
+		return "", fmt.Errorf("microsoft graph: cannot list the occurrences of %s: %w", masterID, err)
+	}
+	wanted := originalStart.UTC()
+	wantedAllDay := time.Time{}
+	if input.AllDay {
+		if date, err := time.Parse("2006-01-02", originalStart.In(providers.LoadZone(input.TimeZone)).Format("2006-01-02")); err == nil {
+			wantedAllDay = date.UTC()
+		}
+	}
+	for _, instance := range page.GetValue() {
+		moment := graphOriginalStart(instance)
+		if moment.IsZero() {
+			continue
+		}
+		if !moment.Equal(wanted) && (wantedAllDay.IsZero() || !moment.Equal(wantedAllDay)) {
+			continue
+		}
+		if id := deref(instance.GetId()); id != "" {
+			return id, nil
+		}
+	}
+	return "", fmt.Errorf("%w: microsoft occurrence of %s at %s", providers.ErrNotFound, masterID, wanted.Format(time.RFC3339))
+}
+
+// seriesMaster reads one master by id. A calendar view never returns a master
+// (it expands the series), so the master of a copied exception has to be fetched
+// on its own.
+func (p *Provider) seriesMaster(ctx context.Context, client *msgraphsdk.GraphServiceClient, calendarID, masterID string) (*providers.CalendarEvent, error) {
+	if !calendarIDPattern.MatchString(masterID) {
+		return nil, invalidCalendarIDError("event", masterID)
+	}
+	master, err := client.Me().Calendars().ByCalendarId(calendarID).Events().ByEventId(masterID).Get(ctx,
+		&users.ItemCalendarsItemEventsEventItemRequestBuilderGetRequestConfiguration{
+			QueryParameters: &users.ItemCalendarsItemEventsEventItemRequestBuilderGetQueryParameters{
+				Select: calendarEventSelect,
+			},
+		})
+	if err != nil {
+		return nil, err
+	}
+	event, err := eventFromGraph(master)
+	if err != nil {
+		return nil, err
+	}
+	return &event, nil
 }
 
 // graphTime renders an instant the way Graph expects it: a wall-clock value with
@@ -386,16 +574,43 @@ func graphRecipient(recipient graphmodels.Recipientable) string {
 	return deref(recipient.GetEmailAddress().GetAddress())
 }
 
-// transparencyFromGraph collapses Graph's six-value `showAs` onto the two values
-// the engine shares with Google: only `free` reads as transparent, everything
-// else (busy, oof, tentative, workingElsewhere, an unset value) blocks the
-// calendar. The distinction is lost on a write back to Graph, which is why the
-// engine only overrides it when the job asks for a value.
-func transparencyFromGraph(showAs *graphmodels.FreeBusyStatus) string {
-	if showAs != nil && *showAs == graphmodels.FREE_FREEBUSYSTATUS {
-		return providers.TransparencyTransparent
+// freeBusyFromGraph reads Graph's `showAs` one to one. An unset value is busy,
+// which is Graph's own default, and `unknown` is treated the same way so an event
+// never silently stops blocking the calendar.
+func freeBusyFromGraph(showAs *graphmodels.FreeBusyStatus) providers.FreeBusy {
+	if showAs == nil {
+		return providers.FreeBusyBusy
 	}
-	return providers.TransparencyOpaque
+	switch *showAs {
+	case graphmodels.FREE_FREEBUSYSTATUS:
+		return providers.FreeBusyFree
+	case graphmodels.TENTATIVE_FREEBUSYSTATUS:
+		return providers.FreeBusyTentative
+	case graphmodels.OOF_FREEBUSYSTATUS:
+		return providers.FreeBusyOutOfOffice
+	case graphmodels.WORKINGELSEWHERE_FREEBUSYSTATUS:
+		return providers.FreeBusyWorkingElsewhere
+	default:
+		return providers.FreeBusyBusy
+	}
+}
+
+// graphShowAs is the write half of the mapping. A state Graph cannot show is
+// reported so the caller can decide, instead of being written as busy.
+func graphShowAs(state providers.FreeBusy) (graphmodels.FreeBusyStatus, bool) {
+	switch providers.FreeBusyName(string(state)) {
+	case providers.FreeBusyFree:
+		return graphmodels.FREE_FREEBUSYSTATUS, true
+	case providers.FreeBusyTentative:
+		return graphmodels.TENTATIVE_FREEBUSYSTATUS, true
+	case providers.FreeBusyBusy:
+		return graphmodels.BUSY_FREEBUSYSTATUS, true
+	case providers.FreeBusyOutOfOffice:
+		return graphmodels.OOF_FREEBUSYSTATUS, true
+	case providers.FreeBusyWorkingElsewhere:
+		return graphmodels.WORKINGELSEWHERE_FREEBUSYSTATUS, true
+	}
+	return 0, false
 }
 
 // invalidCalendarIDError reports a calendar or event id this provider refuses to

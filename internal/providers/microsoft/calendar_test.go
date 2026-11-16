@@ -48,9 +48,21 @@ func TestGraphTimeCanonicalisesTheZone(t *testing.T) {
 	}
 }
 
+// mustPayload builds the body of a write, failing the test when the rule cannot be
+// represented.
+func mustPayload(t *testing.T, input providers.CalendarEventInput) graphmodels.Eventable {
+	t.Helper()
+	payload, err := eventPayload(input)
+	if err != nil {
+		t.Fatalf("eventPayload() error = %v", err)
+	}
+	return payload
+}
+
 // TestEventPayloadWritesTheFreeBusyFlagOnlyWhenAsked keeps a plain copy from
 // flattening a destination event the operator marked as out-of-office or
-// tentative into a plain busy one.
+// tentative into a plain busy one, and pins the one-to-one mapping of the five
+// states Graph can show.
 func TestEventPayloadWritesTheFreeBusyFlagOnlyWhenAsked(t *testing.T) {
 	start := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	input := providers.CalendarEventInput{
@@ -59,29 +71,72 @@ func TestEventPayloadWritesTheFreeBusyFlagOnlyWhenAsked(t *testing.T) {
 		End:      start.Add(time.Hour),
 		TimeZone: "UTC",
 	}
-	if got := eventPayload(input).GetShowAs(); got != nil {
+	if got := mustPayload(t, input).GetShowAs(); got != nil {
 		t.Fatalf("showAs = %v, want it left out", *got)
 	}
 
-	input.Transparency = providers.TransparencyTransparent
-	if got := eventPayload(input).GetShowAs(); got == nil || *got != graphmodels.FREE_FREEBUSYSTATUS {
-		t.Fatalf("showAs = %v, want free", got)
+	cases := []struct {
+		state providers.FreeBusy
+		want  graphmodels.FreeBusyStatus
+	}{
+		{providers.FreeBusyFree, graphmodels.FREE_FREEBUSYSTATUS},
+		{providers.FreeBusyTentative, graphmodels.TENTATIVE_FREEBUSYSTATUS},
+		{providers.FreeBusyBusy, graphmodels.BUSY_FREEBUSYSTATUS},
+		{providers.FreeBusyOutOfOffice, graphmodels.OOF_FREEBUSYSTATUS},
+		{providers.FreeBusyWorkingElsewhere, graphmodels.WORKINGELSEWHERE_FREEBUSYSTATUS},
+	}
+	for _, testCase := range cases {
+		input.FreeBusy = testCase.state
+		if got := mustPayload(t, input).GetShowAs(); got == nil || *got != testCase.want {
+			t.Errorf("showAs of %q = %v, want %v", testCase.state, got, testCase.want)
+		}
 	}
 
-	input.Transparency = providers.TransparencyOpaque
-	if got := eventPayload(input).GetShowAs(); got == nil || *got != graphmodels.BUSY_FREEBUSYSTATUS {
-		t.Fatalf("showAs = %v, want busy", got)
-	}
-
-	input.Transparency = "free"
-	if got := eventPayload(input).GetShowAs(); got != nil {
-		t.Fatalf("an unknown flag reached the payload: %v", *got)
+	input.FreeBusy = "nonsense"
+	if got := mustPayload(t, input).GetShowAs(); got != nil {
+		t.Fatalf("an unknown state reached the payload: %v", *got)
 	}
 }
 
-// TestEventFromGraphReadsTheFreeBusyFlag pins how Graph's six-value showAs is
-// collapsed onto the two values the engine shares with Google, and that the zone of
-// a listing is canonicalised on the way in.
+// TestEventPayloadWritesTheRuleOrRefusesIt is the guard of a series copy: a rule
+// Graph can express becomes a patterned recurrence, and a rule it cannot express
+// fails the write instead of creating a single event where a series was meant.
+func TestEventPayloadWritesTheRuleOrRefusesIt(t *testing.T) {
+	input := providers.CalendarEventInput{
+		Summary:    "Standup",
+		Start:      time.Date(2026, 3, 2, 9, 0, 0, 0, time.UTC),
+		End:        time.Date(2026, 3, 2, 9, 30, 0, 0, time.UTC),
+		TimeZone:   "UTC",
+		Recurrence: []string{"RRULE:FREQ=WEEKLY;BYDAY=MO,WE"},
+	}
+	recurrence := mustPayload(t, input).GetRecurrence()
+	if recurrence == nil || recurrence.GetPattern() == nil {
+		t.Fatal("a weekly rule was not written")
+	}
+	pattern := recurrence.GetPattern()
+	if kind := pattern.GetTypeEscaped(); kind == nil || *kind != graphmodels.WEEKLY_RECURRENCEPATTERNTYPE {
+		t.Fatalf("pattern type = %v, want weekly", kind)
+	}
+	if days := pattern.GetDaysOfWeek(); len(days) != 2 || days[0] != graphmodels.MONDAY_DAYOFWEEK || days[1] != graphmodels.WEDNESDAY_DAYOFWEEK {
+		t.Fatalf("days = %v", days)
+	}
+
+	// A rule with a part Graph has no pattern for is refused, not approximated.
+	input.Recurrence = []string{"RRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1"}
+	if _, err := eventPayload(input); err == nil {
+		t.Fatal("a rule Graph cannot express was written anyway")
+	}
+
+	// An empty rule leaves an existing series alone.
+	input.Recurrence = nil
+	if got := mustPayload(t, input).GetRecurrence(); got != nil {
+		t.Fatalf("recurrence = %v, want none", got)
+	}
+}
+
+// TestEventFromGraphReadsTheFreeBusyFlag pins the one-to-one mapping of Graph's
+// six-value showAs, that an unset one is busy, and that the zone of a listing is
+// canonicalised on the way in.
 func TestEventFromGraphReadsTheFreeBusyFlag(t *testing.T) {
 	if _, err := time.LoadLocation("Europe/Paris"); err != nil {
 		t.Skipf("the runtime has no zone database: %v", err)
@@ -109,8 +164,8 @@ func TestEventFromGraphReadsTheFreeBusyFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("eventFromGraph() error = %v", err)
 	}
-	if got.Transparency != providers.TransparencyTransparent {
-		t.Fatalf("transparency = %q, want transparent", got.Transparency)
+	if got.FreeBusy != providers.FreeBusyFree {
+		t.Fatalf("free/busy = %q, want free", got.FreeBusy)
 	}
 	if got.TimeZone != "Europe/Paris" {
 		t.Fatalf("zone = %q, want Europe/Paris", got.TimeZone)
@@ -119,19 +174,23 @@ func TestEventFromGraphReadsTheFreeBusyFlag(t *testing.T) {
 		t.Fatalf("start = %s", got.Start)
 	}
 
-	for _, status := range []graphmodels.FreeBusyStatus{
-		graphmodels.BUSY_FREEBUSYSTATUS,
-		graphmodels.OOF_FREEBUSYSTATUS,
-		graphmodels.TENTATIVE_FREEBUSYSTATUS,
-		graphmodels.WORKINGELSEWHERE_FREEBUSYSTATUS,
-	} {
-		value := status
+	cases := []struct {
+		status graphmodels.FreeBusyStatus
+		want   providers.FreeBusy
+	}{
+		{graphmodels.BUSY_FREEBUSYSTATUS, providers.FreeBusyBusy},
+		{graphmodels.OOF_FREEBUSYSTATUS, providers.FreeBusyOutOfOffice},
+		{graphmodels.TENTATIVE_FREEBUSYSTATUS, providers.FreeBusyTentative},
+		{graphmodels.WORKINGELSEWHERE_FREEBUSYSTATUS, providers.FreeBusyWorkingElsewhere},
+	}
+	for _, testCase := range cases {
+		value := testCase.status
 		event, err := eventFromGraph(build(&value))
 		if err != nil {
 			t.Fatalf("eventFromGraph(%s) error = %v", value, err)
 		}
-		if event.Transparency != providers.TransparencyOpaque {
-			t.Errorf("showAs %s answered %q, want opaque", value, event.Transparency)
+		if event.FreeBusy != testCase.want {
+			t.Errorf("showAs %s answered %q, want %q", value, event.FreeBusy, testCase.want)
 		}
 	}
 
@@ -141,7 +200,7 @@ func TestEventFromGraphReadsTheFreeBusyFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("eventFromGraph(nil) error = %v", err)
 	}
-	if unset.Transparency != providers.TransparencyOpaque {
-		t.Fatalf("transparency = %q, want opaque", unset.Transparency)
+	if unset.FreeBusy != providers.FreeBusyBusy {
+		t.Fatalf("free/busy = %q, want busy", unset.FreeBusy)
 	}
 }

@@ -241,11 +241,13 @@ source_account_id, source_calendar_id, source_calendar_name, source_url,
 source_username, source_etag, source_last_modified, source_fetched_at,
 destination_account_id, destination_calendar_id, destination_calendar_name,
 direction, conflict_policy, delete_missing, past_days, future_days,
-title_prefix, title_suffix, transparency_override,
-interval_minutes, enabled, last_run_at, next_run_at, last_status, last_error,
-created_at, updated_at`) plus `running: boolean`. The feed **password** is not a
-column of the view: it is write-only and never serialised, and the three copy
-options are omitted while empty (`omitempty`).
+title_prefix, title_suffix, free_busy_map, series_exceptions,
+transparency_override, interval_minutes, enabled, last_run_at, next_run_at,
+last_status, last_error, created_at, updated_at`) plus `running: boolean`. The
+feed **password** is not a column of the view: it is write-only and never
+serialised, and the copy options are omitted while empty (`omitempty`).
+`free_busy_map` is stored canonically — only the entries that change something,
+keys sorted — and `series_exceptions` defaults to `copy`.
 
 | Method | Path | Notes |
 |---|---|---|
@@ -280,11 +282,21 @@ Create/update payload (an account → account job):
   "future_days": 365,
   "title_prefix": "[Work]",
   "title_suffix": "",
+  "free_busy_map": "{\"busy\":\"free\",\"cancelled\":\"free\"}",
+  "series_exceptions": "copy",
   "transparency_override": "",
   "interval_minutes": 60,
   "enabled": true
 }
 ```
+
+`free_busy_map` is the per-source-state transformation of the destination copy
+(`free`, `tentative`, `busy`, `out_of_office`, `cancelled` → one of those five).
+The server validates every key and value and stores the canonical form, so a
+state nobody knows is a **400 validation** instead of a value no provider can
+write; `series_exceptions` is `copy` (default) or `skip`, anything else is a
+**400** as well. `transparency_override` is deprecated and only expands when no
+map is sent.
 
 An `.ics` subscription sends `source_kind: "ics"` and the feed columns instead
 of an account:

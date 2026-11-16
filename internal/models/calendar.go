@@ -57,9 +57,13 @@ func (d CalendarDirection) Backward() bool {
 	return d == CalendarDirectionBidirectional
 }
 
-// CalendarFreeBusy is the closed set of values CalendarJob.TransparencyOverride
-// may hold: keep whatever the source says, or force the destination copy to be
-// shown as free or as busy.
+// CalendarFreeBusy is the value the deprecated single free/busy override
+// (CalendarJob.TransparencyOverride) may hold: keep whatever the source says, or
+// force the destination copy to be shown as free or as busy.
+//
+// New jobs express the same intent, and more, through CalendarJob.FreeBusyMap;
+// the field is kept so an existing job keeps behaving the way its operator
+// configured it until the next save.
 type CalendarFreeBusy string
 
 const (
@@ -81,17 +85,35 @@ func (f CalendarFreeBusy) Valid() bool {
 	}
 }
 
-// Transparency answers the provider-level value of the override, or the empty
-// string when the source value should win.
-func (f CalendarFreeBusy) Transparency() string {
+// Target answers the destination state the override forces, or the empty string
+// when the source value should win.
+func (f CalendarFreeBusy) Target() string {
 	switch f {
 	case CalendarFreeBusyFree:
-		return "transparent"
+		return "free"
 	case CalendarFreeBusyBusy:
-		return "opaque"
+		return "busy"
 	default:
 		return ""
 	}
+}
+
+// CalendarSeriesExceptions is how much of a recurring series a job copies.
+type CalendarSeriesExceptions string
+
+const (
+	// CalendarSeriesCopy copies the master and every modified or cancelled
+	// occurrence the source lists. It is the default because a series without
+	// its exceptions visibly differs from the original.
+	CalendarSeriesCopy CalendarSeriesExceptions = "copy"
+	// CalendarSeriesSkip copies the master only, leaving the occurrences the
+	// source modified or cancelled untouched in the destination.
+	CalendarSeriesSkip CalendarSeriesExceptions = "skip"
+)
+
+// Valid reports whether the value is a supported series option.
+func (s CalendarSeriesExceptions) Valid() bool {
+	return s == CalendarSeriesCopy || s == CalendarSeriesSkip
 }
 
 // CalendarJob is a durable calendar pairing: a source (provider calendar or
@@ -146,7 +168,19 @@ type CalendarJob struct {
 	TitleSuffix string `gorm:"size:64" json:"title_suffix,omitempty"`
 	// TransparencyOverride forces the free/busy flag of the destination copy:
 	// "free" or "busy". An empty value keeps whatever the source says.
+	//
+	// Deprecated: FreeBusyMap expresses the same intent per source state, so a
+	// saved map always wins. The field is kept so an upgrade does not silently
+	// change what an existing job does.
 	TransparencyOverride string `gorm:"size:16" json:"transparency_override,omitempty"`
+	// FreeBusyMap is the transformation applied to the free/busy state of every
+	// destination write, as canonical JSON: {"busy":"free","tentative":"busy"}.
+	// A state the map does not mention is copied unchanged.
+	FreeBusyMap string `gorm:"type:text" json:"free_busy_map,omitempty"`
+	// SeriesExceptions says whether a recurring series is copied with the
+	// occurrences the source modified or cancelled ("copy", the default) or
+	// without them ("skip").
+	SeriesExceptions string `gorm:"size:16;default:copy" json:"series_exceptions,omitempty"`
 
 	IntervalMinutes int  `gorm:"default:0" json:"interval_minutes"`
 	Enabled         bool `gorm:"default:true" json:"enabled"`
@@ -189,6 +223,16 @@ type CalendarEventLink struct {
 	// content fingerprints cannot carry the options, because a decoration is
 	// applied to one side only and would read as a conflict on every run.
 	OptionsFingerprint string `gorm:"size:16" json:"options_fingerprint,omitempty"`
+
+	// SourceFreeBusy and DestinationFreeBusy are the free/busy state of each
+	// side when it was last written. They are not part of the content
+	// fingerprints — a free/busy edit must not read as a conflict — so they are
+	// what tells an unchanged pairing whose mapping now says something else
+	// apart from one that is already correct. An empty column means the state
+	// was never recorded (a link created before the columns existed), which the
+	// engine adopts silently instead of rewriting the event.
+	SourceFreeBusy      string `gorm:"size:32" json:"source_free_busy,omitempty"`
+	DestinationFreeBusy string `gorm:"column:destination_free_busy;size:32" json:"destination_free_busy,omitempty"`
 
 	// The last known start of both sides, in UTC. They tell an event that moved
 	// out of the listing window apart from one that was deleted.

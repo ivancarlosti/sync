@@ -165,7 +165,9 @@ with no account at all.
 | `delete_missing` | `BOOLEAN` | propagate a deletion instead of re-creating the event |
 | `past_days`, `future_days` | `INT` | listing window around *now*, default `30` / `365` |
 | `title_prefix`, `title_suffix` | `VARCHAR(64)` | decoration of the copy written into the destination; empty by default, and the source calendar never sees it |
-| `transparency_override` | `VARCHAR(16)` | `''` (keep the source value) \| `free` \| `busy` — forces the free/busy flag of the destination copy |
+| `free_busy_map` | `TEXT` | canonical JSON mapping a source state (`free`, `tentative`, `busy`, `out_of_office`, `cancelled`) onto the state of the destination copy; only the entries that change something are stored, so a job without options keeps `''` |
+| `series_exceptions` | `VARCHAR(16)` | `copy` (default: the master **and** the occurrences the source moved or cancelled) \| `skip` (the master only) |
+| `transparency_override` | `VARCHAR(16)` | **deprecated**: `''` (keep the source value) \| `free` \| `busy`. Expanded into `free_busy_map` while the map is empty |
 | `interval_minutes`, `enabled` | `INT` / `BOOLEAN` | `0` = manual only, capped at `10080`; a new job is enabled |
 | `last_run_at`, `next_run_at` | `DATETIME` (nullable) | `next_run_at` is recomputed on every save and moved one interval past the start of every finished run; `NULL` for a manual-only or disabled job |
 | `last_status`, `last_error` | `VARCHAR(32)` / `TEXT` | summary of the last run |
@@ -182,11 +184,26 @@ pinned for the same reason as `source_etag`), both last known starts
 `last_synced_at`. The fingerprints make "which side moved since the last run"
 answerable without storing a copy of the event; the starts are what separate an
 event that travelled out of the listing window from one that was deleted.
+
+An occurrence of a series is stored under a compound `uid`: the UID of the series,
+a `\x1f` separator and the original start of the occurrence in RFC 3339
+(`series@example.com\x1f2026-03-09T09:00:00Z`). Every occurrence of a series shares
+the same iCalUID, so the start is the only thing that names one.
+
+`source_free_busy` / `destination_free_busy` (`VARCHAR(32)`, the destination
+column pinned for the same reason as `source_etag`) record the free/busy state each
+side had when it was last written. Free/busy is not part of the content
+fingerprints (a mapping change must not read as a conflict), so these columns are
+what tells a pairing that is already correct from one the current
+`free_busy_map` would write differently. An empty column means the state was never
+recorded (a link written before the columns existed): such a pairing is adopted
+silently instead of rewritten.
+
 `options_fingerprint` (`VARCHAR(16)`) is the hash of the job options that shape
-the destination copy (`title_prefix`, `title_suffix`, `transparency_override`),
-empty for a job that never set one: a mismatch is what makes the engine rewrite
-an otherwise unchanged event once, since a decoration applied to one side only
-must not read as a conflict on every run.
+the destination copy (`title_prefix`, `title_suffix` and the canonical
+`free_busy_map`), empty for a job that never set one: a mismatch is what makes the
+engine rewrite an otherwise unchanged event once, since a decoration applied to one
+side only must not read as a conflict on every run.
 
 `calendar_runs` — one row per execution, the shape of `sync_runs` with event
 counters instead of file counters: `job_id` (indexed), `job_name`, `status`

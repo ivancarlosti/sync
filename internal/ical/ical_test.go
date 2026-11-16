@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ivancarlosti/sync/internal/providers"
 )
 
 // sampleFeed exercises the forms the parser has to accept: a folded line, an
@@ -93,8 +95,8 @@ func TestParseReadsTheEventShapesAFeedUses(t *testing.T) {
 	if strings.Join(first.Attendees, ",") != "bo@example.com,cy@example.com" {
 		t.Fatalf("attendees = %v", first.Attendees)
 	}
-	if first.Transparency != "transparent" {
-		t.Fatalf("transparency = %q, want the TRANSP value", first.Transparency)
+	if first.FreeBusy != providers.FreeBusyFree {
+		t.Fatalf("free/busy = %q, want the TRANSP value", first.FreeBusy)
 	}
 
 	allDay := events[1]
@@ -104,8 +106,8 @@ func TestParseReadsTheEventShapesAFeedUses(t *testing.T) {
 	if !allDay.Start.Equal(time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)) || !allDay.End.Equal(time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("all-day range = %s .. %s", allDay.Start, allDay.End)
 	}
-	if allDay.Transparency != "opaque" {
-		t.Fatalf("an event without TRANSP was reported as %q, want opaque", allDay.Transparency)
+	if allDay.FreeBusy != providers.FreeBusyBusy {
+		t.Fatalf("an event without TRANSP was reported as %q, want busy", allDay.FreeBusy)
 	}
 
 	local := events[2]

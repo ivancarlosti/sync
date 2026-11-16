@@ -430,7 +430,11 @@ type calendarEngine struct {
 	// must disappear.
 	pending   map[string]models.CalendarEventLink
 	forgotten []string
-	fatal     error
+	// exceptions carries the occurrences of a series the run has to write once
+	// the masters are in place: an occurrence can only be targeted on a series
+	// that exists.
+	exceptions []seriesException
+	fatal      error
 	// dryRun makes the engine list and plan without writing: it is how the
 	// preview endpoint answers with the same code path the run uses.
 	dryRun bool
@@ -517,6 +521,12 @@ func (e *calendarEngine) reconcile(ctx context.Context) error {
 		return e.fail(err)
 	}
 	if err := e.reconcileEvents(ctx); err != nil {
+		return e.fail(err)
+	}
+	// The occurrences of a series are written after every master of the run: the
+	// destination has to hold the series before one of its occurrences can be
+	// moved or cancelled.
+	if err := e.reconcileExceptions(ctx); err != nil {
 		return e.fail(err)
 	}
 	if e.dryRun {
@@ -743,21 +753,41 @@ func (e *calendarEngine) listFeed(ctx context.Context, side *calendarSide) error
 	}
 	side.events = make(map[string]providers.CalendarEvent, len(events))
 	for _, event := range events {
-		side.events[event.UID] = providers.CalendarEvent{
-			ID:          event.UID,
-			UID:         event.UID,
-			Summary:     event.Summary,
-			Description: event.Description,
-			Location:    event.Location,
-			Start:       event.Start,
-			End:         event.End,
-			AllDay:      event.AllDay,
-			TimeZone:    event.TimeZone,
-			UpdatedAt:   event.UpdatedAt,
-			Recurring:   event.Recurring,
-			Cancelled:   event.Cancelled,
-			Organizer:   event.Organizer,
-			Attendees:   event.Attendees,
+		kind := providers.EventKindSingle
+		switch event.Kind {
+		case ical.EventKindMaster:
+			kind = providers.EventKindMaster
+		case ical.EventKindException:
+			kind = providers.EventKindException
+		}
+		key := event.UID
+		if kind == providers.EventKindException {
+			key = exceptionKey(event.UID, event.OriginalStart, event.TimeZone, event.AllDay)
+			if key == "" {
+				// An occurrence without the start it replaced cannot be
+				// targeted on the other side, so it is not pairable.
+				continue
+			}
+		}
+		side.events[key] = providers.CalendarEvent{
+			ID:            event.UID,
+			UID:           event.UID,
+			Summary:       event.Summary,
+			Description:   event.Description,
+			Location:      event.Location,
+			Start:         event.Start,
+			End:           event.End,
+			AllDay:        event.AllDay,
+			TimeZone:      event.TimeZone,
+			FreeBusy:      event.FreeBusy,
+			UpdatedAt:     event.UpdatedAt,
+			Recurring:     event.Recurring,
+			Kind:          kind,
+			OriginalStart: event.OriginalStart,
+			Recurrence:    event.Recurrence,
+			Cancelled:     event.Cancelled,
+			Organizer:     event.Organizer,
+			Attendees:     event.Attendees,
 		}
 	}
 	side.fetched = result
@@ -801,9 +831,29 @@ func (e *calendarEngine) feedDrifted() bool {
 
 // indexEvents keys a listing by the UID the engine pairs on.
 func indexEvents(events []providers.CalendarEvent) map[string]providers.CalendarEvent {
+	// The provider id of every master, so an exception is keyed by the UID of the
+	// series it belongs to. Graph and Google do not always publish the same UID
+	// on an exception as on its master, and the two copies of a series have to
+	// agree on the key even when they come from different providers.
+	masters := make(map[string]string, 8)
+	for _, event := range events {
+		if event.Kind == providers.EventKindMaster && strings.TrimSpace(event.ID) != "" {
+			masters[event.ID] = eventUID(event)
+		}
+	}
 	indexed := make(map[string]providers.CalendarEvent, len(events))
 	for _, event := range events {
+		if event.Kind == providers.EventKindOccurrence {
+			// A listing that expands a series answers every instant of it. Those
+			// are not events of their own: the master carries them.
+			continue
+		}
 		uid := eventUID(event)
+		if event.Kind == providers.EventKindException {
+			if masterUID, ok := masters[event.SeriesID]; ok {
+				uid = exceptionKey(masterUID, event.OriginalStart, event.TimeZone, event.AllDay)
+			}
+		}
 		if uid == "" {
 			continue
 		}
@@ -816,15 +866,65 @@ func indexEvents(events []providers.CalendarEvent) map[string]providers.Calendar
 // eventUID is the pairing key of a listed event. Both providers publish an
 // iCalUID; the fallback keeps an event whose payload lacks one pairable instead of
 // silently dropping it.
+//
+// An exception or an expanded occurrence is keyed by the UID of its series plus
+// the start the rule gave it: the same UID is shared by every occurrence, so the
+// start is the only thing that tells them apart.
 func eventUID(event providers.CalendarEvent) string {
+	base := ""
 	if uid := strings.TrimSpace(event.UID); uid != "" {
-		return uid
+		base = uid
+	} else if id := strings.TrimSpace(event.ID); id != "" {
+		base = "id:" + id
 	}
-	if id := strings.TrimSpace(event.ID); id != "" {
-		return "id:" + id
+	if base == "" {
+		return ""
 	}
-	return ""
+	if event.Kind == providers.EventKindException || event.Kind == providers.EventKindOccurrence {
+		return exceptionKey(base, event.OriginalStart, event.TimeZone, event.AllDay)
+	}
+	return base
 }
+
+// exceptionKey names one occurrence inside a series. An empty original start
+// answers the empty string: without it the occurrence cannot be targeted on the
+// other side, so it is not given a key at all.
+//
+// An all-day occurrence is named by its calendar date in the event's own zone:
+// the instant of a midnight depends on the zone each provider stored, so the wall
+// date is the only value both sides agree on. A timed occurrence keeps the full
+// instant.
+func exceptionKey(masterUID string, originalStart time.Time, zone string, allDay bool) string {
+	if originalStart.IsZero() {
+		return ""
+	}
+	if allDay {
+		return masterUID + seriesKeySeparator + allDayDate(originalStart, zone)
+	}
+	return masterUID + seriesKeySeparator + originalStart.UTC().Format(time.RFC3339)
+}
+
+// allDayDate renders the calendar date an all-day instant belongs to, in the zone
+// the event was written with. An unreadable zone falls back to UTC, exactly like a
+// write does.
+func allDayDate(moment time.Time, zone string) string {
+	return moment.In(providers.LoadZone(zone)).Format("2006-01-02")
+}
+
+// splitExceptionKey answers the master UID of a pairing key and whether the key
+// names an occurrence of a series.
+func splitExceptionKey(uid string) (string, bool) {
+	master, _, ok := strings.Cut(uid, seriesKeySeparator)
+	if !ok {
+		return uid, false
+	}
+	return master, true
+}
+
+// seriesKeySeparator joins the series UID and the original start of an occurrence.
+// It is a control character no provider puts in a UID, so the compound key can
+// never be mistaken for a real one.
+const seriesKeySeparator = "\x1f"
 
 // calendarZone answers the zone an all-day write should use: the zone the
 // calendar is configured with, when the engine learned it, and UTC otherwise.
@@ -911,12 +1011,28 @@ func (e *calendarEngine) one(ctx context.Context, uid string) {
 		in.DestFingerprint = providers.EventFingerprint(event)
 	}
 
-	// A series is never copied: one occurrence cannot be written to the other
-	// side without inventing a rule, and copying the master would duplicate the
-	// whole series next to the original.
-	if (in.Source != nil && in.Source.Recurring) || (in.Destination != nil && in.Destination.Recurring) {
+	// The occurrences of a series are written after the masters: the destination
+	// has to hold the series before one of its occurrences can be moved or
+	// cancelled.
+	if _, isOccurrence := splitExceptionKey(uid); isOccurrence {
+		e.exceptions = append(e.exceptions, seriesException{uid: uid, in: in})
+		return
+	}
+	if in.Source != nil && in.Source.Kind == providers.EventKindMaster {
+		if in.Source.Cancelled {
+			e.run.EventsSkipped++
+			e.record(uid, in.summary(), in.start(), actionSkip, "the source cancelled the series")
+			return
+		}
+		if len(in.Source.Recurrence) == 0 {
+			e.run.EventsSkipped++
+			e.record(uid, in.summary(), in.start(), actionSkip, "the source published no readable rule for the series")
+			return
+		}
+	}
+	if in.Destination != nil && in.Destination.Kind == providers.EventKindMaster && in.Destination.Cancelled {
 		e.run.EventsSkipped++
-		e.record(uid, in.summary(), in.start(), actionSkip, "the event belongs to a recurring series, which the engine does not copy")
+		e.record(uid, in.summary(), in.start(), actionSkip, "the destination cancelled the series")
 		return
 	}
 	if in.Source != nil && in.Source.Cancelled {
@@ -933,6 +1049,129 @@ func (e *calendarEngine) one(ctx context.Context, uid string) {
 	e.apply(ctx, uid, in, e.rewriteForOptions(in, decide(in)))
 }
 
+// seriesException is one occurrence of a series the run has to write after the
+// masters.
+type seriesException struct {
+	uid string
+	in  planInput
+}
+
+// reconcileExceptions writes the modified and cancelled occurrences of every
+// series the run touched. The job option can turn the phase off, which is the
+// answer for an operator who does not want the extra provider calls.
+func (e *calendarEngine) reconcileExceptions(ctx context.Context) error {
+	if len(e.exceptions) == 0 {
+		return nil
+	}
+	if e.options().seriesExceptions == models.CalendarSeriesSkip {
+		for _, pending := range e.exceptions {
+			if pending.in.Source == nil {
+				continue
+			}
+			e.run.EventsSkipped++
+			e.record(pending.uid, pending.in.summary(), pending.in.start(), actionSkip, "the job copies series masters only")
+		}
+		return nil
+	}
+	for _, pending := range e.exceptions {
+		if ctx.Err() != nil {
+			return nil
+		}
+		e.applyException(ctx, pending)
+	}
+	return nil
+}
+
+// applyException decides and applies one occurrence of a series.
+func (e *calendarEngine) applyException(ctx context.Context, pending seriesException) {
+	uid, in := pending.uid, pending.in
+	masterUID, _ := splitExceptionKey(uid)
+	source := in.Source
+	if source == nil || source.OriginalStart.IsZero() {
+		e.run.EventsSkipped++
+		e.record(uid, in.summary(), in.start(), actionSkip, "the source no longer lists the occurrence")
+		return
+	}
+	if e.dryRun {
+		// The preview lists what a run would do without writing the master that
+		// the occurrences of this run need, so an occurrence is reported as the
+		// work the series implies.
+		e.simulate(uid, in, planDecision{Action: actionCreateDest, Evidence: "the occurrence belongs to a copied series"})
+		return
+	}
+	masterID := e.destinationSeriesID(masterUID)
+	if masterID == "" {
+		e.run.EventsSkipped++
+		e.record(uid, in.summary(), in.start(), actionSkip, "the series is not in the destination calendar yet")
+		return
+	}
+	// A cancelled occurrence Graph already deleted is not re-created on every
+	// run: the recorded cancel action is the evidence that it is gone on purpose.
+	if in.Destination == nil && in.Link != nil && in.Link.LastAction == string(actionCancelDest) &&
+		in.SourceFingerprint == in.Link.SourceFingerprint {
+		e.remember(uid, in, nil, "", actionUnchanged)
+		return
+	}
+	decision := decide(in)
+	decision = e.rewriteForOptions(in, decision)
+	switch decision.Action {
+	case actionCreateDest, actionUpdateDest:
+		e.writeException(ctx, uid, in, masterID, decision)
+	case actionUnchanged:
+		e.remember(uid, in, nil, "", decision.Action)
+	case actionSkip, actionConflict:
+		if decision.Action == actionConflict {
+			e.run.Conflicts++
+		}
+		e.record(uid, in.summary(), in.start(), decision.Action, decision.Evidence)
+	default:
+		// Writing an occurrence back into the source would mean moving the
+		// source's own series, which the engine never does.
+		e.run.EventsSkipped++
+		e.record(uid, in.summary(), in.start(), actionSkip, "an occurrence of a series is only copied towards the destination")
+	}
+}
+
+// writeException writes one occurrence through the master the destination holds.
+func (e *calendarEngine) writeException(ctx context.Context, uid string, in planInput, masterID string, decision planDecision) {
+	source := *in.Source
+	input := providers.EventInputFrom(source)
+	input.UID = destinationUID(uid)
+	input.SeriesID = masterID
+	input.OriginalStart = source.OriginalStart
+	input = e.options().applyTo(input)
+	written, err := e.write(ctx, e.target, input, "")
+	if err != nil {
+		e.failed(uid, in, decision, err)
+		return
+	}
+	action := actionCreateDest
+	if in.Destination != nil {
+		action = actionUpdateDest
+		e.run.EventsUpdated++
+	} else {
+		e.run.EventsCreated++
+	}
+	if input.Cancelled {
+		action = actionCancelDest
+		e.run.EventsDeleted++
+	}
+	e.remember(uid, in, &written, "destination", action)
+	e.record(uid, in.summary(), writtenStart(written, source.Start), action, decision.Evidence)
+}
+
+// destinationSeriesID answers the provider id of a master in the destination
+// calendar: the link the run just produced, or the one a previous run recorded.
+func (e *calendarEngine) destinationSeriesID(masterUID string) string {
+	if row, ok := e.pending[masterUID]; ok && strings.TrimSpace(row.DestinationEventID) != "" {
+		return row.DestinationEventID
+	}
+	if row, ok := e.links[masterUID]; ok {
+		return strings.TrimSpace(row.DestinationEventID)
+	}
+	return ""
+}
+
 // rewriteForOptions turns "nothing to do" into a destination rewrite when the copy
 // was written under other options than the job holds now. It is a no-op for every
 // other decision: a real edit already writes the destination, and therefore picks
@@ -942,6 +1181,9 @@ func (e *calendarEngine) rewriteForOptions(in planInput, decision planDecision) 
 		return decision
 	}
 	if stale, evidence := e.staleOptions(in); stale {
+		return planDecision{Action: actionUpdateDest, Evidence: evidence}
+	}
+	if stale, evidence := e.staleFreeBusy(in); stale {
 		return planDecision{Action: actionUpdateDest, Evidence: evidence}
 	}
 	return decision
@@ -1139,11 +1381,13 @@ func (e *calendarEngine) remember(uid string, in planInput, written *writeResult
 		row.SourceEventID = in.Source.ID
 		row.SourceFingerprint = in.SourceFingerprint
 		row.SourceStart = in.Source.Start.UTC()
+		row.SourceFreeBusy = string(in.Source.FreeBusy)
 	}
 	if in.Destination != nil {
 		row.DestinationEventID = in.Destination.ID
 		row.DestFingerprint = in.DestFingerprint
 		row.DestinationStart = in.Destination.Start.UTC()
+		row.DestinationFreeBusy = string(in.Destination.FreeBusy)
 	}
 	if written != nil {
 		start := writtenStart(*written, time.Time{})
@@ -1153,6 +1397,7 @@ func (e *calendarEngine) remember(uid string, in planInput, written *writeResult
 				row.SourceEventID = written.event.ID
 			}
 			row.SourceFingerprint = written.fingerprint
+			row.SourceFreeBusy = e.writtenFreeBusy(in.Destination, *written)
 			if !start.IsZero() {
 				row.SourceStart = start.UTC()
 			}
@@ -1164,6 +1409,7 @@ func (e *calendarEngine) remember(uid string, in planInput, written *writeResult
 			// The copy now carries the options of this run: recording it is
 			// what keeps the next run from rewriting it again.
 			row.OptionsFingerprint = e.options().fingerprint
+			row.DestinationFreeBusy = e.writtenFreeBusy(in.Source, *written)
 			if !start.IsZero() {
 				row.DestinationStart = start.UTC()
 			}
@@ -1175,6 +1421,20 @@ func (e *calendarEngine) remember(uid string, in planInput, written *writeResult
 	row.LastAction = string(action)
 	row.LastSyncedAt = e.service.now()
 	e.pending[uid] = row
+}
+
+// writtenFreeBusy answers the free/busy state a written copy holds: what the
+// provider reported, or the mapped source state when it reported nothing (a
+// cancellation Graph turned into a delete answers no event at all).
+func (e *calendarEngine) writtenFreeBusy(from *providers.CalendarEvent, written writeResult) string {
+	if written.event.FreeBusy != "" {
+		return string(written.event.FreeBusy)
+	}
+	if from == nil {
+		return ""
+	}
+	mapped, _ := e.options().freeBusy.apply(from.FreeBusy)
+	return string(mapped)
 }
 
 // forget drops the recorded state of an event that is gone from both sides.
@@ -1238,7 +1498,7 @@ func (e *calendarEngine) persist(ctx context.Context) error {
 // recognisable by the calendar that reads it; anything else is derived so a
 // provider that validates the field does not reject the create.
 func destinationUID(uid string) string {
-	trimmed := strings.TrimSpace(uid)
+	trimmed, _ := splitExceptionKey(strings.TrimSpace(uid))
 	if isCalendarUID(trimmed) {
 		return trimmed
 	}

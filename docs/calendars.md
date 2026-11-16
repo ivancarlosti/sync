@@ -146,8 +146,11 @@ stored in `calendar_run_items.action`.
 | destination only, source copy deleted | `create_source`, `delete_destination` or `unchanged` | `the source copy was deleted; recreating it` / `… the policy removes the destination too` |
 | a side stops listing an event whose recorded start is outside the window | `unchanged` | `the destination copy starts outside the listing window` |
 | gone from both sides | `forget_link` | `the event is gone from both sides` |
-| recurring series master or instance | `skip` | `the event belongs to a recurring series, which the engine does not copy` |
-| cancelled event still listed | `skip` | `the source marks the event as cancelled` |
+| recurring series master | `create_destination` / `update_destination` | `the event is not in the destination calendar yet` / `the source changed since the last run` |
+| series master whose rule cannot be read or represented | `skip` | `the source published no readable rule for the series`, or the conversion refusal (`BYSETPOS has no Graph pattern`, …) |
+| occurrence of a series the source moved, edited or cancelled | `create_destination`, `update_destination` or `cancel_destination` | `the occurrence belongs to a copied series` |
+| a series master the source cancelled | `skip` | `the source cancelled the series` |
+| cancelled event that is not an occurrence of a series | `skip` | `the source marks the event as cancelled` |
 
 The **window drift rule** is what keeps a moved meeting from being read as a
 deletion: a side that stops listing an event is only considered to have deleted
@@ -186,7 +189,9 @@ calendar:
 | Field | Effect |
 |---|---|
 | `title_prefix` / `title_suffix` | the destination summary becomes `prefix + source summary + suffix`; each is trimmed and clamped to **64** runes by the API (`calendarDecorWidth`) |
-| `transparency_override` | `''` (keep the source value), `free` (`TRANSP:TRANSPARENT` / `showAs: free` / `transparency: transparent`) or `busy` — applied to the **destination** write only |
+| `free_busy_map` | canonical JSON mapping each **source** state (`free`, `tentative`, `busy`, `out_of_office`, `cancelled`) to the state the **destination** copy carries; a state the map omits is copied unchanged |
+| `series_exceptions` | `copy` (default) copies the master **and** the occurrences the source moved or cancelled; `skip` copies the master only |
+| `transparency_override` | **deprecated**: `free` or `busy` forces one state on every copy. It is expanded into `free_busy_map` when the map is empty, so an existing job keeps doing what it did |
 
 Decoration is one-sided by construction: the prefix is written to the
 destination and stripped again before anything is written back to the source, so
@@ -208,11 +213,70 @@ so a new (or cleared) prefix converges in a single run. A subscription answered
 `304 not modified` is re-fetched instead of ending the run while any recorded
 pairing in the window has a stale option fingerprint.
 
-`transparency` is deliberately **not** part of `providers.EventFingerprint`:
-adding it would have made every existing pairing look changed and rewritten
-every event on the first run after the upgrade. A free/busy override is applied
-when the event is written for another reason, and a job that only changes the
-override rewrites the destination through the option fingerprint above.
+### Free/busy mapping
+
+`free_busy_map` replaces the old single override with one rule per source state.
+It is stored canonically (only the entries that change something, keys sorted):
+
+```json
+{"busy": "free", "tentative": "busy", "cancelled": "free"}
+```
+
+* the **keys** are the states the source reports: `free`, `tentative`, `busy`,
+  `out_of_office` and `cancelled` (a cancelled occurrence of a series);
+* the **values** are the states the destination copy is written with. `cancelled`
+  is special only in that it has no show-as of its own: a `cancelled` row pointing
+  at a show-as state asks the engine to copy the occurrence anyway, as free (or
+  busy, tentative, out of office) time instead of a cancellation;
+* a state the map does not mention travels unchanged, so an empty map is the
+  identity and a job without options stores an empty column, not `{}`.
+
+The mapping applies to **destination writes only**: the source calendar is never
+rewritten and a write back into it carries the source value. Google needs three
+properties for the five states (`transparency`, `status`, `eventType`),
+Microsoft one (`showAs`), and an .ics feed `TRANSP` plus `STATUS`; the providers
+translate, the engine only ever sees the shared vocabulary.
+
+Free/busy is deliberately **not** part of `providers.EventFingerprint`: adding it
+would have made every existing pairing look changed and rewritten every event on
+the first run after the upgrade. Drift is detected through the link instead:
+`calendar_event_links.source_free_busy` / `destination_free_busy` record the state
+of each side when it was last written. A pairing whose two sides agree but whose
+recorded destination state is not what the map asks for becomes an
+`update_destination` with the evidence *the free/busy mapping of the pairing
+changed since the destination was written*. A link whose columns are empty (it was
+written before this feature existed) is **adopted silently**: the run records the
+state it sees instead of rewriting the event once for no visible reason.
+
+### Recurring series
+
+A series is copied as a series, not as a single event:
+
+* the **master** is created (or updated) in the destination with its rule
+  (`RRULE`/`EXDATE` from Google or a feed, `patternedRecurrence` from Graph);
+* the occurrences the source **moved, edited or cancelled** are copied in a second
+  phase, once every master of the run exists — a provider cannot target an
+  occurrence of a series that is not there yet;
+* the plain occurrences a listing expands are ignored: the rule already produces
+  them.
+
+An occurrence is paired by the UID of its series **and** the start the rule gave it
+(`uid + "\x1f" + RFC3339`), because every occurrence of a series shares the same
+iCalUID. `calendar_event_links.uid` therefore holds the compound key; the UID the
+provider receives in the copy is the series UID alone.
+
+Google resolves an occurrence through `events.instances?originalStart=`, Graph
+through `events/{master}/instances`, and a Graph cancellation is a `DELETE` of the
+occurrence (`isCancelled` is read-only). A cancelled occurrence the destination
+already lost is recorded with the `cancel_destination` action, so a later run does
+not recreate it while the source still cancels it.
+
+The RRULE ⇄ Graph conversion lives in `internal/recurrence` and is strict:
+`BYSETPOS`, `BYYEARDAY`, `BYWEEKNO`, `RDATE`, `EXRULE` and an `EXDATE` on a series
+copied **into** Microsoft have no Graph pattern, so the whole series is refused and
+reported as `skipped` with the reason instead of being approximated. A series whose
+rule cannot be read is skipped the same way. `series_exceptions: skip` turns the
+second phase off, which is the cheaper choice for a source with hundreds of series.
 
 A zone the provider does not know is normalised before a write: `ZoneName`
 canonicalises Windows labels (`W. Europe Standard Time` → `Europe/Berlin`) and
@@ -251,11 +315,16 @@ the engine needs are implemented.
   the IANA zone they mean; a `VTIMEZONE` block is not interpreted, and an
   unreadable zone falls back to UTC instead of failing the feed. A floating time
   is read in the destination calendar's zone;
-* `TRANSP` is read as the free/busy flag (`TRANSPARENT` → transparent, absent or
-  `OPAQUE` → opaque) and written back to the destination as that provider's own
-  value, so a feed that marks events as free does not turn them into blockers;
-* `RRULE`, `RECURRENCE-ID` or a series master marks the event as recurring, and
-  `STATUS:CANCELLED` as cancelled — both are counted and skipped, never copied;
+* `TRANSP` and `STATUS` are read as the shared free/busy state (`CANCELLED` →
+  cancelled, `TENTATIVE` → tentative, `TRANSPARENT` → free, otherwise busy) and
+  written back to the destination as that provider's own value, so a feed that
+  marks events as free does not turn them into blockers;
+* `RRULE` (and `RDATE`/`EXDATE`) makes the event a series master, and
+  `RECURRENCE-ID` an occurrence of it: the master is copied with its rule and the
+  occurrence through its original start (see *Recurring series* in §5);
+* `STATUS:CANCELLED` marks a cancelled event. A cancelled occurrence of a series
+  is copied as a cancellation (or mapped, see §5); any other cancelled event is
+  counted and skipped;
 * at most **20000** events per feed (`MaxEvents`): a bigger subscription is
   truncated, not refused, and the run reports how many events it read;
 * a payload that is not a calendar at all is `ErrInvalidFeed` → `400 validation`.
@@ -336,17 +405,18 @@ Payload fields, validation and error codes: [api.md](api.md) §7.
 | `400 validation` — `the subscription URL is not publicly routable` | the feed points at a loopback, private, link-local or reserved address | host the feed publicly, or set `CALENDAR_ALLOW_PRIVATE_TARGETS=true` for an internal server |
 | `400 validation` — `the payload is not an iCalendar feed` | the URL answered HTML (a login page, a 404 page) | check the URL with *Check subscription*, and the credentials if the feed is protected |
 | the preview shows `0 events` | the window does not overlap the feed | widen `past_days` / `future_days` |
-| meetings are counted as `skipped` | the event belongs to a recurring series | expected, see §10 |
+| meetings are counted as `skipped` | their series has a rule Microsoft cannot represent, or `series_exceptions` is `skip` | check the rule (§4), or set `series_exceptions: copy` |
 | `conflicts` grows without any write | both sides changed and `newest_wins` cannot pick a side (no modification stamps) | use `source_wins` (or `destination_wins` on a bidirectional job) |
 | a run fails with `the feed password cannot be decrypted` | `ENCRYPTION_KEY` changed after the job was saved | re-enter the feed password |
 | a long feed stops at 20000 events | `MaxEvents` | subscribe to a narrower feed, or split the calendar |
 
 ## 10. Limits and known gaps
 
-* **Recurring events are not expanded.** A series master and its instances are
-  skipped and counted (`events_skipped`), never deleted. Copying one occurrence
-  would need an invented rule, and copying the master would duplicate the whole
-  series next to the original.
+* **Recurring series are copied, with limits.** The master, its rule and the
+  occurrences the source moved or cancelled travel; the occurrences a rule already
+  produces are not expanded into single events. A rule Microsoft cannot represent
+  refuses the whole series (§4) and an `EXDATE` is only carried towards Google.
+  `series_exceptions: skip` copies the master alone.
 * **Calendar runs do not notify.** The notification events (`sync.success`,
   `sync.run_failed`, …) cover file jobs; a calendar job writes its history to
   `calendar_runs` only.

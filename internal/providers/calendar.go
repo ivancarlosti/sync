@@ -50,19 +50,33 @@ type CalendarEvent struct {
 	End         time.Time
 	AllDay      bool
 	TimeZone    string
-	// Transparency is the free/busy flag of the event (TransparencyOpaque or
-	// TransparencyTransparent). It is deliberately not part of EventFingerprint:
-	// adding a component would make every fingerprint stored before this field
-	// existed look like an edit on both sides, which the engine would answer
-	// with a rewrite of every paired event.
-	Transparency string
+	// FreeBusy is the free/busy state the calendar shows the event with. It is
+	// deliberately not part of EventFingerprint: adding a component would make
+	// every fingerprint stored before this field existed look like an edit on
+	// both sides, which the engine would answer with a rewrite of every paired
+	// event. Drift is detected through the link's recorded state instead.
+	FreeBusy FreeBusy
 	// UpdatedAt is the provider's last modification stamp. It feeds the
 	// newest_wins conflict rule, so it must be the event stamp, not the sync
 	// time.
 	UpdatedAt time.Time
-	// Recurring marks a series master or an instance of one. The engine skips
-	// them instead of copying a single occurrence over the other side.
+	// Recurring marks a series master or an instance of one.
 	Recurring bool
+	// Kind tells a single event apart from the master of a series and from the
+	// occurrences of one. The engine copies a master and its exceptions, and
+	// ignores the plain occurrences a listing expands.
+	Kind EventKind
+	// SeriesID is the provider id of the master a listing expanded this event
+	// from (Google's recurringEventId, Graph's seriesMasterId). It is empty for
+	// a single event and for a master.
+	SeriesID string
+	// OriginalStart is the start the master gave the occurrence before it was
+	// moved. It is the identity of an exception: the copy has to target the
+	// same occurrence of the destination series.
+	OriginalStart time.Time
+	// Recurrence is the rule of a series master, as the RFC 5545 lines the
+	// providers exchange (RRULE, RDATE, EXDATE).
+	Recurrence []string
 	// Cancelled marks a cancelled event that is still listed.
 	Cancelled bool
 	Organizer string
@@ -85,37 +99,101 @@ type CalendarEventInput struct {
 	End         time.Time
 	AllDay      bool
 	TimeZone    string
-	// Transparency is the free/busy flag to write, in the vocabulary of
-	// providers.TransparencyName. An empty value leaves the provider default in
-	// place, which is what keeps an unrelated update from clearing a "free"
+	// FreeBusy is the state to write. An empty value leaves the provider
+	// default in place, which is what keeps an unrelated update from clearing a
 	// marker the operator set on the destination calendar.
-	Transparency string
-	Attendees    []string
+	FreeBusy FreeBusy
+	// Recurrence carries the rule of a series master (RRULE, RDATE, EXDATE).
+	// It is empty for a single event, and a provider that is asked to write an
+	// empty rule leaves an existing one in place.
+	Recurrence []string
+	// SeriesID is the provider id of the destination master when this write
+	// targets one occurrence of a copied series; the provider resolves the
+	// occurrence from it and OriginalStart.
+	SeriesID string
+	// OriginalStart is the occurrence this write targets inside SeriesID.
+	OriginalStart time.Time
+	// Cancelled asks the provider to cancel the occurrence instead of moving
+	// it. Graph has no writable isCancelled, so it deletes the occurrence,
+	// which is the same statement in the series.
+	Cancelled bool
+	// TransactionID is an idempotency token for a create. A retried create with
+	// the same token does not mint a second event or a second series.
+	TransactionID string
+	Attendees     []string
 }
 
-// The two free/busy values the providers share. Google spells its event
-// `transparency` exactly like this; Graph's `showAs` is mapped onto it by the
-// Microsoft half, so the engine never reads a provider vocabulary.
+// FreeBusy is the free/busy state of an event, in one vocabulary for both
+// providers and for .ics feeds. The five values are what Graph calls `showAs`;
+// Google expresses three of them through `transparency` and `status`, and a feed
+// through `TRANSP` and `STATUS`.
+type FreeBusy string
+
 const (
-	// TransparencyOpaque is a normal event: it blocks the calendar.
-	TransparencyOpaque = "opaque"
-	// TransparencyTransparent is an event that is shown as free.
-	TransparencyTransparent = "transparent"
+	// FreeBusyFree does not block the calendar.
+	FreeBusyFree FreeBusy = "free"
+	// FreeBusyTentative is a maybe: it blocks the calendar but says so.
+	FreeBusyTentative FreeBusy = "tentative"
+	// FreeBusyBusy is a normal event.
+	FreeBusyBusy FreeBusy = "busy"
+	// FreeBusyOutOfOffice is away time.
+	FreeBusyOutOfOffice FreeBusy = "out_of_office"
+	// FreeBusyWorkingElsewhere is busy but somewhere else.
+	FreeBusyWorkingElsewhere FreeBusy = "working_elsewhere"
+	// FreeBusyCancelled is not a show-as state: it is what a cancelled
+	// occurrence of a series reads as, and the transformation map lets the
+	// operator decide what the destination should show for it.
+	FreeBusyCancelled FreeBusy = "cancelled"
 )
 
-// TransparencyName normalises a free/busy value, answering the empty string for
+// FreeBusyName normalises a free/busy value, answering the empty string for
 // anything it does not recognise: an unknown label must not reach a payload,
-// where it would clear the provider's own default.
-func TransparencyName(value string) string {
+// where it would clear the provider's own default. The aliases are the spellings
+// a provider or a stored job may still carry.
+func FreeBusyName(value string) FreeBusy {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case TransparencyOpaque:
-		return TransparencyOpaque
-	case TransparencyTransparent:
-		return TransparencyTransparent
+	case "free", "transparent":
+		return FreeBusyFree
+	case "tentative":
+		return FreeBusyTentative
+	case "busy", "opaque":
+		return FreeBusyBusy
+	case "out_of_office", "out-of-office", "oof":
+		return FreeBusyOutOfOffice
+	case "working_elsewhere", "workingelsewhere", "working-elsewhere":
+		return FreeBusyWorkingElsewhere
+	case "cancelled", "canceled":
+		return FreeBusyCancelled
 	default:
 		return ""
 	}
 }
+
+// ShowAs reports whether the state is one a calendar can be shown as. A
+// cancelled occurrence has no show-as of its own: it is a series statement.
+func (f FreeBusy) ShowAs() bool {
+	switch f {
+	case FreeBusyFree, FreeBusyTentative, FreeBusyBusy, FreeBusyOutOfOffice, FreeBusyWorkingElsewhere:
+		return true
+	default:
+		return false
+	}
+}
+
+// EventKind classifies a listed event by its place in a series.
+type EventKind string
+
+const (
+	// EventKindSingle is an ordinary event without a series.
+	EventKindSingle EventKind = "single"
+	// EventKindMaster is the event that carries the recurrence rule.
+	EventKindMaster EventKind = "master"
+	// EventKindOccurrence is an unmodified occurrence a listing expanded.
+	EventKindOccurrence EventKind = "occurrence"
+	// EventKindException is an occurrence the operator moved, edited or
+	// cancelled.
+	EventKindException EventKind = "exception"
+)
 
 // CalendarProvider is the calendar half of a provider. It is a separate
 // interface from Provider on purpose: the sync engine only needs the file half,
@@ -155,8 +233,37 @@ func EventFingerprint(event CalendarEvent) string {
 		strings.Join(sortedLower(event.Attendees), ","),
 		fmt.Sprintf("recurring=%t", event.Recurring),
 	}
+	// The rule of a master and the occurrence an exception targets are appended
+	// only when they exist, so every fingerprint stored before they were read
+	// keeps its value and the upgrade itself rewrites nothing.
+	if rule := CanonicalRecurrence(event.Recurrence); rule != "" {
+		parts = append(parts, "recurrence="+rule)
+	}
+	if !event.OriginalStart.IsZero() {
+		parts = append(parts, "original_start="+event.OriginalStart.UTC().Format(time.RFC3339))
+	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x1f")))
 	return hex.EncodeToString(sum[:])
+}
+
+// CanonicalRecurrence renders the recurrence lines of a master the way the
+// fingerprint compares them: providers reorder EXDATE values and re-case the
+// property name between two listings of an unchanged series, and neither is an
+// edit. An empty list answers the empty string, which is what keeps the
+// component out of the fingerprints of non-recurring events.
+func CanonicalRecurrence(lines []string) string {
+	normalized := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(strings.ToUpper(strings.TrimSpace(line))), "")
+		if line != "" {
+			normalized = append(normalized, line)
+		}
+	}
+	if len(normalized) == 0 {
+		return ""
+	}
+	sort.Strings(normalized)
+	return strings.Join(normalized, "\x1e")
 }
 
 // InputFingerprint is EventFingerprint for a value the engine is about to write.
@@ -165,13 +272,16 @@ func EventFingerprint(event CalendarEvent) string {
 // list) does not look like a conflict on the next run.
 func InputFingerprint(input CalendarEventInput) string {
 	return EventFingerprint(CalendarEvent{
-		Summary:     input.Summary,
-		Description: input.Description,
-		Location:    input.Location,
-		Start:       input.Start,
-		End:         input.End,
-		AllDay:      input.AllDay,
-		Attendees:   input.Attendees,
+		Summary:       input.Summary,
+		Description:   input.Description,
+		Location:      input.Location,
+		Start:         input.Start,
+		End:           input.End,
+		AllDay:        input.AllDay,
+		Attendees:     input.Attendees,
+		Recurrence:    input.Recurrence,
+		OriginalStart: input.OriginalStart,
+		Recurring:     len(input.Recurrence) > 0 || input.SeriesID != "",
 	})
 }
 
@@ -179,16 +289,19 @@ func InputFingerprint(input CalendarEventInput) string {
 // unchanged.
 func EventInputFrom(event CalendarEvent) CalendarEventInput {
 	return CalendarEventInput{
-		UID:          event.UID,
-		Summary:      event.Summary,
-		Description:  event.Description,
-		Location:     event.Location,
-		Start:        event.Start,
-		End:          event.End,
-		AllDay:       event.AllDay,
-		TimeZone:     event.TimeZone,
-		Transparency: event.Transparency,
-		Attendees:    append([]string(nil), event.Attendees...),
+		UID:           event.UID,
+		Summary:       event.Summary,
+		Description:   event.Description,
+		Location:      event.Location,
+		Start:         event.Start,
+		End:           event.End,
+		AllDay:        event.AllDay,
+		TimeZone:      event.TimeZone,
+		FreeBusy:      event.FreeBusy,
+		Recurrence:    append([]string(nil), event.Recurrence...),
+		OriginalStart: event.OriginalStart,
+		Cancelled:     event.Cancelled,
+		Attendees:     append([]string(nil), event.Attendees...),
 	}
 }
 
