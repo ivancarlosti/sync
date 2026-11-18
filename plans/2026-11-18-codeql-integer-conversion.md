@@ -105,14 +105,14 @@ Two secondary facts shaped the fix:
 ## Current status
 
 - **Done:** both alert sites fixed at the root, tests added, `gofmt`/`build`/
-  `vet`/`test` green.
-- **Next:** push and confirm that alerts #5 and #6 flip to `fixed` on the next
-  analysis of `main`.
-- **Observed, out of scope:** alerts #1–#4 (2 × `go/request-forgery`,
-  2 × `go/incorrect-integer-conversion` in `internal/handlers/respond.go`) are
-  still `open` in the API, but their `most_recent_instance` is still the
-  2026-09-29 commit `affd0b2` and the remedies described in
-  [`2026-09-29-code-scanning-alerts.md`](./2026-09-29-code-scanning-alerts.md)
-  are present in the tree (`ParseUint` at `strconv.IntSize`, SSRF guards). They
-  were not touched by this change and should be re-examined separately
-  (re-analysis or dismissal as no longer reproducible).
+  `vet`/`test` green, committed as `04874de` and pushed to `main`.
+- **Confirmed:** the CodeQL *Push on main* run (`44229589376`, all four
+  languages green) re-analysed `04874de` and closed both alerts: #5 and #6
+  (`go/incorrect-integer-conversion`) are now `fixed`. The same re-analysis also
+  retired #1–#4, which had been left `open` against the 2026-09-29 commit even
+  though their remedies were already in the tree — the repository now reports
+  **0 open code-scanning alerts, 0 open Dependabot alerts, 0 open secret-scanning
+  alerts and 0 open Dependabot pull requests**.
+- **Residual risk:** none from the analysis side; the change is proven by the
+  re-analysis on `main` rather than by a local CodeQL run (no CLI on the
+  developer machine, only the query packs under `~/.codeql/packages`).
