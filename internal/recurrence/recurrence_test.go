@@ -179,3 +179,38 @@ func TestToGraphDefaultsAWeeklyRuleToTheStartDay(t *testing.T) {
 		t.Fatalf("days = %v, want Wednesday", days)
 	}
 }
+
+// TestParseRefusesValuesOutsideTheGraphRange pins the numeric contract of the
+// day and month lists: the values are read at the width the Graph pattern
+// stores, so a value the pattern cannot carry is refused instead of wrapping.
+func TestParseRefusesValuesOutsideTheGraphRange(t *testing.T) {
+	cases := []string{
+		"RRULE:FREQ=YEARLY;BYMONTH=13;BYMONTHDAY=1",
+		"RRULE:FREQ=YEARLY;BYMONTH=0;BYMONTHDAY=1",
+		"RRULE:FREQ=MONTHLY;BYMONTHDAY=0",
+		"RRULE:FREQ=MONTHLY;BYMONTHDAY=32",
+		"RRULE:FREQ=MONTHLY;BYMONTHDAY=-32",
+	}
+	for _, line := range cases {
+		if _, _, err := Parse([]string{line}); !errors.Is(err, ErrUnsupported) {
+			t.Errorf("Parse(%q) error = %v, want ErrUnsupported", line, err)
+		}
+	}
+}
+
+// TestPatternForRefusesARuleOutsideTheGraphRange covers the rule a caller builds
+// without the parser: the guard sits next to the pattern it fills, so a
+// hand-built value cannot reach the Graph payload either.
+func TestPatternForRefusesARuleOutsideTheGraphRange(t *testing.T) {
+	start := time.Date(2026, 3, 2, 9, 0, 0, 0, time.UTC)
+	cases := []*Rule{
+		{Freq: "YEARLY", Interval: 1, ByMonth: []int32{13}, ByMonthDay: []int32{1}},
+		{Freq: "MONTHLY", Interval: 1, ByMonthDay: []int32{0}},
+		{Freq: "MONTHLY", Interval: 1, ByMonthDay: []int32{32}},
+	}
+	for _, rule := range cases {
+		if pattern, err := patternFor(rule, start); !errors.Is(err, ErrUnsupported) {
+			t.Errorf("patternFor(%+v) = %v, %v, want ErrUnsupported", rule, pattern, err)
+		}
+	}
+}

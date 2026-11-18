@@ -31,13 +31,17 @@ const maxCount = 999
 
 // Rule is one RRULE, normalised. FREQ is one of DAILY, WEEKLY, MONTHLY, YEARLY.
 type Rule struct {
-	Freq       string
-	Interval   int
-	Count      int
-	Until      time.Time
-	ByDay      []Weekday
-	ByMonthDay []int
-	ByMonth    []int
+	Freq     string
+	Interval int
+	Count    int
+	Until    time.Time
+	ByDay    []Weekday
+	// ByMonthDay and ByMonth hold the values at the width the Graph pattern
+	// stores (int32), so the translation never narrows them on the way out.
+	// BYMONTHDAY is 1..31, or negative counting back from the end of the month;
+	// BYMONTH is 1..12.
+	ByMonthDay []int32
+	ByMonth    []int32
 	WeekStart  string
 }
 
@@ -182,15 +186,20 @@ func parseBoundedInt(value, name string) (int, error) {
 	return number, nil
 }
 
-func parseSmallInts(value, name string, min, max int) ([]int, error) {
+// parseSmallInts reads a comma-separated BYMONTH or BYMONTHDAY list. The values
+// are parsed at the width the Graph pattern stores (int32) instead of at the
+// width of an int: `strconv.Atoi` answers an architecture-dependent integer,
+// which would have to be narrowed into the pattern and, on a 64-bit build, could
+// wrap before the pattern is built.
+func parseSmallInts(value, name string, min, max int32) ([]int32, error) {
 	parts := strings.Split(value, ",")
-	numbers := make([]int, 0, len(parts))
+	numbers := make([]int32, 0, len(parts))
 	for _, part := range parts {
-		number, err := strconv.Atoi(strings.TrimSpace(part))
-		if err != nil || number < min || number > max || number == 0 {
+		number, err := strconv.ParseInt(strings.TrimSpace(part), 10, 32)
+		if err != nil || number < int64(min) || number > int64(max) || number == 0 {
 			return nil, fmt.Errorf("%w: %s=%q is out of range", ErrUnsupported, name, value)
 		}
-		numbers = append(numbers, number)
+		numbers = append(numbers, int32(number))
 	}
 	return numbers, nil
 }
@@ -339,7 +348,10 @@ func patternFor(rule *Rule, start time.Time) (models.RecurrencePatternable, erro
 		if len(rule.ByMonth) != 1 {
 			return nil, fmt.Errorf("%w: a yearly pattern needs exactly one BYMONTH", ErrUnsupported)
 		}
-		month := int32(rule.ByMonth[0])
+		month := rule.ByMonth[0]
+		if month < 1 || month > 12 {
+			return nil, fmt.Errorf("%w: BYMONTH=%d is out of range", ErrUnsupported, month)
+		}
 		pattern.SetMonth(&month)
 		return monthlyPattern(pattern, rule)
 	}
@@ -373,7 +385,10 @@ func monthlyPattern(pattern *models.RecurrencePattern, rule *Rule) (models.Recur
 	if len(rule.ByMonthDay) != 1 {
 		return nil, fmt.Errorf("%w: an absolute pattern needs exactly one BYMONTHDAY", ErrUnsupported)
 	}
-	day := int32(rule.ByMonthDay[0])
+	day := rule.ByMonthDay[0]
+	if day == 0 || day < -31 || day > 31 {
+		return nil, fmt.Errorf("%w: BYMONTHDAY=%d is out of range", ErrUnsupported, day)
+	}
 	pattern.SetDayOfMonth(&day)
 	if rule.Freq == "YEARLY" {
 		pattern.SetTypeEscaped(ptr(models.ABSOLUTEYEARLY_RECURRENCEPATTERNTYPE))
